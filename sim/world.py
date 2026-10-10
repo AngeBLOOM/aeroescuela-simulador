@@ -10,7 +10,7 @@ from .atmosphere import Atmosphere, Weather
 from .autopilot import Autopilot
 from .flightmodel import Aircraft
 from .mathx import FT, KT, NM, clamp, quat_from_euler, quat_to_euler, wrap360
-from .nav import NavRadio
+from .nav import AdfRadio, NavRadio
 from .terrain import Terrain
 from .traffic import Traffic
 from .atc import ATC
@@ -154,6 +154,13 @@ class World:
             self.nav2.standby = vors[1].freq if len(vors) > 1 else vors[0].freq
         else:
             self.nav2.standby = 115.20
+        self.adf = AdfRadio(self.navaids)
+        ndbs = sorted((n for n in self.navaids if n.kind == "NDB"),
+                      key=lambda n: math.hypot(n.pos[0] - self.home.ref[0], n.pos[1] - self.home.ref[1]))
+        if ndbs:                       # el ADF empieza en el NDB más cercano al aeródromo
+            self.adf.freq = ndbs[0].freq
+            self.adf.standby = ndbs[1].freq if len(ndbs) > 1 else ndbs[0].freq
+        self.show_adf = False          # el segundo instrumento de navegación muestra el ADF en vez del NAV 2
         fq = dict(TWR=118.300, GND=121.900, ATIS=127.800)
         if location is not None:
             fq.update(location.get("freqs") or {})
@@ -433,6 +440,7 @@ class World:
         pw = ac.sys.avionics_ok
         self.nav1.update(ac, pw)
         self.nav2.update(ac, pw)
+        self.adf.update(ac, pw)
         # eventos de la física
         for ev in ac.events:
             self.events.append(ev)
@@ -465,6 +473,8 @@ def transfer_to_scene(old, loc):
     for k in ("nav1", "nav2"):
         a, b = getattr(old, k), getattr(w, k)
         b.freq, b.standby, b.obs = a.freq, a.standby, a.obs
+    w.adf.freq, w.adf.standby, w.show_adf = old.adf.freq, old.adf.standby, old.show_adf
+    w.frozen, w.sim_rate = old.frozen, old.sim_rate
     w.select_runway()
     w.traffic.reset()
     w.atc.callsign = old.atc.callsign

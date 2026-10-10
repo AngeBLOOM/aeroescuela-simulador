@@ -85,6 +85,19 @@ class VOR:
         self.kind = "VOR"
 
 
+class NDB:
+    """Radiofaro no direccional (o localizador de aproximación). Frecuencia en kHz; se recibe con el ADF."""
+
+    def __init__(self, ident, freq_khz, pos, elev, name="", range_nm=25.0):
+        self.ident = ident
+        self.freq = freq_khz
+        self.pos = np.array(pos, dtype=float)
+        self.elev = elev
+        self.name = name
+        self.range_m = range_nm * 1852.0
+        self.kind = "NDB"
+
+
 class ILS:
     def __init__(self, ident, freq, runway, end_ident, gs_angle=3.0):
         self.ident = ident
@@ -128,5 +141,8 @@ def build_airports():
         ILS("IVNT", 109.90, rw_vnt, "27"),
         VOR("ESC", 113.70, (1500.0, -900.0), 150.0, "Escuela"),
         VOR("VNT", 115.20, (17600.0, 5200.0), 265.0, "Valle Norte"),
+        # localizador de la 36 en la radiobaliza exterior (4 NM antes del umbral) y radiofaro de Valle Norte
+        NDB("ES", 350.0, (-800.0 - 4 * 1852.0, 0.0), 150.0, "Escuela (localizador)", 25.0),
+        NDB("VN", 280.0, (16200.0, 2600.0), 265.0, "Valle Norte", 50.0),
     ]
     return airports, navaids

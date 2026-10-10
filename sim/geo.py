@@ -18,7 +18,7 @@ import urllib.request
 
 import numpy as np
 
-from .airports import ILS, VOR, Airport, Runway
+from .airports import ILS, NDB, VOR, Airport, Runway
 
 R_EARTH = 6371008.8
 FT = 0.3048
@@ -103,7 +103,7 @@ class AirportDB:
             if r.get("closed") == "1":
                 continue
             self.runways.setdefault(r["airport_ident"].upper(), []).append(r)
-        self.navaids = [n for n in self._read("navaids.csv") if n["type"] in ("VOR", "VOR-DME", "VORTAC")]
+        self.navaids = [n for n in self._read("navaids.csv") if n["type"] in ("VOR", "VOR-DME", "VORTAC", "NDB", "NDB-DME")]
 
     def frequencies(self, ident):
         """Frecuencias publicadas del aeropuerto: {'TWR': 118.1, 'GND': 121.7, 'ATIS': 127.8, ...}."""
@@ -408,6 +408,34 @@ def fetch_features(data_dir, proj, progress=None, r_build=3800.0, r_forest=8000.
 
 
 # ======================================================================= escenario real
+NDB_RANGE_NM = {"HIGH": 75.0, "MEDIUM": 50.0, "LOW": 25.0}
+
+
+def navaid_from_row(n, proj, lat0, lon0):
+    """VOR o NDB de una fila de navaids.csv (OurAirports) en coordenadas locales; None si queda lejos del escenario
+    (60 km) o le faltan datos. Los VOR van en MHz y los NDB en kHz, con un alcance según su potencia."""
+    try:
+        la, lo = float(n["latitude_deg"]), float(n["longitude_deg"])
+        khz = float(n["frequency_khz"])
+    except (KeyError, ValueError):
+        return None
+    if abs(la - lat0) > 0.6 or abs(lo - lon0) > 0.8:
+        return None
+    nn, ee = proj.to_local(la, lo)
+    if math.hypot(nn, ee) >= 60000:
+        return None
+    try:
+        el = float(n["elevation_ft"]) * FT
+    except (KeyError, ValueError):
+        el = 0.0
+    if n.get("type", "").startswith("NDB"):
+        if not 190 <= khz <= 1750:
+            return None
+        return NDB(n["ident"], round(khz), (float(nn), float(ee)), el, n["name"],
+                   NDB_RANGE_NM.get((n.get("power") or "").upper(), 25.0))
+    return VOR(n["ident"], round(khz / 1000.0, 2), (float(nn), float(ee)), el, n["name"])
+
+
 def build_location(code, data_dir, progress=None, db=None, center=None):
     """Prepara todo lo necesario para volar en un aeropuerto real.
 
@@ -540,20 +568,9 @@ def build_location(code, data_dir, progress=None, db=None, center=None):
                     ils.synthetic = True
                     navaids.append(ils)
     for n in db.navaids:
-        try:
-            la, lo = float(n["latitude_deg"]), float(n["longitude_deg"])
-            fq = float(n["frequency_khz"]) / 1000.0
-        except ValueError:
-            continue
-        if abs(la - lat0) > 0.6 or abs(lo - lon0) > 0.8:
-            continue
-        nn, ee = proj.to_local(la, lo)
-        if math.hypot(nn, ee) < 60000:
-            try:
-                el = float(n["elevation_ft"]) * FT
-            except ValueError:
-                el = 0.0
-            navaids.append(VOR(n["ident"], round(fq, 2), (float(nn), float(ee)), el, n["name"]))
+        nv = navaid_from_row(n, proj, lat0, lon0)
+        if nv is not None:
+            navaids.append(nv)
     # edificios y bosques reales (si el servicio no responde, el escenario sigue sin ellos)
     feat_cache = os.path.join(_cache_dir(data_dir), f"feat_{key}.npz")
     buildings, forests = [], []

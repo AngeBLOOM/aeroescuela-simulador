@@ -397,6 +397,27 @@ class Gauges:
             self._text(surf, f"{nav.ident} {nav.dme_nm:4.1f} NM", (pos[0], pos[1] + r * 1.12), int(r * 0.16), COL["green"], bold=True)
         self._glass(surf, pos, r)
 
+    # ------------------------------------------------------------ ADF
+    def adf(self, surf, pos, r, adf, card=0.0, title="ADF"):
+        """ADF de rosa fija: la aguja amarilla marca hacia el NDB respecto al morro (rosa en 0 = arriba)."""
+        face = self.cache.get(("cdiface", r))
+        if face is None:
+            face, _ = self._blank(r)
+            self.cache[("cdiface", r)] = face
+        self._place(surf, face, pos, r)
+        rose = self._rot_card(r, card)
+        surf.blit(rose, rose.get_rect(center=(int(pos[0]), int(pos[1]))))
+        pygame.draw.polygon(surf, (255, 255, 255), [(pos[0], pos[1] - r * 0.92), (pos[0] - r * 0.06, pos[1] - r * 0.8),
+                                                     (pos[0] + r * 0.06, pos[1] - r * 0.8)])
+        self._text(surf, title, (pos[0], pos[1] - r * 0.3), int(r * 0.11), (180, 180, 180))
+        col = (255, 205, 40)
+        needle(surf, pos, adf.relative, r * 0.78, r * 0.07, col, tail=r * 0.62)
+        pygame.draw.circle(surf, (40, 40, 40), pos, int(r * 0.08))
+        txt = f"{adf.freq:.0f} kHz {adf.ident}" + (f" {adf.dist_nm:4.1f} NM" if adf.valid else "")
+        self._text(surf, txt, (pos[0], pos[1] + r * 1.12), int(r * 0.16), COL["green"] if adf.valid else (200, 120, 60),
+                   bold=True)
+        self._glass(surf, pos, r)
+
     # ------------------------------------------------------------ brújula
     def compass(self, surf, rect, hdg):
         rect = pygame.Rect(rect)

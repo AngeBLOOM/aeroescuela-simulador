@@ -239,6 +239,10 @@ def step(app, frame):
             app.state = "instructor"; app.instr_tab = "control"
         elif name == "congelado":
             app.state = "flight"
+        elif name == "adf":
+            app.cockpit_style = "2d"; app.panel.mode = "analog"; app.settings["pantalla_instr"] = "no"
+            app.start_lesson(FreeFlight("final10"))
+            app.world.show_adf = True
         elif name == "fotozoom":
             app.photo_cockpit().zoom = app.photo_cockpit().zoom_target = 2.1
         elif name == "instr":

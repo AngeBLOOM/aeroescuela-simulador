@@ -331,7 +331,10 @@ class PhotoCockpit:
         elif name == "cdi1":
             g.cdi(surf, p, r, world.nav1, "NAV 1")
         elif name == "cdi2":
-            g.cdi(surf, p, r, world.nav2, "NAV 2")
+            if world.show_adf:
+                g.adf(surf, p, r, world.adf)
+            else:
+                g.cdi(surf, p, r, world.nav2, "NAV 2")
         elif name == "tach":
             g.tach(surf, p, r, ac.sys.engine.rpm)
         elif name in ("fuel", "oil", "vac", "amp", "egt"):
@@ -407,7 +410,8 @@ class PhotoCockpit:
     def _radios(self, surf, rr, world, panel):
         f = panel.f
         pygame.draw.rect(surf, (12, 14, 18), rr)
-        rows = [("COM1", f"{world.com_freq:.3f}"), ("NAV1", f"{world.nav1.freq:.2f}"), ("NAV2", f"{world.nav2.freq:.2f}"),
+        rows = [("COM1", f"{world.com_freq:.3f}"), ("NAV1", f"{world.nav1.freq:.2f}"),
+                ("ADF", f"{world.adf.freq:.0f}") if world.show_adf else ("NAV2", f"{world.nav2.freq:.2f}"),
                 ("XPDR", f"{world.xpdr:04d}")]
         hh = rr.h / (len(rows) + 1)
         for i, (lab, val) in enumerate(rows):

@@ -168,13 +168,23 @@ class CockpitPanel:
         cr = int(52 * s)
         cx = cx0 + 2 * sp + r + 14 * s + cr
         for nav, yy, title in ((world.nav1, y1, "NAV 1"), (world.nav2, y2, "NAV 2")):
-            g.cdi(surf, (cx, yy), cr, nav, title)
             rr = (cx - cr, yy - cr, 2 * cr, 2 * cr)
-            d = ui.scroll(rr)
-            if d:
-                nav.obs = (nav.obs + d * 2) % 360
-            if ui.hover(rr):
-                ui.tooltip = "Rueda: girar el OBS (curso)"
+            if nav is world.nav2 and world.show_adf:
+                g.adf(surf, (cx, yy), cr, world.adf)
+                d = ui.scroll(rr)
+                if d:
+                    world.adf.tune(d * (10 if pygame.key.get_mods() & pygame.KMOD_SHIFT else 1))
+                if ui.hover(rr):
+                    ui.tooltip = "Rueda: sintonizar el ADF (kHz; Mayús: de 10 en 10) · Clic derecho: volver a NAV 2"
+            else:
+                g.cdi(surf, (cx, yy), cr, nav, title)
+                d = ui.scroll(rr)
+                if d:
+                    nav.obs = (nav.obs + d * 2) % 360
+                if ui.hover(rr):
+                    ui.tooltip = "Rueda: girar el OBS (curso)" + (" · Clic derecho: ver el ADF" if nav is world.nav2 else "")
+            if nav is world.nav2 and ui.hit(rr, right=True):
+                world.show_adf = not world.show_adf
         return cx + cr + 16 * s
 
     # ------------------------------------------------------------ cristal
@@ -258,8 +268,23 @@ class CockpitPanel:
         radio("COM 1", world.com_freq, world.com_standby, "{:.3f}", com_tune, com_swap, y)
         radio("NAV 1", world.nav1.freq, world.nav1.standby, "{:.2f}", nav_tune(world.nav1), world.nav1.swap,
               y + rh + 6 * s, world.nav1.ident if world.nav1.station else None)
-        radio("NAV 2", world.nav2.freq, world.nav2.standby, "{:.2f}", nav_tune(world.nav2), world.nav2.swap,
-              y + 2 * (rh + 6 * s), world.nav2.ident if world.nav2.station else None)
+        y2 = y + 2 * (rh + 6 * s)
+        if world.show_adf:
+            adf = world.adf
+
+            def adf_tune(d):
+                step = 10 if pygame.key.get_mods() & pygame.KMOD_SHIFT else 1
+                f_ = round(adf.standby + d * step)
+                adf.standby = float(190 if f_ > 1750 else (1750 if f_ < 190 else f_))
+            radio("ADF", adf.freq, adf.standby, "{:.0f}", adf_tune, adf.swap, y2, adf.ident if adf.station else None)
+        else:
+            radio("NAV 2", world.nav2.freq, world.nav2.standby, "{:.2f}", nav_tune(world.nav2), world.nav2.swap,
+                  y2, world.nav2.ident if world.nav2.station else None)
+        lab2 = pygame.Rect(x, y2, 46 * s, rh)
+        if ui.hit(lab2) or ui.hit(lab2, right=True):
+            world.show_adf = not world.show_adf
+        if ui.hover(lab2):
+            ui.tooltip = "Clic: cambiar entre NAV 2 y ADF (radiofaro NDB, en kHz)"
         # transpondedor
         yy = y + 3 * (rh + 6 * s)
         f.blit(surf, "XPDR", (x, yy + rh / 2), 13, COL["grey"], bold=True, anchor="midleft")

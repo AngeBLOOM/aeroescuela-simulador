@@ -320,6 +320,22 @@ class GlassCockpit:
                 tf = polar(c, r * 0.28, dc if nav.to_from == "TO" else dc + 180)
                 pygame.draw.polygon(surf, WHITE, [polar(tf, 8, dc if nav.to_from == "TO" else dc + 180),
                                                   polar(tf, 7, dc + 120), polar(tf, 7, dc - 120)])
+        # aguja de marcación 2 (ADF): doble línea cian hacia el NDB
+        adf = world.adf
+        if adf.valid:
+            a = adf.relative
+            for off in (-3, 3):
+                pygame.draw.line(surf, CYAN, polar(polar(c, r * 0.5, a), off, a + 90),
+                                 polar(polar(c, r - 22, a), off, a + 90), 2)
+                pygame.draw.line(surf, CYAN, polar(polar(c, -r * 0.5, a), off, a + 90),
+                                 polar(polar(c, -(r - 22), a), off, a + 90), 2)
+            pygame.draw.polygon(surf, CYAN, [polar(c, r - 14, a), polar(polar(c, r - 26, a), 7, a - 90),
+                                             polar(polar(c, r - 26, a), 7, a + 90)], 2)
+        bb = pygame.Rect(rect.right - 126, rect.bottom - 102, 120, 46)
+        pygame.draw.rect(surf, (0, 0, 0), bb, border_radius=4)
+        f.blit(surf, f"BRG2 ADF {adf.ident}", (bb.x + 6, bb.y + 4), 13, CYAN, mono=True, bold=True)
+        f.blit(surf, f"{adf.freq:4.0f}k " + (f"{adf.dist_nm:4.1f}NM" if adf.valid else "  --NM"), (bb.x + 6, bb.y + 24), 13,
+               WHITE, mono=True)
         # avión en el centro
         pygame.draw.line(surf, WHITE, (c[0], c[1] - 16), (c[0], c[1] + 14), 3)
         pygame.draw.line(surf, WHITE, (c[0] - 14, c[1] - 4), (c[0] + 14, c[1] - 4), 3)
@@ -511,6 +527,12 @@ class GlassCockpit:
                 pts = [polar(p, 8, d) for d in range(30, 390, 60)]
                 pygame.draw.polygon(surf, CYAN, pts, 2)
                 f.blit(surf, nv.ident, (p[0] + 10, p[1] + 2), 12, CYAN, bold=True)
+            elif nv.kind == "NDB":
+                p = to_px(*nv.pos)
+                for d in range(0, 360, 45):
+                    pygame.draw.circle(surf, (200, 120, 220), [int(v) for v in polar(p, 7, d)], 2)
+                pygame.draw.circle(surf, (200, 120, 220), p, 2)
+                f.blit(surf, nv.ident, (p[0] + 10, p[1] + 2), 12, (200, 120, 220), bold=True)
             elif nv.kind == "ILS":
                 a = to_px(*nv.threshold)
                 b = to_px(*(nv.threshold - nv.dir * 10 * NM))

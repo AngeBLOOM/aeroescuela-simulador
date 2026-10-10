@@ -57,7 +57,8 @@ def snapshot(app):
                    "pa_desconectado": bool(w.ap.disconnect_alert > 0), "puerta": bool(s.failures.get("door"))},
         "radio": {"com": w.com_freq, "com_reserva": w.com_standby, "nav1": w.nav1.freq, "nav1_obs": w.nav1.obs,
                   "nav1_cdi": r(w.nav1.cdi, 3), "nav1_gs": r(w.nav1.gs, 3), "nav1_valida": bool(w.nav1.valid),
-                  "nav1_hacia": w.nav1.to_from, "xpdr": w.xpdr},
+                  "nav1_hacia": w.nav1.to_from, "xpdr": w.xpdr,
+                  "adf_khz": w.adf.freq, "adf_valida": bool(w.adf.valid), "adf_relativa": r(w.adf.relative, 1)},
         "pa": {"conectado": bool(w.ap.engaged), "lateral": w.ap.lat, "vertical": w.ap.vert},
         "congelado": sorted(w.frozen), "ritmo": w.sim_rate,
     }

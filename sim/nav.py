@@ -1,7 +1,54 @@
-"""Receptores de navegación: VOR, ILS (localizador y senda), DME y radiobalizas."""
+"""Receptores de navegación: VOR, ILS (localizador y senda), DME, radiobalizas y ADF (NDB)."""
 import math
 
-from .mathx import NM, FT, clamp, wrap180
+from .mathx import NM, FT, clamp, wrap180, wrap360
+
+
+class AdfRadio:
+    """Receptor ADF: sintoniza un NDB (190-1750 kHz) y la aguja marca hacia él, relativa al morro (0 = delante,
+    en el sentido de las agujas del reloj). Sin señal, la aguja se queda en 90° como en el avión."""
+
+    def __init__(self, navaids, freq=350.0):
+        self.navaids = navaids
+        self.freq = freq
+        self.standby = 280.0
+        self.station = None
+        self.valid = False
+        self.bearing_to = 0.0          # verdadera, hacia el NDB
+        self.relative = 90.0           # marcación relativa (aguja)
+        self.dist_nm = None
+
+    def swap(self):
+        self.freq, self.standby = self.standby, self.freq
+
+    def tune(self, delta):
+        """Sintoniza en kHz enteros dentro de 190-1750 (da la vuelta en los extremos)."""
+        f = round(self.freq + delta)
+        self.freq = float(190 if f > 1750 else (1750 if f < 190 else f))
+
+    def update(self, ac, powered=True):
+        self.station = None
+        self.valid = False
+        self.dist_nm = None
+        if powered:
+            x, y = ac.pos[0], ac.pos[1]
+            best = None
+            for nv in self.navaids:
+                if nv.kind == "NDB" and abs(nv.freq - self.freq) < 0.5:
+                    d = math.hypot(nv.pos[0] - x, nv.pos[1] - y)
+                    if d < nv.range_m and (best is None or d < best[0]):
+                        best = (d, nv)
+            if best is not None:
+                d, nv = best
+                self.station = nv
+                self.valid = True
+                self.dist_nm = d / NM
+                self.bearing_to = math.degrees(math.atan2(nv.pos[1] - y, nv.pos[0] - x)) % 360
+        self.relative = wrap360(self.bearing_to - ac.heading) if self.valid else 90.0
+
+    @property
+    def ident(self):
+        return self.station.ident if self.station else "--"
 
 
 class NavRadio:
@@ -45,7 +92,7 @@ class NavRadio:
             return
         x, y, alt = ac.pos[0], ac.pos[1], ac.alt_msl
         for nv in self.navaids:
-            if abs(nv.freq - self.freq) < 0.01:
+            if nv.kind != "NDB" and abs(nv.freq - self.freq) < 0.01:
                 dx, dy = x - nv.pos[0], y - nv.pos[1]
                 d = math.hypot(dx, dy)
                 if d < nv.range_m:

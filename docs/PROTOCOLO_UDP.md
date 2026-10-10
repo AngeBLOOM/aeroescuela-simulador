@@ -39,7 +39,7 @@ Unidades: altitudes en **pies**, velocidades en **nudos**, ángulos en **grados*
  "avisos":{"perdida":false, "volt_bajo":false, "aceite_bajo":false, "comb_bajo":false,
            "tren_inseguro":false, "pa_desconectado":false, "puerta":false},
  "radio":{"com":118.05, "com_reserva":121.7, "nav1":108.9, "nav1_obs":285, "nav1_cdi":-0.12, "nav1_gs":0.05,
-          "nav1_valida":true, "nav1_hacia":"TO", "xpdr":1200},
+          "nav1_valida":true, "nav1_hacia":"TO", "xpdr":1200, "adf_khz":350.0, "adf_valida":true, "adf_relativa":12.5},
  "pa":{"conectado":false, "lateral":"ROL", "vertical":"PIT"},
  "congelado":[], "ritmo":1}
 ```
@@ -58,6 +58,7 @@ Unidades: altitudes en **pies**, velocidades en **nudos**, ángulos en **grados*
 | `frenos` | izquierdo y derecho, 0 a 1 |
 | `avisos` | luces de aviso del tablero: encender un LED por cada `true` |
 | `nav1_cdi` / `nav1_gs` | desvío del localizador/VOR y de la senda, −1 a 1 (a fondo de escala) |
+| `adf_relativa` | marcación relativa del NDB sintonizado (0 = delante, en el sentido de las agujas); 90 sin señal |
 | `congelado` / `ritmo` | lo que el instructor tiene congelado y el ritmo del tiempo (1, 2 o 4) |
 
 ## Ejemplo de receptor (Python)
