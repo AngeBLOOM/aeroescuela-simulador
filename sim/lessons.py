@@ -296,6 +296,9 @@ class Lesson:
         self.thr, self.hdg, self.d, self.r = world.runway_frame()
         self.elev_ft = world.home.elev / FT
         self.build(world)
+        # build puede recolocar el avión (p. ej. más alto): los instrumentos arrancan ya en la posición final,
+        # sin que el altímetro «viaje» y dé un pico falso de velocidad vertical
+        world.ind.reset(world.ac, world.kollsman)
         self.idx = 0
         self._enter(world)
 
@@ -410,11 +413,18 @@ class Lesson:
 
     def result(self, world):
         items = []
+        # el mismo criterio repetido en varios pasos (mismo nombre y tolerancia) se puntúa en una sola fila
+        groups = {}
         for m in self.all_monitors:
             if m.tot_t < 0.5:
                 continue                      # paso no realizado: no se puntúa
-            pts = round(m.weight * m.frac)
-            items.append((m.name, pts, m.weight, f"{m.frac * 100:.0f}% del tiempo dentro de {m.target}"))
+            g = groups.setdefault((m.name, m.target), [0.0, 0.0, 0])
+            g[0] += m.ok_t
+            g[1] += m.tot_t
+            g[2] += m.weight
+        for (name, target), (ok_t, tot_t, weight) in groups.items():
+            frac = ok_t / tot_t
+            items.append((name, round(weight * frac), weight, f"{frac * 100:.0f}% del tiempo dentro de {target}"))
         if self.landing is not None:
             items += self.landing.score()
         items += self.extra_items(world)

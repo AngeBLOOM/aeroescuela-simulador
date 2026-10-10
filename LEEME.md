@@ -20,6 +20,35 @@ python main.py
 Requisitos: Windows 10/11, Python 3.10+ y una GPU con OpenGL 3.3 (sirve la gráfica integrada).
 Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requirements.txt`.
 
+## Novedades (octubre de 2026)
+
+- **Cabina física:**
+  - calibración de ejes y sensibilidad por eje (zona muerta y curva, con la curva dibujada);
+  - setas asignables y frenos de pie diferenciales;
+  - interruptores sincronizados al empezar el vuelo;
+  - mandos conectados en caliente y mandos iguales distinguidos por número de serie o puerto;
+  - el joystick genérico ya no pisa a los mandos asignados.
+  Ver `docs/GUIA_CABINA_FISICA.md`.
+- **Física:**
+  - el centro de gravedad de la hoja de peso y balance cambia la estabilidad y la fuerza de profundidad;
+  - amortiguación `Cmadot`;
+  - turbulencia que hace girar el avión (Dryden);
+  - barrena con recuperación PARE;
+  - hielo en el carburador (C152 y PA-28 Warrior; **F6** = calefacción).
+- **Navegación:**
+  - radiofaros NDB y ADF (clic derecho en el NAV 2);
+  - declinación magnética real: la brújula, el direccional, el HSI, el VOR, el viento de la torre y los rumbos dictados son magnéticos;
+  - **GPS** con plan de vuelo, D→ y OBS en el mapa del G1000 (**F7** = CDI GPS/VLOC).
+- **Instructor:**
+  - congelar altitud, posición o combustible;
+  - tiempo ×2/×4;
+  - mover el avión;
+  - humedad;
+  - fallas nuevas.
+- **Lecciones nuevas:** hielo en el carburador y barrena.
+- **Salida de datos por UDP** para instrumentos, paneles y movimiento: `docs/PROTOCOLO_UDP.md`.
+- **Pruebas:** `python tools/pruebas.py` ejecuta 17 pruebas sin ventana; GitHub las ejecuta en cada pull request.
+
 ## Qué incluye
 
 **Modelo de vuelo**
@@ -40,9 +69,12 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
     Vmc ≈ 68 kt y ascenso con un motor ≈ 140‑300 ft/min según embanderado.
 
 **Cabina**
-- **Cabina 3D por dentro** (por defecto): tablero con los instrumentos reales montado en 3D y pulsable con el ratón,
-  visera, brújula, montantes, techo, puertas, asientos, capó del motor a la vista, disco de la hélice, volantes que
-  se mueven con tus mandos y reflejos del sol en el parabrisas. Tecla **P**: cabina 3D · panel 2D · sin panel.
+- **Cabina automática** (por defecto): con la consola física conectada no se dibuja ningún mando (solo el paisaje,
+  con la franja de instrumentos debajo si no van en su propia pantalla); sin consola, el panel 2D, que se maneja
+  con el ratón y con el teclado o un joystick USB. Cambia sola al enchufar o quitar la consola.
+- **Cabina 3D por dentro**: tablero con los instrumentos reales montado en 3D y pulsable con el ratón,
+  visera, brújula, montantes, techo, puertas, asientos, capó del motor a la vista, disco de la hélice y reflejos
+  del sol en el parabrisas; volantes ocultos (tecla **Y**). Tecla **P**: automática · panel 2D · cabina 3D · sin panel.
 - Aspecto fotográfico: marcos metálicos con tornillos, esferas, reflejo del cristal, tablero texturizado y marcos
   físicos de las pantallas G1000. Las texturas se generan por código con `python tools/make_assets.py`
   (carpeta `assets/`); si se sustituyen por fotos o imágenes de IA con el mismo nombre, el simulador las usa.
@@ -228,13 +260,9 @@ CC BY‑NC‑SA); relieve AWS Terrain Tiles / Mapzen; edificios y bosques © Ope
 vectoriales de Esri; aeropuertos y radioayudas OurAirports (dominio público).
 Uso personal y educativo.
 
-## Cabina fotográfica e imágenes propias
+## Imágenes propias
 
-Cada avión tiene una foto de cabina (`assets/cabina_<avión>.jpg`) con las ventanas, relojes y pantallas en
-verde croma: el simulador recorta el verde, detecta cada hueco y dibuja ahí el instrumento vivo (seis básicos,
-NAV, tacómetro, motor, radios, avisos o las pantallas G1000). Tecla **P** para cambiar de cabina y **5** para
-acercar la vista a los instrumentos. Las nubes, el asfalto y el césped también son fotos (generadas con IA);
-para cambiarlas use `python tools/importar_imagenes.py` (nubes sobre fondo negro → transparencia; texturas →
+Las nubes, el asfalto y el césped son fotos (generadas con IA); para cambiarlas use `python tools/importar_imagenes.py` (nubes sobre fondo negro → transparencia; texturas →
 repetibles sin costuras).
 
 ## Cabina física: pantalla solo de instrumentos
@@ -316,12 +344,12 @@ controlador de ejemplo con radar, radio y frases rápidas). Prueba automática: 
 | ← / → | alabeo | , / . | marcador de rumbo |
 | A / D | pedales y rueda de morro | Tab | cabina clásica / G1000 |
 | W / S | gases (Shift: rápido) | 1 2 3 4 | cabina · exterior · torre · libre |
-| P | cabina 3D · foto · panel 2D · sin panel | Rueda | zoom / mandos del tablero |
+| P | cabina automática · panel 2D · cabina 3D · sin panel | Rueda | zoom / mandos del tablero |
 | Q / E | compensador | Ctrl+flechas o botón derecho | mirar alrededor |
 | F / V | flaps | K | lista de verificación (tableta) |
 | T | radio: torre / rodadura / ATIS | 1–9 | (con la radio abierta) elegir transmisión |
 | O | mandos de cada sistema (motor, combustible, eléctrico, luces, flaps/compensador, tren/frenos) | F2 | pantalla solo de instrumentos (cabina física) |
-| 5 | vista de instrumentos | Y | mostrar / ocultar volante |
+| 5 | vista de instrumentos | Y | mostrar / ocultar volantes (cabina 3D) |
 | Espacio / B | frenos / freno de estacionamiento | R | repetición instantánea |
 | M / N | mezcla | I | estación del instructor |
 | G | tren (Arrow) | Esc | pausa / menú |
@@ -350,9 +378,10 @@ monitores delante y un 4.º detrás del tablero para los instrumentos).
 main.py              punto de entrada
 sim/                 física y lógica (sin gráficos)
   flightmodel.py     modelo 6DOF         systems.py   motor, eléctrico, vacío, flaps, tren
-  aircraft_data.py   C172S y PA-28R       atmosphere.py ISA, viento, turbulencia
+  aircraft_data.py   los 7 aviones        atmosphere.py ISA, viento, turbulencia, humedad
   terrain.py         terreno              airports.py   aeródromos del escenario escuela
-  nav.py             VOR/ILS/DME          autopilot.py  piloto automático
+  nav.py             VOR/ILS/DME/ADF      autopilot.py  piloto automático
+  gps.py             GPS y plan de vuelo  weight.py     peso, centrado y rendimiento
   world.py           integra todo         lessons.py    programa ACS y evaluación
   geo.py             datos reales         recorder.py   caja negra
   traffic.py         tráfico IA           atc.py        torre, rodadura, ATIS y fraseología
@@ -364,8 +393,8 @@ app/                 aplicación, menús, sonido sintetizado, voz, radio VHF (ra
 tests/               pruebas: física, piloto automático, lecciones con "alumno robot", geodatos
 ```
 
-Pruebas sin ventana: `python tests/test_physics.py`, `python tests/test_ap.py`,
-`python tests/test_lessons.py` (con `LOC=LEMD` para probar en un aeropuerto real).
+Pruebas sin ventana: `python tools/pruebas.py` (todas las que no necesitan internet, las mismas que GitHub en cada
+pull request) o una sola, p. ej. `python tests/test_lessons.py` (con `LOC=LEMD` para probar en un aeropuerto real).
 
 ## Licencias de los datos
 

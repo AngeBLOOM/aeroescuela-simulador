@@ -44,14 +44,16 @@ def snapshot(app):
         "motores": [{"rpm": r(en.rpm, 0), "map_inhg": r(en.map_inhg), "aceite_psi": r(en.oil_press, 1),
                      "aceite_c": r(en.oil_temp, 1), "egt_f": r(en.egt, 0), "cht_f": r(en.cht, 0),
                      "flujo_lh": r(en.fuel_flow, 1), "gases": r(en.throttle, 3), "mezcla": r(en.mixture, 3),
-                     "magnetos": en.magnetos, "en_marcha": bool(en.running)} for en in s.engines],
+                     "magnetos": en.magnetos, "en_marcha": bool(en.running), "hielo_carb": r(en.carb_ice, 3)}
+                    for en in s.engines],
         "flaps": r(s.flaps, 1), "tren": r(s.gear_pos, 3), "freno_estac": bool(s.parking_brake),
         "frenos": [r(max(ac.brake, ac.brake_l), 3), r(max(ac.brake, ac.brake_r), 3)],
         "compensador": r(ac.trim, 3), "en_tierra": bool(ac.on_ground), "choque": bool(ac.crashed),
+        "barrena": r(ac.spin * ac.spin_dir, 2),
         "bus_v": r(s.bus_volts, 1), "comb_l": r(s.fuel_l, 1),
         "luces": {k: bool(v) for k, v in s.lights.items()},
         "interruptores": {"bateria": bool(s.master), "alternador": bool(s.alternator), "avionica": bool(s.avionics),
-                          "bomba": bool(s.fuel_pump), "pitot": bool(s.pitot_heat)},
+                          "bomba": bool(s.fuel_pump), "pitot": bool(s.pitot_heat), "calef_carb": bool(s.carb_heat)},
         "avisos": {"perdida": bool(s.stall_warning), "volt_bajo": bool(s.master and s.bus_volts < 24.5),
                    "aceite_bajo": any(en.running and en.oil_press < 20 for en in s.engines),
                    "comb_bajo": bool(low_fuel), "tren_inseguro": bool(t.retractable and 0.02 < s.gear_pos < 0.98),
@@ -61,6 +63,9 @@ def snapshot(app):
                   "nav1_hacia": w.nav1.to_from, "xpdr": w.xpdr,
                   "adf_khz": w.adf.freq, "adf_valida": bool(w.adf.valid), "adf_relativa": r(w.adf.relative, 1)},
         "pa": {"conectado": bool(w.ap.engaged), "lateral": w.ap.lat, "vertical": w.ap.vert},
+        "gps": {"cdi_fuente": w.cdi_src, "valido": bool(w.gps.valid), "punto": w.gps.ident if w.gps.valid else None,
+                "dist_nm": r(w.gps.dis_nm, 2) if w.gps.valid else None, "dtk": w.gps.dtk if w.gps.valid else None,
+                "xtk_nm": r(w.gps.xtk_nm, 3), "obs": bool(w.gps.obs_mode)},
         "congelado": sorted(w.frozen), "ritmo": w.sim_rate,
     }
 

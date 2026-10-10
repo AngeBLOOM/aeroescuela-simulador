@@ -41,6 +41,7 @@ FUNCTIONS = [
     ("sw_taxi", "Luz de rodaje", "interruptor"),
     ("sw_landing", "Luz de aterrizaje", "interruptor"),
     ("sw_pitot", "Calefacción del pitot", "interruptor"),
+    ("sw_calef_carb", "Calefacción al carburador", "interruptor"),
     ("sw_tren", "Palanca del tren (ON = abajo)", "interruptor"),
     ("sw_freno_est", "Freno de estacionamiento", "interruptor"),
     ("sw_motor1", "MOTOR / ENGINE MASTER 1 (FADEC)", "interruptor"),
@@ -419,6 +420,10 @@ class Hardware:
     def has_axis(self, key):
         return self.axis(key) is not None
 
+    def console_connected(self):
+        """True si hay cabina física: el volante (alabeo y cabeceo) asignado y su mando enchufado."""
+        return self.has_axis("eje_alabeo") and self.has_axis("eje_cabeceo")
+
     # ------------------------------------------------------------ aplicar al avión
     def update(self, dt, world, app):
         self.brake_cmd = self.brake_l = self.brake_r = 0.0   # sin lectura (mando quitado) no queda frenado
@@ -464,6 +469,7 @@ class Hardware:
             return (lambda: bool(getattr(obj, name)), lambda on: setattr(obj, name, on))
         sw = {"sw_bat": attr(s, "master"), "sw_alt": attr(s, "alternator"), "sw_avionica": attr(s, "avionics"),
               "sw_bomba": attr(s, "fuel_pump"), "sw_pitot": attr(s, "pitot_heat"), "sw_tren": attr(s, "gear_down"),
+              "sw_calef_carb": attr(s, "carb_heat"),
               "sw_freno_est": attr(s, "parking_brake")}
         for k, light in (("sw_beacon", "beacon"), ("sw_nav", "nav"), ("sw_strobe", "strobe"), ("sw_taxi", "taxi"),
                          ("sw_landing", "landing")):
