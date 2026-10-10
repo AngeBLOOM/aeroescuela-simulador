@@ -167,14 +167,33 @@ class CockpitPanel:
         # CDI de NAV1 y NAV2
         cr = int(52 * s)
         cx = cx0 + 2 * sp + r + 14 * s + cr
-        for nav, yy, title in ((world.nav1, y1, "NAV 1"), (world.nav2, y2, "NAV 2")):
-            g.cdi(surf, (cx, yy), cr, nav, title)
+        src1 = world.nav_source()
+        for nav, yy, title in ((src1, y1, "GPS" if src1 is world.gps else "NAV 1"), (world.nav2, y2, "NAV 2")):
             rr = (cx - cr, yy - cr, 2 * cr, 2 * cr)
-            d = ui.scroll(rr)
-            if d:
-                nav.obs = (nav.obs + d * 2) % 360
-            if ui.hover(rr):
-                ui.tooltip = "Rueda: girar el OBS (curso)"
+            if nav is world.nav2 and world.show_adf:
+                g.adf(surf, (cx, yy), cr, world.adf)
+                d = ui.scroll(rr)
+                if d:
+                    world.adf.tune(d * (10 if pygame.key.get_mods() & pygame.KMOD_SHIFT else 1))
+                if ui.hover(rr):
+                    ui.tooltip = "Rueda: sintonizar el ADF (kHz; Mayús: de 10 en 10) · Clic derecho: volver a NAV 2"
+            elif nav is world.gps:
+                g.cdi(surf, (cx, yy), cr, nav, title)
+                d = ui.scroll(rr)
+                if d and nav.obs_mode:
+                    nav.set_obs(True, nav.obs_course + d * 2)
+                if ui.hover(rr):
+                    ui.tooltip = ("Rueda: curso del modo OBS del GPS" if nav.obs_mode else
+                                  "CDI en GPS: sigue el plan de vuelo (F7: volver a VLOC)")
+            else:
+                g.cdi(surf, (cx, yy), cr, nav, title)
+                d = ui.scroll(rr)
+                if d:
+                    nav.obs = (nav.obs + d * 2) % 360
+                if ui.hover(rr):
+                    ui.tooltip = "Rueda: girar el OBS (curso)" + (" · Clic derecho: ver el ADF" if nav is world.nav2 else "")
+            if nav is world.nav2 and ui.hit(rr, right=True):
+                world.show_adf = not world.show_adf
         return cx + cr + 16 * s
 
     # ------------------------------------------------------------ cristal
@@ -258,8 +277,23 @@ class CockpitPanel:
         radio("COM 1", world.com_freq, world.com_standby, "{:.3f}", com_tune, com_swap, y)
         radio("NAV 1", world.nav1.freq, world.nav1.standby, "{:.2f}", nav_tune(world.nav1), world.nav1.swap,
               y + rh + 6 * s, world.nav1.ident if world.nav1.station else None)
-        radio("NAV 2", world.nav2.freq, world.nav2.standby, "{:.2f}", nav_tune(world.nav2), world.nav2.swap,
-              y + 2 * (rh + 6 * s), world.nav2.ident if world.nav2.station else None)
+        y2 = y + 2 * (rh + 6 * s)
+        if world.show_adf:
+            adf = world.adf
+
+            def adf_tune(d):
+                step = 10 if pygame.key.get_mods() & pygame.KMOD_SHIFT else 1
+                f_ = round(adf.standby + d * step)
+                adf.standby = float(190 if f_ > 1750 else (1750 if f_ < 190 else f_))
+            radio("ADF", adf.freq, adf.standby, "{:.0f}", adf_tune, adf.swap, y2, adf.ident if adf.station else None)
+        else:
+            radio("NAV 2", world.nav2.freq, world.nav2.standby, "{:.2f}", nav_tune(world.nav2), world.nav2.swap,
+                  y2, world.nav2.ident if world.nav2.station else None)
+        lab2 = pygame.Rect(x, y2, 46 * s, rh)
+        if ui.hit(lab2) or ui.hit(lab2, right=True):
+            world.show_adf = not world.show_adf
+        if ui.hover(lab2):
+            ui.tooltip = "Clic: cambiar entre NAV 2 y ADF (radiofaro NDB, en kHz)"
         # transpondedor
         yy = y + 3 * (rh + 6 * s)
         f.blit(surf, "XPDR", (x, yy + rh / 2), 13, COL["grey"], bold=True, anchor="midleft")
@@ -299,7 +333,7 @@ class CockpitPanel:
         bw = (w - 14 * s - 6 * 6 * s) / 7
         btns = [("AP", ap.engaged, lambda: ap.toggle(ac), "Conectar/desconectar piloto automático (Z)"),
                 ("HDG", ap.lat == "HDG", lambda: ap.set_hdg(ac), "Mantener rumbo del marcador (X)"),
-                ("NAV", ap.lat == "NAV" or (ap.nav_armed and not ap.gs_armed), lambda: ap.set_nav(ac, False), "Seguir VOR/LOC de NAV1"),
+                ("NAV", ap.lat == "NAV" or (ap.nav_armed and not ap.gs_armed), lambda: ap.set_nav(ac, False), "Seguir el GPS o el VOR/LOC de NAV 1 (selector CDI)"),
                 ("APR", ap.lat == "APR" or ap.gs_armed, lambda: ap.set_nav(ac, True), "Aproximación ILS (LOC + senda)"),
                 ("ALT", ap.vert == "ALT", lambda: ap.set_alt(ac), "Mantener altitud (C)"),
                 ("VS", ap.vert == "VS", lambda: ap.set_vs(ac), "Velocidad vertical"),
@@ -508,6 +542,9 @@ class CockpitPanel:
         ]
         if sysm.twin:
             items = items[:-2]
+        if ac.t.carburetor:
+            items.append(("CALEF CARB", sysm.carb_heat, lambda: setattr(sysm, "carb_heat", not sysm.carb_heat),
+                          "Calefacción al carburador (F6): úsela si bajan las rpm o el motor va irregular"))
         for lab, val, fn, tip in items:
             if ui.toggle(surf, (x, y, sw, h), lab, val, size=10, tip=tip):
                 fn()

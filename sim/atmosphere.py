@@ -17,6 +17,7 @@ class Weather:
     def __init__(self):
         self.qnh_hpa = 1013.25
         self.temp_offset = 0.0          # desviación ISA en °C
+        self.dew_spread = 8.0           # temperatura − punto de rocío (°C): pequeño = aire húmedo
         self.wind_dir = 360.0           # grados desde donde sopla
         self.wind_kt = 5.0
         self.gust_kt = 0.0
@@ -62,7 +63,7 @@ class Weather:
             wx = " -RA" if self.rain < 0.35 else (" RA" if self.rain < 0.75 else " +RA")
         cb = "CB" if self.storm else ""
         return (f"{int(self.wind_dir) % 360:03d}{int(self.wind_kt):02d}{gust}KT {vis}{wx} "
-                f"{nub}{base:03d}{cb} {int(t):02d}/{int(t - 8):02d} Q{int(round(self.qnh_hpa))}")
+                f"{nub}{base:03d}{cb} {int(t):02d}/{int(round(t - self.dew_spread)):02d} Q{int(round(self.qnh_hpa))}")
 
 
 def rain_visibility(rain):
@@ -83,6 +84,7 @@ class Atmosphere:
         self.w = weather or Weather()
         self.rng = random.Random(seed)
         self.turb = np.zeros(3)
+        self.turb_level, self.sig_w, self.L_w = 0.0, 0.0, 265.0
         self.gust_state = 0.0
         self.gust_target = 0.0
         self.gust_timer = 0.0
@@ -99,6 +101,10 @@ class Atmosphere:
         self.thunder = []               # truenos pendientes: [segundos hasta oírse, volumen]
 
     # ------------------------------------------------------------ propiedades
+    def moisture_spread(self):
+        """Diferencia temperatura − rocío en el avión (°C): con lluvia el aire está casi saturado."""
+        return min(self.w.dew_spread, 1.0) if self.rain_here > 0.2 else self.w.dew_spread
+
     def properties(self, alt_m):
         """Devuelve (T [K], p [Pa], rho [kg/m3], a [m/s]) a una altitud MSL."""
         h = clamp(alt_m, -500.0, 11000.0)
@@ -187,6 +193,8 @@ class Atmosphere:
         else:
             self.wet = max(0.0, self.wet - dt / 1200.0)
         turb_level = w.turbulence + 0.9 * self.storm_core + 0.35 * self.storm_near
+        self.turb_level = turb_level
+        self.sig_w, self.L_w = 0.0, 265.0      # intensidad y escala de la ráfaga vertical (turbulencia de giro)
         # ráfagas
         self.gust_timer -= dt
         if self.gust_timer <= 0:
@@ -201,6 +209,7 @@ class Atmosphere:
             sig_w = turb_level * 3.2 * (1.0 if h > 300 else 0.6 + 0.4 * h / 300)
             sig_uv = sig_w * clamp(1.0 / (0.177 + 0.000823 * h) ** 0.4, 1.0, 2.0)
             sig = (sig_uv, sig_uv, sig_w)
+            self.sig_w, self.L_w = sig_w, L * 0.5
             for i in range(3):
                 tau = (L * (0.5 if i == 2 else 1.0)) / V
                 a = math.exp(-dt / tau)
