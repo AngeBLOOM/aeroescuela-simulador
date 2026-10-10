@@ -76,9 +76,6 @@ def step(app, frame):
         elif name == "da40cab":
             app.world.set_aircraft("da40")
             app.start_lesson(FreeFlight("final3"))
-        elif name == "foto":
-            app.cockpit_style = "foto"
-            app.camera.anim = (-0.07, 0.0, 72.0)
         elif name == "pa28rcab":
             app.world.set_aircraft("pa28r")
             app.panel.mode = "analog"
@@ -87,11 +84,11 @@ def step(app, frame):
             app.start_lesson(FreeFlight("pista"))
             app.camera.set_mode("exterior")
         elif name == "p2d":
-            app.cockpit_style = "2d"; app.panel.mode = "analog"; app.camera.set_mode("cabina")
+            app.cockpit_mode = "2d"; app.panel.mode = "analog"; app.camera.set_mode("cabina")
         elif name == "glass2d":
-            app.cockpit_style = "2d"; app.panel.mode = "glass"
+            app.cockpit_mode = "2d"; app.panel.mode = "glass"
         elif name == "p3d":
-            app.cockpit_style = "3d"; app.panel.mode = "analog"
+            app.cockpit_mode = "3d"; app.panel.mode = "analog"
             app.camera.head_pitch = -0.21; app.camera.fov = 78.0
         elif name == "mirarder":
             app.camera.anim = None; app.camera.head_yaw = 1.75; app.camera.head_pitch = -0.35; app.camera.fov = 85.0
@@ -244,7 +241,7 @@ def step(app, frame):
             app.state = "flight"
         elif name in ("gps", "gps_fpl", "gps_dto"):
             if name == "gps":
-                app.cockpit_style = "2d"; app.panel.mode = "glass"; app.settings["pantalla_instr"] = "no"
+                app.cockpit_mode = "2d"; app.panel.mode = "glass"; app.settings["pantalla_instr"] = "no"
                 app.start_lesson(FreeFlight("crucero"))
                 g = app.world.gps
                 for ident, kind in (("ESC", "VOR"), ("VN", "NDB"), ("VNT", "APT")):
@@ -254,16 +251,14 @@ def step(app, frame):
                 app.world.cdi_src = "GPS"
             app.panel.glass.gps_page = {"gps": None, "gps_fpl": "fpl", "gps_dto": "dto"}[name]
         elif name == "c152":
-            app.cockpit_style = "2d"; app.panel.mode = "analog"; app.settings["pantalla_instr"] = "no"
+            app.cockpit_mode = "2d"; app.panel.mode = "analog"; app.settings["pantalla_instr"] = "no"
             app.world.set_aircraft("c152")
             app.start_lesson(LB["hielo_carb"])
             app.world.ac.sys.carb_heat = True
         elif name == "adf":
-            app.cockpit_style = "2d"; app.panel.mode = "analog"; app.settings["pantalla_instr"] = "no"
+            app.cockpit_mode = "2d"; app.panel.mode = "analog"; app.settings["pantalla_instr"] = "no"
             app.start_lesson(FreeFlight("final10"))
             app.world.show_adf = True
-        elif name == "fotozoom":
-            app.photo_cockpit().zoom = app.photo_cockpit().zoom_target = 2.1
         elif name == "instr":
             app.camera.toggle_instrument_view()
         elif name == "realmenu":
@@ -277,18 +272,18 @@ def step(app, frame):
             app.state = "menu"
         elif name == "radio":
             app.panel.mode = "glass"
-            app.cockpit_style = "3d"
+            app.cockpit_mode = "3d"
             app.start_lesson(FreeFlight("punto_espera"))
             app.world.com_freq = app.world.freqs["TWR"]
             app.show_radio = True
             app.radio_select(1)
         elif name == "trafico":
             app.panel.mode = "glass"
-            app.cockpit_style = "2d"
+            app.cockpit_mode = "2d"
             app.start_lesson(FreeFlight("viento_cola"))
             app.show_radio = False
         elif name == "torre":
-            app.cockpit_style = "3d"
+            app.cockpit_mode = "3d"
             app.start_lesson(FreeFlight("plataforma"))
             app.camera.set_mode("torre")
         elif name == "ils":

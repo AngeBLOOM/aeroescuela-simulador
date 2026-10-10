@@ -333,7 +333,7 @@ class CockpitPanel:
         bw = (w - 14 * s - 6 * 6 * s) / 7
         btns = [("AP", ap.engaged, lambda: ap.toggle(ac), "Conectar/desconectar piloto automático (Z)"),
                 ("HDG", ap.lat == "HDG", lambda: ap.set_hdg(ac), "Mantener rumbo del marcador (X)"),
-                ("NAV", ap.lat == "NAV" or (ap.nav_armed and not ap.gs_armed), lambda: ap.set_nav(ac, False), "Seguir VOR/LOC de NAV1"),
+                ("NAV", ap.lat == "NAV" or (ap.nav_armed and not ap.gs_armed), lambda: ap.set_nav(ac, False), "Seguir el GPS o el VOR/LOC de NAV 1 (selector CDI)"),
                 ("APR", ap.lat == "APR" or ap.gs_armed, lambda: ap.set_nav(ac, True), "Aproximación ILS (LOC + senda)"),
                 ("ALT", ap.vert == "ALT", lambda: ap.set_alt(ac), "Mantener altitud (C)"),
                 ("VS", ap.vert == "VS", lambda: ap.set_vs(ac), "Velocidad vertical"),

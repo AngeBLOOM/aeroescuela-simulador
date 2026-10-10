@@ -85,6 +85,8 @@ class Gps:
         self.active = 0
         self.direct = None
         self.obs_mode = False
+        self.origin = None
+        self._from_here = False
 
     def activate(self, index):
         """Activa el tramo hacia plan[index] desde el punto anterior (o desde la posición actual si es el primero)."""
