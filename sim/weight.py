@@ -92,10 +92,19 @@ class WeightBalance:
                     ok_bag=self.loads.get("bag", 0) <= dict((k, mx) for k, _n, _a, mx in d["stations"])["bag"])
 
     def apply(self, t, fuel_l):
-        """Pone el peso en el modelo de vuelo: masa total = vacío + carga + combustible."""
+        """Pone el peso y el centrado en el modelo de vuelo: masa total = vacío + carga + combustible, y el CG,
+        que cambia la estabilidad y la fuerza de profundidad (sim/flightmodel.py, cg_dx)."""
         r = self.compute(fuel_l, t.fuel_density)
         t.payload = max(0.0, r["w_kg"] - fuel_l * t.fuel_density - t.empty_mass)
+        t.cg_ref_in = reference_cg(t)
+        t.cg_in = r["cg"]
         return r
+
+
+def reference_cg(t):
+    """CG (pulgadas desde el datum) con que se ajustó el modelo de vuelo: la carga por defecto (piloto e instructor,
+    10 kg de equipaje) con 3/4 de combustible, como empieza cada vuelo."""
+    return WeightBalance(t.id).compute(t.fuel_capacity * 0.75, t.fuel_density)["cg"]
 
     def performance(self, w_lb, field_elev_ft, qnh_hpa, oat_c, headwind_kt, grass=False):
         """Distancias de despegue y aterrizaje (ft) corregidas por altitud de presión, temperatura,

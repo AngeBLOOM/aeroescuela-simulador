@@ -1,0 +1,24 @@
+# Pruebas del simulador en cada pull request y en cada cambio de main.
+# Usa las pruebas que no necesitan internet ni la caché de escenarios (ver tools/pruebas.py).
+name: Pruebas
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  pruebas:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias
+        run: python -m pip install -r requirements.txt
+      - name: Ejecutar pruebas
+        run: python tools/pruebas.py

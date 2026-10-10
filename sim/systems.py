@@ -32,6 +32,11 @@ class Engine:
         self.feathered = False
         self.load = 0.0              # % de carga (motores FADEC)
         self.bad_mag = 0             # magneto averiado: 1 derecho, 2 izquierdo
+        self.carb_ice = 0.0          # hielo en el carburador 0..1 (solo motores de carburador)
+        self.carb_heat = False       # calefacción al carburador (aire caliente sin filtrar)
+        self.oat_c = 15.0            # temperatura exterior y humedad (las pone Systems antes de cada paso)
+        self.dew_spread = 8.0
+        self.force_ice = False       # el instructor provoca la formación de hielo
 
     def set_running(self, run=True):
         self.running = run and not self.failed
@@ -70,12 +75,33 @@ class Engine:
                 self.rough = 1.0
         dens_f = max(0.0, sigma - (1 - sigma) / 7.55)
 
-        ignition = self.magnetos > 0 and fuel_ok and self.mixture > 0.08 and not self.failed
+        # hielo en el carburador: al expandirse en el venturi el aire se enfría hasta 20-30 °C; con aire húmedo y
+        # -15..32 °C fuera se forma hielo, más con el gas reducido. La calefacción lo funde (el agua hace que el motor
+        # vaya peor unos segundos) a cambio de algo de potencia.
+        thr = clamp(self.throttle, 0.0, 1.0)
+        ice_f = 1.0
+        if t.carburetor:
+            if self.carb_heat:
+                if self.running or V > 25:
+                    if self.carb_ice > 0.15 and self.running:
+                        self.rough = max(self.rough, 0.8 * self.carb_ice)
+                    self.carb_ice = max(0.0, self.carb_ice - dt / (35.0 if self.running else 70.0))
+                ice_f = 0.9
+            elif self.running:
+                humid = clamp((10.0 - self.dew_spread) / 8.0, 0.0, 1.0)      # rocío a 2 °C o menos: máximo
+                temp = clamp((self.oat_c + 15.0) / 7.0, 0.0, 1.0) * clamp((32.0 - self.oat_c) / 7.0, 0.0, 1.0)
+                risk = 1.0 if self.force_ice else humid * temp
+                self.carb_ice = min(1.0, self.carb_ice + risk * (1.0 - 0.6 * thr) * dt / 240.0)
+            ice_f *= 1.0 - 0.75 * self.carb_ice
+            if self.carb_ice > 0.5:
+                self.rough = max(self.rough, (self.carb_ice - 0.5) * 1.6)
+
+        ignition = (self.magnetos > 0 and fuel_ok and self.mixture > 0.08 and not self.failed
+                    and self.carb_ice < 0.95)
         if self.running and (not ignition or dm < -0.42):
             self.running = False
 
         # presión de admisión
-        thr = clamp(self.throttle, 0.0, 1.0)
         p_inhg = p_amb * INHG_PER_PA
         if self.running:
             self.map_inhg = p_inhg * (0.28 + 0.69 * thr) - (0.0 if thr > 0.2 else 0.0)
@@ -84,7 +110,7 @@ class Engine:
 
         if self.running:
             thr_eff = 0.025 + 0.975 * thr
-            pf_cmd = thr_eff * dens_f * mix_f * mag_f
+            pf_cmd = thr_eff * dens_f * mix_f * mag_f * ice_f
             if self.rough > 0:
                 pf_cmd *= 1.0 - 0.35 * self.rough * (0.5 + 0.5 * math.sin(self.crank_time * 37.0))
         else:
@@ -183,7 +209,9 @@ class Systems:
         self.failures = dict(engine=False, engine2=False, vacuum=False, pitot=False, static=False,
                              electrical=False, flaps=False, pfd=False, alternator=False,
                              fire=False, smoke=False, radio=False, gear=False, trim=False, door=False,
-                             magneto=False, fuel_leak=False)
+                             magneto=False, fuel_leak=False, carb_ice=False)
+        self.carb_heat = False        # mando de calefacción al carburador (todos los motores)
+        self.oat_c, self.dew_spread = 15.0, 8.0
         self.fire_level = 0.0
         self.smoke_level = 0.0
         self.trim_cb = True           # cortacircuito del compensador eléctrico
@@ -220,6 +248,7 @@ class Systems:
             e.throttle = 0.0
             e.mixture = 0.0
             e.magnetos = 0
+            e.carb_ice = 0.0
             e.oil_temp = 60.0
             e.cht = 60.0
             e.egt = 60.0
@@ -227,6 +256,7 @@ class Systems:
         self.master = False
         self.avionics = False
         self.fuel_pump = False
+        self.carb_heat = False
         self.parking_brake = True
         for k in self.lights:
             self.lights[k] = False
@@ -235,9 +265,11 @@ class Systems:
     def ready_to_fly(self, airborne=False):
         self.master = True
         self.avionics = True
+        self.carb_heat = False
         for e in self.engines:
             e.magnetos = 3
             e.mixture = 1.0
+            e.carb_ice = 0.0
             e.set_running(True)
         self.gyro_spin = 1.0
         self.lights.update(nav=True, beacon=True, strobe=airborne, landing=not airborne)
@@ -278,6 +310,8 @@ class Systems:
         for en in self.engines:
             if not battery_ok:
                 en.starter = False
+            en.carb_heat, en.force_ice = self.carb_heat, self.failures["carb_ice"]
+            en.oat_c, en.dew_spread = self.oat_c, self.dew_spread
             burned += en.update(dt, rho, p_amb, V, fuel_ok, battery_ok)
         self.fuel_l = max(0.0, self.fuel_l - burned)
 
