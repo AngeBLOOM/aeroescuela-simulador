@@ -17,6 +17,7 @@ if LOC:
     w = World(location=geo.build_location(LOC, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datos")))
 else:
     w = World()
+fallos = []
 
 
 class PID:
@@ -55,6 +56,8 @@ def fly(lesson_id, pilot, secs=400):
     for it in R["items"]:
         print("   ", it)
     print("   mensajes:", " | ".join(msgs[:12]))
+    if not L.success:
+        fallos.append(f"{L.title}: {L.fail_reason or 'no aprobada'}")
     return L
 
 
@@ -140,3 +143,5 @@ def stall_pilot(w, L, t, dt):
 
 
 fly("perdida", stall_pilot, 200)
+print("FALLOS: " + "; ".join(fallos) if fallos else "TODO OK")
+sys.exit(1 if fallos else 0)
