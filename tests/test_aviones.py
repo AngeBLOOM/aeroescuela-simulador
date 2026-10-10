@@ -61,3 +61,4 @@ for tid in AIRCRAFT:
     print(f"{tid:6s} {'OK ' if good else 'FALLO'} despegue a {lift[1] if lift else 0:.0f} kt (Vr {vr}) en {lift[0] if lift else 0:.0f} s; "
           f"1000 ft AGL a los {t:.0f} s, {w.ind.ias:.0f} kt (Vy {vy}), {ac.vs_fpm:.0f} ft/min {ac.crash_reason}")
 print("TODOS OK" if ok_all else "HAY FALLOS")
+sys.exit(0 if ok_all else 1)

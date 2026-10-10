@@ -71,7 +71,7 @@ class _Ruta(_Mision, L_Travesia):
         wps = self.waypoints(world)
         pts = [("Base Sucre", home.ref)] + wps + [(dest.name if dest is not home else "Base Sucre", dest.ref)]
         self.cruise = A
-        self.legs = [Leg(f"{a[0]} → {b[0]}", a[1], b[1], A, 100, wx) for a, b in zip(pts, pts[1:])]
+        self.legs = [Leg(f"{a[0]} → {b[0]}", a[1], b[1], A, 100, wx, world.magvar) for a, b in zip(pts, pts[1:])]
         self.cp = wps[0][1]
         self.dest = dest
         trip = sum(l.ete_min for l in self.legs)
@@ -91,7 +91,7 @@ class _Ruta(_Mision, L_Travesia):
             return False
 
         def hdg_mon(leg):
-            return Monitor("Rumbo", lambda w: (w.ac.heading, abs(hdg_err(w, leg.hdg)) < 20, f"{leg.hdg:03.0f} ±20°"),
+            return Monitor("Rumbo", lambda w: (w.mag(w.ac.heading), abs(hdg_err(w, leg.hdg)) < 20, f"{leg.hdg_m:03d} ±20°"),
                            12, "{:03.0f}", "°")
         self.steps = [Step(f"Despegue por la {world.active_end} y ascenso a {A:.0f} ft", off,
                            voice=f"Despegue por la pista {world.active_end}. Ascienda a {A:.0f} pies.")]
@@ -105,23 +105,23 @@ class _Ruta(_Mision, L_Travesia):
                     L.wp_i = k + 1
                     return True
                 return False
-            self.steps.append(Step(f"Rumbo {leg.hdg:03.0f} a {name} ({leg.dist_nm:.1f} NM, {leg.ete_min:.0f} min)", at_wp,
+            self.steps.append(Step(f"Rumbo {leg.hdg_m:03d} a {name} ({leg.dist_nm:.1f} NM, {leg.ete_min:.0f} min)", at_wp,
                                    voice=self.wp_voice(k, name, leg),
                                    monitors=[hdg_mon(leg), mon_alt(A, 200, 12, "Altitud de crucero")]))
         last = self.legs[-1]
         near = 4000.0 if dest is not home else 6000.0
         self.steps += [
-            Step(f"Rumbo {last.hdg:03.0f} a {dest.ident} ({last.dist_nm:.1f} NM)", lambda w, L: dist(w, dest.ref) < near,
+            Step(f"Rumbo {last.hdg_m:03d} a {dest.ident} ({last.dist_nm:.1f} NM)", lambda w, L: dist(w, dest.ref) < near,
                  voice=self.last_voice(dest, last), monitors=[hdg_mon(last), mon_alt(A, 200, 12, "Altitud de crucero")]),
             Step(f"Descienda e incorpórese al circuito de {dest.ident}", lambda w, L: True,
                  voice=f"Inicie el descenso y prepare la llegada a {dest.name}."),
         ] + self.final_steps(world, 65)
 
     def wp_voice(self, k, name, leg):
-        return f"Rumbo {leg.hdg:03.0f} hacia {name}."
+        return f"Rumbo {leg.hdg_m:03d} hacia {name}."
 
     def last_voice(self, dest, leg):
-        return f"Nuevo rumbo {leg.hdg:03.0f} hacia {dest.name}."
+        return f"Nuevo rumbo {leg.hdg_m:03d} hacia {dest.name}."
 
     def update(self, dt, world, events):
         super(L_Travesia, self).update(dt, world, events)
@@ -152,10 +152,10 @@ class M_Lago(_Ruta):
         return [("la Isla del Burro", local(world, ISLA_BURRO))]
 
     def wp_voice(self, k, name, leg):
-        return f"Rumbo {leg.hdg:03.0f} hacia la Isla del Burro, la isla grande en el centro del lago."
+        return f"Rumbo {leg.hdg_m:03d} hacia la Isla del Burro, la isla grande en el centro del lago."
 
     def last_voice(self, dest, leg):
-        return (f"Isla del Burro a la vista. Vire a rumbo {leg.hdg:03.0f} y regrese a Base Sucre. La ciudad de Maracay "
+        return (f"Isla del Burro a la vista. Vire a rumbo {leg.hdg_m:03d} y regrese a Base Sucre. La ciudad de Maracay "
                 "queda a la derecha y la base El Libertador al fondo.")
 
 
@@ -176,10 +176,10 @@ class M_Libertador(_Ruta):
         return [("el centro de Maracay", local(world, MARACAY_CENTRO))]
 
     def wp_voice(self, k, name, leg):
-        return f"Rumbo {leg.hdg:03.0f} hacia el centro de Maracay, siguiendo la autopista."
+        return f"Rumbo {leg.hdg_m:03d} hacia el centro de Maracay, siguiendo la autopista."
 
     def last_voice(self, dest, leg):
-        return f"Sobre Maracay. Nuevo rumbo {leg.hdg:03.0f} hacia la Base Aérea El Libertador, en Palo Negro."
+        return f"Sobre Maracay. Nuevo rumbo {leg.hdg_m:03d} hacia la Base Aérea El Libertador, en Palo Negro."
 
 
 # ------------------------------------------------------------------ 3. falla de motor al despegue: amerizaje
@@ -357,8 +357,8 @@ class M_Cordillera(_Mision, L_IMC):
         self.steps[0].done = enter_cloud
         self.steps[1].monitors = [mon_alt(A, 200, 20), mon_bank_max(30, 20)]
         self.steps[2].monitors = [mon_alt(A, 200, 10),
-                                  Monitor("Rumbo", lambda w: (w.ac.heading, abs(hdg_err(w, self.Hr)) < 15,
-                                                              f"{self.Hr:03.0f} ±15°"), 10, "{:03.0f}", "°")]
+                                  Monitor("Rumbo", lambda w: (w.mag(w.ac.heading), abs(hdg_err(w, self.Hr)) < 15,
+                                                              f"{w.mag(self.Hr):03.0f} ±15°"), 10, "{:03.0f}", "°")]
 
         def exit_cloud(w, L):
             wx.cloud_cover, wx.cloud_base_ft, wx.cloud_top_ft = 0.6, A + 900, A + 3500
@@ -419,14 +419,15 @@ class M_CaracasMaracay(_Mision, _LandingLesson):
                 L.switch_to = SVBS
                 return True
             return False
-        hd = self.dep_hdg
+        hd_m = self.dep_hdg                 # rumbo de salida publicado (magnético)
+        hd = world.true(hd_m)
         self.steps = [
             Step(f"Despegue por la {world.active_end} de La Carlota", off,
                  voice=f"Despegue por la pista {world.active_end} de La Carlota. El Ávila queda a la derecha."),
-            Step(f"Rumbo {hd:03.0f} y ascenso a {self.dep_alt:.0f} ft: salida oeste del valle de Caracas", out_of_valley,
-                 voice=f"Vire a rumbo {hd:03.0f} y ascienda a {self.dep_alt:.0f} pies para salir del valle de Caracas hacia "
+            Step(f"Rumbo {hd_m:03.0f} y ascenso a {self.dep_alt:.0f} ft: salida oeste del valle de Caracas", out_of_valley,
+                 voice=f"Vire a rumbo {hd_m:03.0f} y ascienda a {self.dep_alt:.0f} pies para salir del valle de Caracas hacia "
                        "el oeste.",
-                 monitors=[Monitor("Rumbo de salida", lambda w: (w.ac.heading, abs(hdg_err(w, hd)) < 20, f"{hd:03.0f} ±20°"),
+                 monitors=[Monitor("Rumbo de salida", lambda w: (w.mag(w.ac.heading), abs(hdg_err(w, hd)) < 20, f"{hd_m:03.0f} ±20°"),
                                    12, "{:03.0f}", "°"),
                            mon_speed(world.ac.t.v["vy"], 5, 10, 10, "Velocidad de ascenso (Vy)")]),
             Step("Crucero hacia Maracay (avance rápido)…", lambda w, L: False,
@@ -453,8 +454,8 @@ class M_CaracasMaracay(_Mision, _LandingLesson):
             Step(f"Sobre Maracay: llame a Maracay torre y aproxímese a la {self.ident} de Base Sucre", near,
                  voice=f"Bienvenido a Maracay. Llame a Maracay torre, ciento dieciocho cero cinco, y haga una aproximación "
                        f"directa a la pista {self.ident} de Base Sucre.",
-                 monitors=[Monitor("Rumbo de aproximación", lambda w: (w.ac.heading, abs(hdg_err(w, self.hdg)) < 20,
-                                                                      f"{self.hdg:03.0f} ±20°"), 10, "{:03.0f}", "°")]),
+                 monitors=[Monitor("Rumbo de aproximación", lambda w: (w.mag(w.ac.heading), abs(hdg_err(w, self.hdg)) < 20,
+                                                                      f"{w.mag(self.hdg):03.0f} ±20°"), 10, "{:03.0f}", "°")]),
         ] + self.final_steps(world, 65)
         self.idx = 0
         self._enter(world)
@@ -516,7 +517,7 @@ class M_RutaCaracasMaracay(_Mision, _LandingLesson):
                            lambda w, L: w.ind.alt_ft > 5400,
                            voice="Ascienda dentro del valle con rumbo dos nueve cero hasta cinco mil quinientos pies antes de "
                                  "virar hacia Los Teques: al suroeste hay cerros.",
-                           monitors=[Monitor("Rumbo de ascenso", lambda w: (w.ac.heading, abs(hdg_err(w, 290)) < 20,
+                           monitors=[Monitor("Rumbo de ascenso", lambda w: (w.mag(w.ac.heading), abs(hdg_err(w, w.true(290))) < 20,
                                                                            "290 ±20°"), 8, "{:03.0f}", "°")])]
         for k, (name, ll, A) in enumerate(self.WPS):
             def at(w, L, ll=ll, k=k):

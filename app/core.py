@@ -40,13 +40,16 @@ else:
 
 DEFAULT_SETTINGS = dict(
     ancho=0, alto=0, pantalla_completa=False, volumen=0.75, voz=True, timon_auto=False,
-    cabina="analog", avion="c172", mostrar_fps=False, joystick={}, ubicacion="", cabina_estilo="foto",
+    cabina="analog", avion="c172", mostrar_fps=False, joystick={}, ubicacion="", cabina_estilo="auto",
     calidad="auto", fluidez="auto", indicativo="EC-AES", atc=True, trafico=True,
     instructor_red=False,     # puesto del instructor por navegador web en la red local
     edificios_3d=False,
     fondo_instr="futurista",  # fondo de la pantalla de instrumentos: "futurista" o "negro" (tablero físico recortado)       # False: paisaje de foto satelital pura · True: con edificios 3D de OpenStreetMap
     atc_externo=False,        # enlace con un simulador de tránsito aéreo externo (app/atc_link.py, puerto 8770)
     atc_externo_puerto=8770,
+    udp_salida=False,         # datos de vuelo por UDP para instrumentos, paneles o movimiento (app/udp_out.py)
+    udp_destino="127.0.0.1",  # otra computadora: su IP; toda la red local: termina en .255
+    udp_puerto=49020, udp_hz=30,
     monitores_paisaje=1,      # nº de monitores (de izquierda a derecha) que ocupa la vista exterior
     vistas=1,                 # 1 o 3 vistas (izquierda · frente · derecha) en la vista exterior
     pantalla_instr="no",      # "no" · "ambiente" (paisaje + instrumentos) · "unica" (solo instrumentos) · "segunda" (2.º monitor)
@@ -168,6 +171,8 @@ class App(ScreensMixin):
         self.atc_bridge = None
         self._ptt_prev = False
         self.apply_atc_link()
+        self.udp = None
+        self.apply_udp()
         # barra de botones para el ratón (se esconde sola: en la cabina física no hay ratón)
         self._mouse_t = time.time()
         self._bar_rect = None
@@ -193,17 +198,17 @@ class App(ScreensMixin):
         self.messages = deque(maxlen=4)
         self.flash_msg = None
         self.show_panel = True
-        self.cockpit_style = self.settings.get("cabina_estilo", "foto")
-        if not self.settings.get("foto_migrado"):
-            # con las fotos de cabina ya disponibles, la cabina fotográfica pasa a ser la habitual
-            self.settings["foto_migrado"] = True
-            if self.cockpit_style == "3d":
-                self.cockpit_style = self.settings["cabina_estilo"] = "foto"
+        # cabina en pantalla: "auto" (según haya consola física), "2d", "3d" o "none". La cabina fotográfica ya no
+        # existe: los mandos dibujados no sirven con la consola física (un ajuste antiguo pasa a "auto")
+        self.cockpit_mode = self.settings.get("cabina_estilo", "auto")
+        if self.cockpit_mode not in self.COCKPIT_MODES:
+            self.cockpit_mode = self.settings["cabina_estilo"] = "auto"
+        for k in ("foto_migrado", "foto_zoom"):
+            self.settings.pop(k, None)
+        self.cockpit_style = self.resolve_cockpit_style()     # lo que se dibuja: "2d", "3d", "none" o "franja"
         self.panel_surf3d = None
         self.compass_surf = None
-        self.photo_cps = {}
-        self.photo_layer = None
-        self.show_yoke = True
+        self.show_yoke = False          # volantes de la cabina 3D: ocultos (tecla Y para verlos)
         self.show_help = False
         self.show_check = False
         self.auto_start = None
@@ -343,6 +348,22 @@ class App(ScreensMixin):
     INSTR_NAMES = {"no": "Pantalla normal", "ambiente": "Paisaje + instrumentos (sin cabina)",
                    "unica": "Solo instrumentos (esta pantalla)", "segunda": "Instrumentos en una segunda ventana"}
 
+    # ------------------------------------------------------------ cabina en pantalla
+    COCKPIT_MODES = ("auto", "2d", "3d", "none")
+    COCKPIT_NAMES = {"2d": "Panel 2D", "3d": "Cabina 3D", "none": "Sin panel (solo paisaje)",
+                     "franja": "Paisaje + franja de instrumentos"}
+
+    def resolve_cockpit_style(self):
+        """La cabina que se dibuja. En "auto", con la consola física conectada no se dibuja ningún mando: solo el
+        paisaje si los instrumentos van en su propia pantalla (F2) o, si no, el paisaje con la franja de
+        instrumentos debajo. Sin consola, el panel 2D, que se maneja con el ratón (interruptores, palancas,
+        radios, G1000) y con el teclado o un joystick USB."""
+        if self.cockpit_mode != "auto":
+            return self.cockpit_mode
+        if self.hardware.console_connected():
+            return "none" if self.settings.get("pantalla_instr", "no") in ("unica", "segunda") else "franja"
+        return "2d"
+
     def apply_instrument_screen(self):
         """Abre o cierra la ventana de instrumentos según el ajuste."""
         mode = self.settings.get("pantalla_instr", "no")
@@ -428,6 +449,21 @@ class App(ScreensMixin):
             self.remote.stop()
             self.remote = None
 
+    # ------------------------------------------------------------ salida de datos UDP
+    def apply_udp(self):
+        from .udp_out import UdpOut
+        st = self.settings
+        if self.udp is not None:
+            self.udp.stop()
+            self.udp = None
+        if st.get("udp_salida"):
+            try:
+                self.udp = UdpOut(str(st.get("udp_destino") or "127.0.0.1"), int(st.get("udp_puerto") or 49020),
+                                  int(st.get("udp_hz") or 30))
+            except (OSError, ValueError) as ex:
+                self.flash(f"No se pudo abrir la salida UDP: {ex}", 5)
+                st["udp_salida"] = False
+
     # ------------------------------------------------------------ simulador de ATC externo
     def apply_atc_link(self):
         from .atc_link import AtcBridge
@@ -484,17 +520,18 @@ class App(ScreensMixin):
         return dict(
             leccion=L.title if L is not None else "", estado={"flight": "en vuelo", "pause": "PAUSA", "instructor": "instructor",
                                                              "debrief": "informe", "menu": "menú", "replay": "repetición"}.get(self.state, self.state),
-            choque=ac.crashed, ias=float(w.ind.ias), alt=float(w.ind.alt_ft), hdg=float(ac.heading), vs=float(w.ind.vs_fpm),
+            choque=ac.crashed, ias=float(w.ind.ias), alt=float(w.ind.alt_ft), hdg=float(ac.heading), hdg_mag=float(w.mag(ac.heading)), vs=float(w.ind.vs_fpm),
             rpm=float(s.engine.rpm), fuel=float(s.fuel_l), x=float(ac.pos[0]), y=float(ac.pos[1]),
             paso=(f"Paso {L.idx + 1}/{len(L.steps)}: {st.text}" if st is not None else ""),
             fallas=[dict(k=k, nombre=n, activa=bool(s.failures.get(k)), prog=k in pend) for k, n, ok in CATALOG if ok(ac.t)],
             emergencias=[list(r) for r in w.emerg.report()],
             radio=[[tag.get(who, who), txt] for who, txt, _ in list(self.radio_log)[-8:]],
-            resultado=res, pistas=pistas,
+            resultado=res, pistas=pistas, congelado=sorted(w.frozen), ritmo=w.sim_rate,
             ruta=[[float(p[0]), float(p[1])] for p in w.route] if w.route else None,
             trafico=[[float(p.pos[0]), float(p.pos[1])] for p in w.traffic.planes],
             meteo=dict(wind_dir=wx.wind_dir, wind_kt=wx.wind_kt, gust_kt=wx.gust_kt, visibility_m=wx.visibility_m,
                        cloud_base_ft=wx.cloud_base_ft, cloud_cover=wx.cloud_cover, turbulence=wx.turbulence, hour=wx.hour,
+                       dew_spread=wx.dew_spread,
                        texto=wx.describe()))
 
     def update_remote(self, dt):
@@ -540,13 +577,16 @@ class App(ScreensMixin):
         elif k == "reparar":
             for f in s.failures:
                 s.failures[f] = False
+            for en in s.engines:
+                en.carb_ice = 0.0
             w.emerg.plan = []
             s.fire_level = s.smoke_level = 0.0
             s.gear_emergency = False
             s.trim_cb = True
         elif k == "clima":
             wx = w.weather
-            for f in ("wind_dir", "wind_kt", "gust_kt", "visibility_m", "cloud_base_ft", "cloud_cover", "turbulence", "hour"):
+            for f in ("wind_dir", "wind_kt", "gust_kt", "visibility_m", "cloud_base_ft", "cloud_cover", "turbulence", "hour",
+                      "dew_spread"):
                 v = c.get(f)
                 if isinstance(v, (int, float)) and v == v:
                     setattr(wx, f, float(v))
@@ -558,6 +598,15 @@ class App(ScreensMixin):
                     apply_weather_preset(w, pr)
         elif k == "metar":
             self.apply_live_weather()
+        elif k == "congelar" and c.get("k") in w.FREEZES:
+            w.freeze(c["k"], bool(c.get("on")))
+        elif k == "ritmo":
+            if not w.set_rate(c.get("x")):
+                self.flash("El tiempo solo se acelera en vuelo, por encima de 500 ft", 3)
+        elif k == "mover":
+            num = lambda f: float(c[f]) if isinstance(c.get(f), (int, float)) and c[f] == c[f] else 0.0
+            w.slew(clamp(num("n"), -50, 50), clamp(num("e"), -50, 50), clamp(num("alt"), -10000, 10000),
+                   clamp(num("hdg"), -180, 180))
 
     # ------------------------------------------------------------ meteorología real (METAR)
     def apply_live_weather(self):
@@ -718,6 +767,9 @@ class App(ScreensMixin):
                 self.world.set_aircraft(L.aircraft)
         if self.world.ac.t.default_cockpit == "glass":
             self.panel.mode = "glass"
+        # cada vuelo empieza con el GPS sin plan y el CDI en VLOC (la lección puede cambiarlo en setup)
+        self.world.gps.clear()
+        self.world.cdi_src = "VLOC"
         L.setup(self.world)
         self.world.sim_time = 0.0
         self.world.events.clear()
@@ -727,10 +779,9 @@ class App(ScreensMixin):
         self.state = "flight"
         self.camera.set_mode("cabina")
         self.camera.head_yaw = 0.0
+        self.cockpit_style = self.resolve_cockpit_style()
         self.camera.head_pitch = math.radians(-12 if self.cockpit_style == "3d" else -10)
-        if self.cockpit_style == "foto" and self.photo_cockpit() is not None:
-            self.camera.head_pitch = math.radians(-4)
-            self.camera.anim = (math.radians(-4), 0.0, 72.0)
+        self._amb_view = None           # la franja de instrumentos vuelve a encuadrar la vista al frente
         self.flight_time_start = self.world.stats["flight_time"]
         self.landings_start = self.world.stats["landings"]
         self.auto_start = None
@@ -844,14 +895,7 @@ class App(ScreensMixin):
                 self.state = "pause"
                 self.audio.silence()
         elif k == pygame.K_5 and not ctrl:
-            if self.cockpit_style == "foto" and self.photo_cockpit() is not None:
-                pc = self.photo_cockpit()
-                normal = float(self.settings.get("foto_zoom", 1.45))
-                inst = max(2.1, normal + 0.5)
-                pc.zoom_target = normal if pc.zoom_target >= inst - 0.01 else inst
-                self.flash("Vista de instrumentos" if pc.zoom_target > normal else "Vista normal", 1.0)
-            else:
-                self.camera.toggle_instrument_view()
+            self.camera.toggle_instrument_view()
         elif k in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4) and not ctrl:
             self.camera.set_mode(MODES[k - pygame.K_1])
             self.flash(MODE_NAMES[self.camera.mode], 1.2)
@@ -859,16 +903,14 @@ class App(ScreensMixin):
             self.panel.mode = "glass" if self.panel.mode == "analog" else "analog"
             self.settings["cabina"] = self.panel.mode
         elif k == pygame.K_p:
-            order = ["3d", "foto", "2d", "none"]
-            if self.photo_cockpit() is None:
-                order.remove("foto")
-            cur = self.cockpit_style if self.cockpit_style in order else "3d"
-            self.cockpit_style = order[(order.index(cur) + 1) % len(order)]
-            self.show_panel = self.cockpit_style != "none"
-            self.settings["cabina_estilo"] = self.cockpit_style
-            if self.cockpit_style == "foto":
-                self.camera.anim = (math.radians(-4), 0.0, 72.0)
-            self.flash({"3d": "Cabina 3D", "foto": "Cabina fotográfica", "2d": "Panel 2D", "none": "Sin panel"}[self.cockpit_style], 1.2)
+            # automática → panel 2D → cabina 3D → sin panel
+            order = self.COCKPIT_MODES
+            self.cockpit_mode = order[(order.index(self.cockpit_mode) + 1) % len(order)]
+            self.settings["cabina_estilo"] = self.cockpit_mode
+            self.cockpit_style = self.resolve_cockpit_style()
+            self._amb_view = None
+            name = self.COCKPIT_NAMES[self.cockpit_style]
+            self.flash(("Automática: " + name) if self.cockpit_mode == "auto" else name, 1.5)
         elif k == pygame.K_y:
             self.show_yoke = not self.show_yoke
             self.flash("Volante " + ("visible" if self.show_yoke else "oculto"), 1.0)
@@ -932,6 +974,15 @@ class App(ScreensMixin):
             self.screenshot()
         elif k == pygame.K_F9:
             self.settings["mostrar_fps"] = not self.settings["mostrar_fps"]
+        elif k == pygame.K_F7:
+            w.cdi_src = "GPS" if w.cdi_src == "VLOC" else "VLOC"
+            self.flash(f"CDI: {w.cdi_src}" + (" (GPS: plan de vuelo en el mapa del G1000)" if w.cdi_src == "GPS" else ""), 1.8)
+        elif k == pygame.K_F6:
+            if ac.t.carburetor:
+                ac.sys.carb_heat = not ac.sys.carb_heat
+                self.flash("Calefacción al carburador " + ("CONECTADA" if ac.sys.carb_heat else "quitada"), 1.5)
+            else:
+                self.flash("Este avión tiene inyección: no lleva calefacción al carburador", 2.0)
 
     def toggle_instr_editor(self):
         if self.settings.get("pantalla_instr") in ("unica", "ambiente"):
@@ -1096,14 +1147,17 @@ class App(ScreensMixin):
                 en.starter = crank and en.magnetos > 0 and not en.running
         # mandos a la frecuencia de fotograma; la física avanza a 240 Hz
         self.controls.update(dt, w, keys, mods)
-        if self.hardware.brake_cmd > 0.02:
-            ac.brake = max(ac.brake, self.hardware.brake_cmd)
+        ac.brake = max(ac.brake, self.hardware.brake_cmd)
+        ac.brake_l, ac.brake_r = self.hardware.brake_l, self.hardware.brake_r   # frenos de pie: cada rueda
+        sdt = dt * w.sim_rate            # tiempo simulado (el instructor puede acelerarlo)
         w.step(dt)
         evs = list(w.events)
         w.events.clear()
         for ev, data in evs:
             self.audio.on_event(ev, data)
-            if ev == "choque":
+            if ev == "ritmo_normal":
+                self.flash("Tiempo a ritmo normal: cerca del suelo", 3)
+            elif ev == "choque":
                 self.instructor("¡Accidente! " + data["reason"])
                 self.recorder.mark(w, data["reason"])
             elif ev == "contacto":
@@ -1111,7 +1165,7 @@ class App(ScreensMixin):
         if w.ap.disconnect_alert > 2.4:
             self.audio.play("ap_off")
         if self.lesson is not None:
-            self.lesson.update(dt, w, evs)
+            self.lesson.update(sdt, w, evs)
             if getattr(self.lesson, "switch_to", None):
                 self.lesson_scene_switch()
                 return
@@ -1127,7 +1181,7 @@ class App(ScreensMixin):
             self.crash_t = time.time()
         self.update_radio()
         self.poll_voice_input()
-        self.recorder.sample(dt, w)
+        self.recorder.sample(sdt, w)
         self.audio.update(w, self.camera.mode == "cabina")
 
     # ------------------------------------------------------------ repetición
@@ -1202,6 +1256,8 @@ class App(ScreensMixin):
             self.ui.begin(events)
             self.update_remote(dt)
             self.update_atc_link(dt)
+            if self.udp is not None:
+                self.udp.update(dt, self)
             self.frame(dt, events)
             pygame.display.flip()
             self.draw_instrument_window()
@@ -1212,6 +1268,8 @@ class App(ScreensMixin):
             if self.autotest and self.autotest(self, frames):
                 break
         self.save_settings()
+        if self.udp is not None:
+            self.udp.stop()
         if self.atc_bridge is not None:
             self.atc_bridge.stop()
         self.voice.stop()
@@ -1327,6 +1385,14 @@ class App(ScreensMixin):
         if self.flash_msg and time.time() < self.flash_msg[1]:
             self.fonts.blit(self.overlay, self.flash_msg[0], (self.W / 2, self.H * 0.14), 22, COL["white"], bold=True,
                             anchor="center")
+        w = self.world
+        if st in ("flight", "pause") and (w.frozen or w.sim_rate > 1):
+            parts = (["CONGELADO: " + ", ".join(w.FREEZES[k] for k in w.frozen)] if w.frozen else []) + \
+                    ([f"TIEMPO ×{w.sim_rate}"] if w.sim_rate > 1 else [])
+            txt = "   ·   ".join(parts)
+            tw, th = self.fonts.get(15, True).size(txt)
+            pygame.draw.rect(self.overlay, (8, 14, 24, 200), (self.W / 2 - tw / 2 - 12, 4, tw + 24, th + 8), border_radius=6)
+            self.fonts.blit(self.overlay, txt, (self.W / 2, 8), 15, COL["yellow"], bold=True, anchor="midtop")
         if self.settings.get("mostrar_fps"):
             self.fonts.blit(self.overlay, f"{self.fps:4.0f} FPS", (self.W - 10, self.H - 22), 13, COL["grey"], anchor="topright")
         self._draw_fade()
@@ -1335,32 +1401,6 @@ class App(ScreensMixin):
     # ------------------------------------------------------------ dibujo de vuelo
     def panel_height(self):
         return int(self.H * (0.45 if self.panel.mode == "glass" else 0.40))
-
-    def photo_cockpit(self):
-        """Cabina fotográfica del avión actual (assets/cabina_<id>.*) o None."""
-        from ui.photo_cockpit import PhotoCockpit, find_photo
-        aid = self.world.ac.t.id
-        if aid not in self.photo_cps:
-            p = find_photo(aid)
-            pc = None
-            if p:
-                try:
-                    pc = PhotoCockpit(p)
-                    pc.zoom = pc.zoom_target = float(self.settings.get("foto_zoom", 1.45))
-                    if not pc.usable:
-                        print("La foto de cabina no tiene huecos verdes reconocibles:", p)
-                        pc = None
-                except Exception as ex:
-                    print("No se pudo usar la foto de cabina:", ex)
-            self.photo_cps[aid] = pc
-        return self.photo_cps[aid]
-
-    def draw_photo_cockpit(self, paused):
-        pc = self.photo_cockpit()
-        self.panel_frame += 1
-        # la foto la dibuja la tarjeta gráfica; aquí solo los instrumentos (teselas recortadas)
-        self.renderer.set_photo(pc.photo, pc.screen_rect(self.W, self.H))
-        pc.draw(self.overlay, self.world, self.panel, self.ui, frame=self.panel_frame, paused=paused)
 
     def _mouse_ray_body(self):
         """Rayo del ratón en ejes del avión (para pulsar el tablero 3D)."""
@@ -1427,13 +1467,11 @@ class App(ScreensMixin):
         w = self.world
         cam = self.camera
         in_cab = cam.mode == "cabina"
+        self.cockpit_style = self.resolve_cockpit_style()     # en "auto" sigue a la consola si se enchufa o quita
         cockpit2d = in_cab and self.cockpit_style == "2d"
         cockpit3d = in_cab and self.cockpit_style == "3d"
-        cockpit_photo = in_cab and self.cockpit_style == "foto" and self.photo_cockpit() is not None
-        if in_cab and self.cockpit_style == "foto" and not cockpit_photo:
-            cockpit3d = True
         ph = self.panel_height() if cockpit2d else 0
-        # un clic en la barra de botones no debe llegar a los mandos de la cabina 3D ni a la foto
+        # un clic en la barra de botones no debe llegar a los mandos de la cabina 3D
         self._bar_click = None
         if self.ui.clicked and self._bar_rect is not None and self._bar_visible() and self._bar_rect.collidepoint(self.ui.clicked):
             self._bar_click, self.ui.clicked = self.ui.clicked, None
@@ -1452,9 +1490,9 @@ class App(ScreensMixin):
                 self.draw_mouse_bar()
             return
         # cabina física con un solo monitor: arriba el paisaje, abajo solo los instrumentos
-        ambiente = in_cab and self.settings.get("pantalla_instr") == "ambiente"
+        ambiente = in_cab and (self.settings.get("pantalla_instr") == "ambiente" or self.cockpit_style == "franja")
         if ambiente:
-            cockpit2d = cockpit3d = cockpit_photo = False
+            cockpit2d = cockpit3d = False
             ph = int(self.H * 0.40)
             if getattr(self, "_amb_view", None) is not self.lesson:
                 # vista de piloto mirando al frente, con el horizonte a un tercio de la ventana
@@ -1463,18 +1501,6 @@ class App(ScreensMixin):
                 cam.head_yaw = 0.0
                 cam.head_pitch = math.radians(-4.0)
                 cam.fov = 80.0
-        if cockpit_photo:
-            # la cámara se ajusta a la foto: mismo campo de visión y horizonte sobre el tablero
-            pc = self.photo_cockpit()
-            pc.step_zoom(dt if dt else 0.0)
-            fov = pc.fov()
-            _k, _ox, oy, _pw, ph_ = pc.layout(self.W, self.H)
-            sy = oy + pc.horizon_y * ph_
-            focal = (self.W / 2) / math.tan(math.radians(fov) / 2)
-            cam.anim = None
-            cam.fov = fov
-            cam.head_yaw = 0.0
-            cam.head_pitch = -math.atan((self.H / 2 - sy) / focal)
         cam.update(dt if dt else 0.0, w)
         viewport = (0, ph, self.W, self.H - ph)
         rings = self.lesson.rings if self.lesson is not None else []
@@ -1492,7 +1518,7 @@ class App(ScreensMixin):
         ac = w.ac
         cp = dict(yoke=(ac.ctl_ail, ac.ctl_elev), show_yoke=self.show_yoke) if cockpit3d else None
         nviews = int(self.settings.get("vistas", 1) or 1)
-        if nviews > 1 and in_cab and not cockpit3d and not cockpit2d and not cockpit_photo:
+        if nviews > 1 and in_cab and not cockpit3d and not cockpit2d:
             # vista panorámica: izquierda · frente · derecha, cada una con su parte del campo de visión
             vx, vy, vw, vh = viewport
             ww = vw // nviews
@@ -1507,7 +1533,7 @@ class App(ScreensMixin):
             cam.update(0.0, w)
         else:
             self.renderer.render(cam, viewport, extra=dict(rings=rings), dt=dt if not paused else 0.0, cockpit=cp)
-        if in_cab and not cockpit3d and not cockpit_photo:
+        if in_cab and not cockpit3d:
             # lluvia sobre el parabrisas (solo encima del paisaje)
             if not hasattr(self, "rain_fx"):
                 from ui.rain import RainFX
@@ -1520,8 +1546,6 @@ class App(ScreensMixin):
                 self.instr_display.edit(sub, (0, self.H - ph), self.ui)
         elif cockpit2d:
             self.draw_panel(ph, paused)
-        elif cockpit_photo:
-            self.draw_photo_cockpit(paused)
         elif not cockpit3d:
             self.draw_hud()
         self.draw_flight_overlays(paused)
@@ -1529,11 +1553,7 @@ class App(ScreensMixin):
             self.draw_mouse_bar()
         if not paused and not over_panel:
             d = self.ui.scroll(pygame.Rect(0, 0, self.W, self.H - ph))
-            if d and cockpit_photo:
-                pc = self.photo_cockpit()
-                pc.zoom_target = clamp(round(pc.zoom_target + d * 0.15, 2), 1.0, 2.8)
-                self.settings["foto_zoom"] = pc.zoom_target
-            elif d:
+            if d:
                 cam.zoom(d)
 
     def draw_panel(self, ph, paused):
