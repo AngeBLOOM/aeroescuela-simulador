@@ -411,6 +411,37 @@ def fetch_features(data_dir, proj, progress=None, r_build=3800.0, r_forest=8000.
 NDB_RANGE_NM = {"HIGH": 75.0, "MEDIUM": 50.0, "LOW": 25.0}
 
 
+def _variation(n, slaved=False):
+    """Declinación magnética de una fila de navaids.csv (grados, + = este). En un VOR, la de su rosa (slaved)."""
+    for k in (("slaved_variation_deg", "magnetic_variation_deg") if slaved else ("magnetic_variation_deg",)):
+        try:
+            return float(n.get(k) or "")
+        except ValueError:
+            continue
+    return None
+
+
+def local_variation(rows, lat0, lon0, radius_km=250.0):
+    """Declinación magnética del lugar (grados, + = este; Venezuela ≈ −13, es decir 13° oeste): media de las
+    radioayudas de OurAirports a menos de radius_km, pesada por cercanía. 0 si no hay ninguna."""
+    k_lat = 111.2
+    k_lon = 111.2 * math.cos(math.radians(lat0))
+    num = den = 0.0
+    for n in rows:
+        v = _variation(n)
+        if v is None:
+            continue
+        try:
+            d = math.hypot((float(n["latitude_deg"]) - lat0) * k_lat, (float(n["longitude_deg"]) - lon0) * k_lon)
+        except (KeyError, ValueError):
+            continue
+        if d < radius_km:
+            wgt = 1.0 / (d + 20.0)
+            num += v * wgt
+            den += wgt
+    return round(num / den, 1) if den else 0.0
+
+
 def navaid_from_row(n, proj, lat0, lon0):
     """VOR o NDB de una fila de navaids.csv (OurAirports) en coordenadas locales; None si queda lejos del escenario
     (60 km) o le faltan datos. Los VOR van en MHz y los NDB en kHz, con un alcance según su potencia."""
@@ -433,7 +464,9 @@ def navaid_from_row(n, proj, lat0, lon0):
             return None
         return NDB(n["ident"], round(khz), (float(nn), float(ee)), el, n["name"],
                    NDB_RANGE_NM.get((n.get("power") or "").upper(), 25.0))
-    return VOR(n["ident"], round(khz / 1000.0, 2), (float(nn), float(ee)), el, n["name"])
+    vor = VOR(n["ident"], round(khz / 1000.0, 2), (float(nn), float(ee)), el, n["name"])
+    vor.magvar = _variation(n, slaved=True)        # los radiales se miden desde el norte magnético del VOR
+    return vor
 
 
 def build_location(code, data_dir, progress=None, db=None, center=None):
@@ -600,7 +633,7 @@ def build_location(code, data_dir, progress=None, db=None, center=None):
     freqs = db.frequencies(ident)
     name = a["name"] if center is None else f"En ruta, cerca de {(a.get('municipality') or a['name']).split('/')[0].strip()}"
     return dict(name=name, ident=ident, key=key, route=center is not None, lat0=lat0, lon0=lon0,
-                country=a.get("iso_country", ""), freqs=freqs,
+                magvar=local_variation(db.navaids, lat0, lon0), country=a.get("iso_country", ""), freqs=freqs,
                 municipality=a.get("municipality", ""), airports=airports, navaids=navaids,
                 heights=heights.astype(np.float64), sat=layers, proj=proj, buildings=buildings, forests=forests,
                 water=water)

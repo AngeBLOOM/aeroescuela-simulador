@@ -30,6 +30,7 @@ class Autopilot:
         self.message = ""
         self.disconnect_alert = 0.0
         self.minspd = False
+        self.magvar = 0.0              # el marcador de rumbo y el OBS son magnéticos; la física, verdadera
 
     # ----------------------------------------------------------- órdenes
     def toggle(self, ac):
@@ -75,7 +76,7 @@ class Autopilot:
         self.gs_armed = approach
         if self.lat not in ("HDG",):
             self.lat = "HDG"
-            self.hdg_bug = round(ac.heading)
+            self.hdg_bug = round(ac.heading - self.magvar) % 360 or 360
         if not self.engaged:
             self.engage(ac)
 
@@ -124,13 +125,14 @@ class Autopilot:
         if self.lat == "ROL":
             roll_cmd = self.roll_ref
         elif self.lat == "HDG":
-            err = wrap180(self.hdg_bug - ac.heading)
+            err = wrap180(self.hdg_bug + self.magvar - ac.heading)
             roll_cmd = clamp(math.radians(err * 1.2), math.radians(-22), math.radians(22))
         else:
             if not nav.valid:
                 roll_cmd = 0.0
             else:
-                course = nav.station.course if nav.is_loc else nav.obs
+                # curso verdadero: el del localizador, o el OBS (magnético) más la declinación del VOR
+                course = nav.station.course if nav.is_loc else nav.obs + (getattr(nav.station, "magvar", None) or 0.0)
                 full = 35.0 if nav.is_loc else 40.0
                 self._nav_i = clamp(self._nav_i + nav.cdi * dt * 0.6, -12, 12)
                 want = course + clamp(nav.cdi * full + self._nav_i, -45, 45)

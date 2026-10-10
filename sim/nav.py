@@ -105,7 +105,8 @@ class NavRadio:
         dh = alt - nv.elev
         self.dme_nm = math.sqrt(dx * dx + dy * dy + dh * dh) / NM
         if nv.kind == "VOR":
-            self.radial = math.degrees(math.atan2(dy, dx)) % 360
+            # radial magnético: la rosa del VOR está orientada a su norte magnético
+            self.radial = (math.degrees(math.atan2(dy, dx)) - (getattr(nv, "magvar", None) or 0.0)) % 360
             self.bearing_to = (self.radial + 180) % 360
             if self.dme_nm < 0.2:
                 return

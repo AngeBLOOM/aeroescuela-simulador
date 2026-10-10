@@ -28,6 +28,7 @@ class GlassCockpit:
         self.track = []
         self.track_t = 0.0
         self.rose_cache = {}
+        self.gps_page = None        # lista abierta en el mapa: None, "dto", "fpl" o "add"
 
     # ================================================================ PFD
     def pfd(self, surf, rect, world, ui):
@@ -281,12 +282,13 @@ class GlassCockpit:
     def _hsi(self, surf, rect, world, ui):
         f = self.f
         ac = world.ac
-        nav = world.nav1
+        nav = world.nav_source()
+        gps = nav is world.gps
         h = rect.h
         # rosa completa abajo, como en el G1000 real (antes quedaba cortada por el borde inferior)
         r = int(h * 0.21)
         c = (rect.centerx, rect.bottom - r - 6)
-        hdg = ac.heading
+        hdg = (ac.heading - world.magvar) % 360          # el AHRS del G1000 da rumbo magnético
         q = round(hdg * 2) / 2.0 % 360
         key = (r, q)
         rc = getattr(self, "_rose_rot", None)
@@ -304,9 +306,9 @@ class GlassCockpit:
         pygame.draw.polygon(surf, CYAN, [polar(p, 9, d - 90), polar(p, 9, d + 90), polar(polar(c, r - 12, d), 4, d + 90),
                                          polar(polar(c, r - 12, d), 4, d - 90)])
         # aguja de curso
-        crs = nav.obs if not nav.is_loc else nav.station.course
+        crs = nav.obs if not nav.is_loc else (nav.station.course - world.magvar) % 360
         dc = crs - hdg
-        col = GREEN
+        col = MAG if gps else GREEN                       # G1000: aguja magenta con GPS, verde con VOR/LOC
         pygame.draw.line(surf, col, polar(c, r - 26, dc), polar(c, r * 0.42, dc), 4)
         pygame.draw.polygon(surf, col, [polar(c, r - 18, dc), polar(polar(c, r - 32, dc), 8, dc - 90), polar(polar(c, r - 32, dc), 8, dc + 90)])
         pygame.draw.line(surf, col, polar(c, -(r - 26), dc), polar(c, -r * 0.42, dc), 4)
@@ -348,14 +350,20 @@ class GlassCockpit:
         # información NAV
         info = pygame.Rect(rect.x + 6, rect.bottom - 106, 142, 46)
         pygame.draw.rect(surf, (0, 0, 0), info, border_radius=4)
-        src = "LOC1" if nav.is_loc else "VOR1"
-        f.blit(surf, f"{src} {nav.ident}", (info.x + 6, info.y + 4), 13, GREEN, mono=True, bold=True)
+        src = "GPS " + ("OBS" if nav.obs_mode else nav.scale) if gps else ("LOC1" if nav.is_loc else "VOR1")
+        f.blit(surf, f"{src} {nav.ident}", (info.x + 6, info.y + 4), 13, MAG if gps else GREEN, mono=True, bold=True)
         dme = f"{nav.dme_nm:5.1f} NM" if nav.dme_nm is not None else "--.- NM"
-        f.blit(surf, f"CRS{crs:03.0f} {dme}", (info.x + 6, info.y + 24), 13, WHITE, mono=True)
+        f.blit(surf, f"{'DTK' if gps else 'CRS'}{crs:03.0f} {dme}", (info.x + 6, info.y + 24), 13, WHITE, mono=True)
         hb = pygame.Rect(rect.right - 126, rect.bottom - 52, 120, 46)
         pygame.draw.rect(surf, (0, 0, 0), hb, border_radius=4)
         f.blit(surf, f"HDG {world.ap.hdg_bug:03.0f}°", (hb.x + 6, hb.y + 4), 13, CYAN, mono=True, bold=True)
         f.blit(surf, f"GS {ac.gs / KT:3.0f}KT", (hb.x + 6, hb.y + 24), 13, WHITE, mono=True)
+        if gps and nav.obs_mode:
+            d = ui.scroll(info)
+            if d:
+                nav.set_obs(True, nav.obs_course + d)
+            if ui.hover(info):
+                ui.tooltip = "Rueda: curso del modo OBS del GPS"
         d = ui.scroll(pygame.Rect(c[0] - r, c[1] - r, 2 * r, r))
         if d:
             world.ap.hdg_bug = (world.ap.hdg_bug + d * 5) % 360
@@ -409,6 +417,76 @@ class GlassCockpit:
         pygame.surfarray.pixels3d(s)[...] = arr[..., :3]
         pygame.surfarray.pixels_alpha(s)[...] = arr[..., 3]
         self.taws_img = s
+
+    def _gps_keys(self, surf, mp, world, ui):
+        """Teclas del GPS en el mapa: D→ (directo a), FPL (plan de vuelo), OBS y selector CDI GPS/VLOC; y sus
+        listas, que se eligen con el ratón (los puntos más cercanos)."""
+        f = self.f
+        gps = world.gps
+        # fila de teclas encima de la de TAWS, repartida en el ancho del mapa (en pantallas estrechas el mapa es angosto)
+        y = mp.bottom - 54
+        bw = (mp.w - 16 - 12) / 4
+        narrow = mp.w < 360
+        keys = [("D→", "dto", "Directo a un punto cercano"), ("FPL", "fpl", "Plan de vuelo: añadir, activar y quitar puntos")]
+        x = mp.x + 8
+        for lab, page, tip in keys:
+            if ui.cockpit_button(surf, (x, y, bw, 22), lab, active=self.gps_page == page, size=11, tip=tip):
+                self.gps_page = None if self.gps_page == page else page
+            x += bw + 4
+        if ui.cockpit_button(surf, (x, y, bw, 22), "OBS", active=gps.obs_mode, size=11,
+                             tip="Modo OBS: curso elegido hacia el punto activo (rueda sobre la caja GPS del HSI)"):
+            gps.set_obs(not gps.obs_mode, gps.dtk if gps.valid else None)
+        x += bw + 4
+        if ui.cockpit_button(surf, (x, y, bw, 22), world.cdi_src if narrow else "CDI " + world.cdi_src,
+                             active=world.cdi_src == "GPS", size=11,
+                             tip="CDI: qué siguen el HSI y el piloto automático (NAV): GPS o VLOC (radio NAV 1) · F7"):
+            world.cdi_src = "GPS" if world.cdi_src == "VLOC" else "VLOC"
+        if self.gps_page is None:
+            return
+        box = (pygame.Rect(mp.x + 4, mp.y + 44, mp.w - 8, mp.h - 104) if narrow else
+               pygame.Rect(mp.x + mp.w * 0.42, mp.y + 44, mp.w * 0.56, mp.h - 104))
+        pygame.draw.rect(surf, (6, 10, 16), box, border_radius=6)
+        pygame.draw.rect(surf, (90, 100, 120), box, 1, border_radius=6)
+        rh = 22
+        yy = box.y + 6
+        if self.gps_page in ("dto", "add"):
+            f.blit(surf, "DIRECTO A" if self.gps_page == "dto" else "AÑADIR AL PLAN", (box.x + 8, yy), 13, MAG, bold=True)
+            yy += rh
+            for wp, dis, brg in gps.nearest(max(3, int((box.bottom - yy - 8) / rh))):
+                lab = f"{wp.ident} {dis:.1f}" if narrow else f"{wp.ident:5s} {wp.kind:3s} {dis:5.1f} NM {brg:03.0f}°"
+                if ui.cockpit_button(surf, (box.x + 6, yy, box.w - 12, rh - 2), lab, size=11,
+                                     tip=f"{wp.kind} {wp.name} · {dis:.1f} NM · rumbo {brg:03.0f}°"):
+                    if self.gps_page == "dto":
+                        gps.direct_to(wp)
+                    else:
+                        gps.add(wp)
+                    self.gps_page = "fpl" if self.gps_page == "add" else None
+                yy += rh
+        else:
+            f.blit(surf, "PLAN DE VUELO", (box.x + 8, yy), 13, MAG, bold=True)
+            yy += rh
+            if not gps.plan:
+                f.blit(surf, "Vacío: añada puntos con «+ Añadir».", (box.x + 8, yy + 2), 11, COL["grey"])
+                yy += rh
+            for i, wp in enumerate(gps.plan):
+                on = i == gps.active and gps.direct is None
+                f.blit(surf, ("▶ " if on else "  ") + (wp.ident if narrow else f"{wp.ident} {wp.kind}"), (box.x + 8, yy + 3),
+                       12, MAG if on else WHITE, mono=True, bold=on)
+                if ui.cockpit_button(surf, (box.right - 62, yy, 28, rh - 2), "▶", size=10,
+                                     tip="Activar el tramo hacia este punto"):
+                    gps.activate(i)
+                if ui.cockpit_button(surf, (box.right - 32, yy, 26, rh - 2), "×", size=11, tip="Quitar del plan"):
+                    gps.remove(i)
+                    break
+                yy += rh
+                if yy > box.bottom - 2 * rh:
+                    break
+            by = box.bottom - rh - 4
+            half = (box.w - 16) / 2
+            if ui.cockpit_button(surf, (box.x + 6, by, half, rh - 2), "+ Añadir", size=11):
+                self.gps_page = "add"
+            if ui.cockpit_button(surf, (box.x + 10 + half, by, half, rh - 2), "Borrar" if narrow else "Borrar plan", size=11):
+                gps.clear()
 
     def mfd(self, surf, rect, world, ui):
         f = self.f
@@ -511,7 +589,7 @@ class GlassCockpit:
                        [i * math.pi / 12 for i in range(24)]]
                 pygame.draw.polygon(lay, col, pts)
             surf.blit(lay, mp.topleft)
-            f.blit(surf, "NEXRAD", (mp.x + 8, mp.bottom - 22), 12, (90, 220, 90), bold=True)
+            f.blit(surf, "NEXRAD", (mp.x + 8, mp.y + 42), 12, (90, 220, 90), bold=True)
         # aeródromos y radioayudas
         for apt in world.airports:
             for rw in apt.runways:
@@ -544,6 +622,26 @@ class GlassCockpit:
             pygame.draw.lines(surf, MAG, False, pts, 4)
             for q in pts[1:-1]:
                 pygame.draw.circle(surf, MAG, q, 7, 2)
+        # plan de vuelo del GPS: tramos en blanco, el activo en magenta (como el G1000)
+        gps = world.gps
+        if gps.plan:
+            pts = [to_px(*wp.pos) for wp in gps.plan]
+            if len(pts) > 1:
+                pygame.draw.lines(surf, WHITE, False, pts, 2)
+        tgt = gps.target
+        if tgt is not None and gps.valid:
+            if gps.obs_mode:
+                crs = math.radians(world.true(gps.obs_course))
+                a = to_px(*(tgt.pos - np.array([math.cos(crs), math.sin(crs)]) * 20 * NM))
+                b = to_px(*(tgt.pos + np.array([math.cos(crs), math.sin(crs)]) * 20 * NM))
+            else:
+                a, b = to_px(*gps.leg_from()), to_px(*tgt.pos)
+            pygame.draw.line(surf, MAG, a, b, 4)
+        for i, wp in enumerate(gps.plan + ([gps.direct] if gps.direct is not None else [])):
+            q = to_px(*wp.pos)
+            on = wp is tgt
+            pygame.draw.circle(surf, MAG if on else WHITE, q, 6, 0 if on else 2)
+            f.blit(surf, wp.ident, (q[0] + 9, q[1] - 22), 13, MAG if on else WHITE, bold=True)
         # traza
         if len(self.track) > 1:
             pts = [to_px(*p) for p in self.track] + [to_px(ac.pos[0], ac.pos[1])]
@@ -589,11 +687,20 @@ class GlassCockpit:
         surf.set_clip(clip)
         f.blit(surf, "N↑", (mp.x + 8, mp.y + 6), 14, WHITE, bold=True)
         if not world.is_school:
-            f.blit(surf, "© Esri, Maxar · OurAirports", (mp.x + 6, mp.bottom - 16), 10, (230, 230, 230))
+            f.blit(surf, "© Esri, Maxar · OurAirports", (mp.x + 6, mp.bottom - 44), 10, (230, 230, 230))
         f.blit(surf, f"{self.map_range_nm} NM", (mp.right - 8, mp.y + 6), 14, WHITE, bold=True, anchor="topright")
+        if gps.valid:
+            ete = gps.ete_s
+            if mp.w < 360:
+                txt = f"→{gps.ident} {gps.dis_nm:.1f}NM {gps.dtk:03.0f}°"
+            else:
+                txt = (f"→ {gps.ident}  {gps.dis_nm:4.1f} NM  DTK {gps.dtk:03.0f}°" +
+                       (f"  ETE {int(ete // 60)}:{int(ete % 60):02d}" if ete is not None else ""))
+            f.blit(surf, txt, (mp.x + 8, mp.y + 24), 12, MAG, mono=True, bold=True)
         tb = pygame.Rect(mp.right - 70, mp.bottom - 28, 62, 22)
         if ui.cockpit_button(surf, tb, "TAWS", active=self.taws, size=12, tip="Alerta de terreno (amarillo: a menos de 500 ft, rojo: a menos de 100 ft)"):
             self.taws = not self.taws
+        self._gps_keys(surf, mp, world, ui)
         d = ui.scroll(mp)
         if d:
             opts = [2, 5, 10, 20, 40]
