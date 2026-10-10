@@ -5,6 +5,7 @@
   PA.IV.N    Motor y al aire (aproximación frustrada)
   PA.VII.A   Vuelo lento
   PA.VII.C   Pérdida con motor
+  PA.VII.D   Conciencia de barrena: entrada y recuperación PARE
   PA.V.B     Maniobras de referencia en tierra (virajes alrededor de un punto)
 """
 import math
@@ -320,6 +321,98 @@ class L_PerdidaMotor(Lesson):
         return [("Altura perdida en la recuperación", 25 if lost < 100 else (15 if lost < 200 else 5), 25, f"{lost:.0f} ft")]
 
 
+# ------------------------------------------------------------------ barrena
+class L_Barrena(Lesson):
+    id = "barrena"
+    title = "Barrena: entrada y recuperación (PARE)"
+    category = CAT_MAN
+    acs = "PA.VII.D · conciencia de barrena"
+    duration = "3 min"
+    start = "crucero"
+    allow_stall = True
+    brief = ("Entrenamiento de barrena con mucha altura (6500 ft sobre el terreno). Gases a RALENTÍ y palanca atrás poco a poco "
+             "hasta la pérdida; en la pérdida, PEDAL A FONDO hacia un lado y palanca atrás del todo: el avión entra en barrena. "
+             "Deje que dé una vuelta y recupere con PARE: Potencia a ralentí, Alerones neutros, Rudder (pedal) contrario a fondo "
+             "y Elevador (palanca) adelante. Cuando pare la rotación, pedal neutro y salga del picado sin pasar de VNE ni de "
+             "3,8 G. El manual de Cessna espera la recuperación en 1/4 a 1/2 vuelta.")
+    objectives = ["Entrar en barrena con el ala en pérdida y pedal a fondo", "Recuperar con PARE en ≤ 1/2 vuelta",
+                  "Salida del picado ≤ 3,8 G y sin pasar de VNE", "Gases a ralentí todo el tiempo"]
+
+    def build(self, world):
+        ac = world.ac
+        gh = world.terrain.surface_height(ac.pos[0], ac.pos[1])
+        ac.place_in_air(ac.pos[0], ac.pos[1], gh + 6500 * FT, ac.heading, 80)
+        self.turned = self.turns_rec = 0.0
+        self.prev_h = None
+        self.alt0 = None
+        self.alt_min = None
+        self.max_g = 1.0
+        self.max_ias = 0.0
+        self.power_ok = True
+
+        def stalled(w, L):
+            return w.ac.stall_frac > 0.5 and all(en.throttle < 0.1 for en in w.ac.sys.engines)
+
+        def spinning(w, L):
+            return w.ac.spin > 0.7
+
+        def one_turn(w, L):
+            return abs(L.turned) >= 330
+
+        def stopped(w, L):
+            return w.ac.spin == 0 and abs(w.ac.omega[2]) < 0.3
+
+        def pulled_out(w, L):
+            return w.ac.pitch > 0 and w.ind.ias > 60 and not w.ac.sys.stall_warning     # morro sobre el horizonte
+        self.steps = [
+            Step("Gases a ralentí y palanca atrás poco a poco hasta la pérdida", stalled,
+                 voice="Gases a ralentí. Alas niveladas y palanca atrás poco a poco hasta la pérdida.", timeout=60),
+            Step("¡Pérdida! Pedal a fondo hacia un lado y palanca atrás del todo", spinning,
+                 voice="Pedal a fondo y palanca atrás del todo.", timeout=20,
+                 hint="Pise un pedal hasta el fondo y mantenga la palanca atrás del todo."),
+            Step("Barrena: deje que dé una vuelta (pedal y palanca a fondo)", one_turn,
+                 voice="Está en barrena. Mantenga los mandos una vuelta.", timeout=15),
+            Step("PARE: ralentí, alerones neutros, pedal contrario, palanca adelante", stopped,
+                 voice="Recupere: potencia a ralentí, alerones neutros, pedal contrario a fondo y palanca adelante.", timeout=15,
+                 hint="Pise el pedal contrario al giro y empuje la palanca."),
+            Step("Pedal neutro y salga del picado sin pasar de 3,8 G", pulled_out,
+                 voice="La rotación ha parado. Pedal neutro y salga del picado con suavidad.", timeout=25),
+        ]
+
+    def update(self, dt, world, events):
+        super().update(dt, world, events)
+        ac = world.ac
+        h = ac.heading
+        if self.prev_h is not None:
+            d = wrap180(h - self.prev_h)
+            if self.idx == 2:
+                self.turned += d
+            elif self.idx == 3:
+                self.turns_rec += abs(d) / 360.0
+        self.prev_h = h
+        if self.idx >= 1 and self.alt0 is None:
+            self.alt0 = world.ind.alt_ft
+        if self.alt0 is not None:
+            self.alt_min = world.ind.alt_ft if self.alt_min is None else min(self.alt_min, world.ind.alt_ft)
+        if 1 <= self.idx <= 4:
+            self.max_g = max(self.max_g, ac.nz)
+            self.max_ias = max(self.max_ias, world.ind.ias)
+            if 2 <= self.idx <= 3 and any(en.throttle > 0.15 for en in ac.sys.engines):
+                self.power_ok = False
+
+    def extra_items(self, world):
+        vne = world.ac.t.v["vne"]
+        if self.idx < 4 and not self.done:
+            return [("Recuperación", 0, 40, "no se completó")]
+        rec = self.turns_rec
+        lost = (self.alt0 or 0) - (self.alt_min if self.alt_min is not None else self.alt0 or 0)
+        return [("Vueltas hasta parar la rotación", 25 if rec <= 0.5 else (12 if rec <= 1.0 else 0), 25, f"{rec:.2f}"),
+                ("Carga máxima", 15 if self.max_g <= 3.8 else 0, 15, f"{self.max_g:.1f} G (límite 3,8)"),
+                ("Velocidad máxima", 10 if self.max_ias < vne else 0, 10, f"{self.max_ias:.0f} kt (VNE {vne})"),
+                ("Gases a ralentí en la barrena", 10 if self.power_ok else 0, 10, "sí" if self.power_ok else "no"),
+                ("Altura perdida", 0, 0, f"{lost:.0f} ft")]
+
+
 # ------------------------------------------------------------------ virajes alrededor de un punto
 class L_Punto(Lesson):
     id = "punto"
@@ -386,4 +479,4 @@ class L_Punto(Lesson):
 L_Punto.R = 400.0
 
 MANEUVER_LESSONS_TO = [L_PistaCorta, L_PistaBlanda, L_MotorAire]
-MANEUVER_LESSONS = [L_VueloLento, L_PerdidaMotor, L_Punto]
+MANEUVER_LESSONS = [L_VueloLento, L_PerdidaMotor, L_Barrena, L_Punto]

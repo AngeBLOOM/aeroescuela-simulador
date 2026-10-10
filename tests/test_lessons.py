@@ -143,5 +143,31 @@ def stall_pilot(w, L, t, dt):
 
 
 fly("perdida", stall_pilot, 200)
+
+
+def spin_pilot(w, L, t, dt):
+    """Barrena: ralentí y palanca atrás, pedal izquierdo a fondo, una vuelta, PARE y salida del picado a ~2,8 G."""
+    ac = w.ac
+    for en in ac.sys.engines:
+        en.throttle = 0.0
+    if L.idx == 0:
+        ac.ctl_ail, ac.ctl_rud = 0.0, clamp(ac.beta * 3, -1, 1)
+        ac.ctl_elev = clamp(ac.ctl_elev + 0.6 * dt, -1, 1)
+    elif L.idx in (1, 2):
+        ac.ctl_ail, ac.ctl_rud, ac.ctl_elev = 0.0, -1.0, 1.0
+    elif L.idx == 3:
+        ac.ctl_ail, ac.ctl_rud, ac.ctl_elev = 0.0, 1.0, -0.3
+    else:
+        if L.step.t < dt * 1.5:
+            ac.ctl_elev = 0.1
+        ac.ctl_rud = clamp(ac.beta * 3.0, -1, 1)
+        if ac.pitch > 0:                     # morro sobre el horizonte: nivelar, sin seguir tirando
+            attitude(ac, 0, 2, dt)
+        else:
+            ac.ctl_ail = clamp(-math.degrees(ac.roll) * 0.05 - ac.omega[0] * 0.3, -1, 1)
+            ac.ctl_elev = clamp(ac.ctl_elev + (2.8 - ac.nz) * 0.6 * dt, -0.4, 0.8)
+
+
+fly("barrena", spin_pilot, 120)
 print("FALLOS: " + "; ".join(fallos) if fallos else "TODO OK")
 sys.exit(1 if fallos else 0)

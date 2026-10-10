@@ -58,6 +58,7 @@ Unidades: altitudes en **pies**, velocidades en **nudos**, ángulos en **grados*
 | `motores` | uno por motor (dos en el DA42); `magnetos`: 0 OFF, 1 derecho, 2 izquierdo, 3 ambos |
 | `flaps` | grados de flap; `tren`: 0 arriba, 1 abajo y blocado |
 | `frenos` | izquierdo y derecho, 0 a 1 |
+| `barrena` | intensidad de la barrena, −1 (a la izquierda) a 1 (a la derecha); 0 sin barrena |
 | `avisos` | luces de aviso del tablero: encender un LED por cada `true` |
 | `nav1_cdi` / `nav1_gs` | desvío del localizador/VOR y de la senda, −1 a 1 (a fondo de escala) |
 | `adf_relativa` | marcación relativa del NDB sintonizado (0 = delante, en el sentido de las agujas); 90 sin señal |
