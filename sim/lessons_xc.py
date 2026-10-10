@@ -3,8 +3,8 @@ y PA.VI.D (desvío a un alternativo).
 
 El plan se calcula con el viento real de la lección: rumbo corregido (triángulo de velocidades),
 velocidad respecto al suelo, tiempo estimado y combustible necesario con la reserva legal
-VFR diurna de 30 minutos (FAR 91.151 / SERA). En el simulador el norte magnético coincide con el
-geográfico, así que rumbo verdadero = magnético.
+VFR diurna de 30 minutos (FAR 91.151 / SERA). El plan se calcula en verdadero (como la física) y se dicta
+en magnético (como lo marca el direccional): Leg.tc_m y Leg.hdg_m.
 """
 import math
 
@@ -32,7 +32,7 @@ def wind_triangle(tc, tas, wdir, wkt):
 
 
 class Leg:
-    def __init__(self, name, a, b, alt_ft, tas, wx):
+    def __init__(self, name, a, b, alt_ft, tas, wx, magvar=0.0):
         self.name = name
         self.a = np.array(a, float)
         self.b = np.array(b, float)
@@ -41,6 +41,8 @@ class Leg:
         self.hdg, self.gs = wind_triangle(self.tc, tas, wx.wind_dir, wx.wind_kt)
         self.ete_min = self.dist_nm / self.gs * 60.0
         self.alt_ft = alt_ft
+        self.tc_m = round((self.tc - magvar) % 360) % 360 or 360          # curso y rumbo magnéticos
+        self.hdg_m = round((self.hdg - magvar) % 360) % 360 or 360
 
 
 class _Travesia(_LandingLesson):
@@ -76,8 +78,8 @@ class _Travesia(_LandingLesson):
             d = np.array([12000.0, 6000.0])
         perp = np.array([-d[1], d[0]]) / max(1.0, np.linalg.norm(d))
         cp = home.ref + d * 0.5 + perp * 1500
-        self.legs = [Leg("Salida → Punto de control", home.ref, cp, A, tas, wx),
-                     Leg(f"Punto de control → {dest.ident}", cp, dest.ref, A, tas, wx)]
+        self.legs = [Leg("Salida → Punto de control", home.ref, cp, A, tas, wx, world.magvar),
+                     Leg(f"Punto de control → {dest.ident}", cp, dest.ref, A, tas, wx, world.magvar)]
         self.cp = cp
         self.dest = dest
         trip = sum(l.ete_min for l in self.legs)
@@ -105,12 +107,12 @@ class _Travesia(_LandingLesson):
             return False
 
         def hdg_mon(leg):
-            return Monitor("Rumbo corregido", lambda w: (w.ac.heading, abs(hdg_err(w, leg.hdg)) < 15, f"{leg.hdg:03.0f} ±15°"),
+            return Monitor("Rumbo corregido", lambda w: (w.mag(w.ac.heading), abs(hdg_err(w, leg.hdg)) < 15, f"{leg.hdg_m:03d} ±15°"),
                            15, "{:03.0f}", "°")
         self.steps = [
             Step(f"Despegue y ascenso a {A:.0f} ft", off, voice=f"Despegue. Ascienda a {A:.0f} pies."),
-            Step(f"Rumbo {L0.hdg:03.0f} al punto de control ({L0.dist_nm:.1f} NM, {L0.ete_min:.0f} min)", at_cp,
-                 voice=f"Rumbo {L0.hdg:03.0f} hacia el punto de control. Tiempo estimado {L0.ete_min:.0f} minutos.",
+            Step(f"Rumbo {L0.hdg_m:03d} al punto de control ({L0.dist_nm:.1f} NM, {L0.ete_min:.0f} min)", at_cp,
+                 voice=f"Rumbo {L0.hdg_m:03d} hacia el punto de control. Tiempo estimado {L0.ete_min:.0f} minutos.",
                  monitors=[hdg_mon(L0), mon_alt(A, 200, 12, "Altitud de crucero")]),
         ]
         if self.divert:
@@ -141,8 +143,8 @@ class _Travesia(_LandingLesson):
             def near_dest(w, L):
                 return dist_to(dest.ref)(w) < 7000
             self.steps += [
-                Step(f"Rumbo {L1.hdg:03.0f} a {dest.ident} ({L1.dist_nm:.1f} NM, {L1.ete_min:.0f} min)", near_dest,
-                     voice=f"Punto de control. Nuevo rumbo {L1.hdg:03.0f} hacia {dest.name}.",
+                Step(f"Rumbo {L1.hdg_m:03d} a {dest.ident} ({L1.dist_nm:.1f} NM, {L1.ete_min:.0f} min)", near_dest,
+                     voice=f"Punto de control. Nuevo rumbo {L1.hdg_m:03d} hacia {dest.name}.",
                      monitors=[hdg_mon(L1), mon_alt(A, 200, 12, "Altitud de crucero")]),
                 Step(f"Descienda e incorpórese al circuito de {dest.ident}", lambda w, L: True,
                      voice=f"Inicie el descenso y prepare la llegada a {dest.name}."),
@@ -166,7 +168,7 @@ class _Travesia(_LandingLesson):
         """Filas del cuaderno de navegación (para la tableta)."""
         rows = []
         for l in self.legs:
-            rows.append((l.name, f"CV {l.tc:03.0f}° · R {l.hdg:03.0f}°",
+            rows.append((l.name, f"CV {l.tc_m:03d}° · R {l.hdg_m:03d}°",
                          f"{l.dist_nm:.1f} NM · GS {l.gs:.0f} kt · {l.ete_min:.0f} min"))
         rows.append(("Combustible", f"viaje {self.fuel_trip:.0f} L", f"necesario con reserva {self.fuel_need:.0f} L"))
         return rows

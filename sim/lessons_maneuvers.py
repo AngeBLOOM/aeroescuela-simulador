@@ -12,7 +12,7 @@ import math
 import numpy as np
 
 from .lessons import (Lesson, LandingJudge, Monitor, Step, _LandingLesson, alt, hdg_err, mon_alt, mon_ball, mon_bank,
-                      mon_hdg, mon_speed, rnd10)
+                      mon_hdg, mon_speed, rnd10, rnd10m, turn)
 from .mathx import FT, KT, NM, clamp, wrap180
 
 CAT_TO = "2 · Despegues, aterrizajes y circuito"
@@ -199,7 +199,7 @@ class L_MotorAire(_LandingLesson):
             Step("Potencia máxima, actitud de ascenso, flaps 20", lambda w, L: w.ac.vs_fpm > 300 and w.ac.agl / FT > 400,
                  voice="Potencia máxima, actitud de ascenso y flaps veinte.", timeout=25,
                  hint="Potencia a fondo (Mayús+W) y suba la nariz."),
-            Step(f"Flaps arriba por etapas, Vy 74 kt y rumbo {H:03.0f}", lambda w, L: w.ac.agl / FT > 1000 and w.ac.sys.flaps < 1,
+            Step(f"Flaps arriba por etapas, Vy 74 kt y rumbo {world.mag(H):03.0f}", lambda w, L: w.ac.agl / FT > 1000 and w.ac.sys.flaps < 1,
                  voice="Retraiga los flaps por etapas y ascienda a Vy con rumbo de pista.",
                  monitors=[mon_speed(74, 5, 10, 20, "Velocidad Vy"), mon_hdg(H, 10, 15), mon_ball(5)]),
         ]
@@ -244,19 +244,19 @@ class L_VueloLento(Lesson):
 
     def build(self, world):
         A = round(world.cruise_alt_ft() / 100) * 100
-        H0 = rnd10(world.ac.heading)
-        H1 = (H0 + 90) % 360 or 360
+        H0 = rnd10m(world, world.ac.heading)
+        H1 = turn(H0, 90)
         self.warn = 0.0
         self.steps = [
             Step("Reduzca potencia, flaps completos y desacelere a 50 kt", lambda w, L: w.ind.ias < 56 and w.ac.sys.flaps > 25,
                  voice="Reduzca potencia, flaps completos y desacelere a cincuenta nudos manteniendo la altitud.",
                  monitors=[mon_alt(A, 100, 10)], timeout=60, hint="Gases al 30 % y flaps completos (F tres veces)."),
-            Step(f"Vuelo lento recto a rumbo {H0:03.0f} durante 40 s", lambda w, L: True, min_time=40,
+            Step(f"Vuelo lento recto a rumbo {world.mag(H0):03.0f} durante 40 s", lambda w, L: True, min_time=40,
                  voice="Mantenga cincuenta nudos, la altitud y el rumbo, con potencia.",
                  monitors=[mon_alt(A, 100, 15), mon_hdg(H0, 10, 10),
                            Monitor("Velocidad", lambda w: (w.ind.ias, 50 <= w.ind.ias <= 60, "50 +10/-0 kt"), 15, "{:.0f}", "kt")]),
-            Step(f"Viraje de 90° a rumbo {H1:03.0f} (alabeo ≤ 20°)", lambda w, L: abs(hdg_err(w, H1)) < 8,
-                 voice=f"Viraje suave a la derecha a rumbo {H1:03.0f}, sin superar veinte grados de alabeo.",
+            Step(f"Viraje de 90° a rumbo {world.mag(H1):03.0f} (alabeo ≤ 20°)", lambda w, L: abs(hdg_err(w, H1)) < 8,
+                 voice=f"Viraje suave a la derecha a rumbo {world.mag(H1):03.0f}, sin superar veinte grados de alabeo.",
                  monitors=[mon_alt(A, 100, 10), Monitor("Alabeo", lambda w: (abs(math.degrees(w.ac.roll)),
                                                                              abs(math.degrees(w.ac.roll)) <= 22, "≤ 20°"), 10, "{:.0f}", "°")]),
             Step("Recupere: potencia, flaps por etapas, crucero", lambda w, L: w.ind.ias > 85 and w.ac.sys.flaps < 1,
@@ -287,7 +287,7 @@ class L_PerdidaMotor(Lesson):
     objectives = ["Reconocer la pérdida", "Bajar la nariz primero", "Potencia máxima", "Mínima pérdida de altura"]
 
     def build(self, world):
-        H = rnd10(world.ac.heading)
+        H = rnd10m(world, world.ac.heading)
         self.stall_alt = None
         self.min_alt = None
         self.stalled = False

@@ -7,7 +7,7 @@ import math
 
 import numpy as np
 
-from .lessons import (PPL, Lesson, Monitor, Step, alt, hdg_err, mon_alt, mon_speed, rnd10)
+from .lessons import (PPL, Lesson, Monitor, Step, alt, hdg_err, mon_alt, mon_speed, rnd10, rnd10m, turn)
 from .mathx import FT, KT, NM, clamp, quat_from_euler, quat_to_mat, wrap180
 
 CAT = "4 · Emergencias"
@@ -309,8 +309,8 @@ class L_IMC(Lesson):
     def build(self, world):
         A = world.cruise_alt_ft()
         self.A = A
-        self.H0 = rnd10(world.ac.heading)
-        self.Hr = (self.H0 + 180) % 360 or 360
+        self.H0 = rnd10m(world, world.ac.heading)
+        self.Hr = turn(self.H0, 180)
         wx = world.weather
 
         def enter_cloud(w, L):
@@ -330,15 +330,15 @@ class L_IMC(Lesson):
             wx.visibility_m = 15000
             return True
         self.steps = [
-            Step(f"VFR a {A:.0f} ft, rumbo {self.H0:03.0f}", enter_cloud, voice=f"Mantenga {A:.0f} pies y rumbo {self.H0:03.0f}."),
-            Step(f"¡En nubes! Viraje de 180° a rumbo {self.Hr:03.0f}", reversed_,
-                 voice=f"¡Ha entrado en nubes! Confíe en los instrumentos. Viraje de régimen estándar a rumbo {self.Hr:03.0f}.",
+            Step(f"VFR a {A:.0f} ft, rumbo {world.mag(self.H0):03.0f}", enter_cloud, voice=f"Mantenga {A:.0f} pies y rumbo {world.mag(self.H0):03.0f}."),
+            Step(f"¡En nubes! Viraje de 180° a rumbo {world.mag(self.Hr):03.0f}", reversed_,
+                 voice=f"¡Ha entrado en nubes! Confíe en los instrumentos. Viraje de régimen estándar a rumbo {world.mag(self.Hr):03.0f}.",
                  monitors=[mon_alt(A, 200, 20), mon_bank_max(30, 20)], timeout=90,
                  hint="Use el coordinador: ala en la marca de régimen estándar. Mantenga la altitud."),
-            Step(f"Mantenga el rumbo {self.Hr:03.0f} y la altitud", lambda w, L: True, min_time=20,
+            Step(f"Mantenga el rumbo {world.mag(self.Hr):03.0f} y la altitud", lambda w, L: True, min_time=20,
                  voice="Bien. Mantenga el rumbo y la altitud hasta salir de las nubes.",
-                 monitors=[mon_alt(A, 200, 10), Monitor("Rumbo", lambda w: (w.ac.heading, abs(hdg_err(w, self.Hr)) < 15,
-                                                                           f"{self.Hr:03.0f} ±15°"), 10, "{:03.0f}", "°")]),
+                 monitors=[mon_alt(A, 200, 10), Monitor("Rumbo", lambda w: (w.mag(w.ac.heading), abs(hdg_err(w, self.Hr)) < 15,
+                                                                           f"{world.mag(self.Hr):03.0f} ±15°"), 10, "{:03.0f}", "°")]),
             Step("Fuera de las nubes", exit_cloud, voice="Ha salido de las nubes. Continúe en VFR."),
         ]
 

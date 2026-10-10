@@ -286,7 +286,7 @@ class GlassCockpit:
         # rosa completa abajo, como en el G1000 real (antes quedaba cortada por el borde inferior)
         r = int(h * 0.21)
         c = (rect.centerx, rect.bottom - r - 6)
-        hdg = ac.heading
+        hdg = (ac.heading - world.magvar) % 360          # el AHRS del G1000 da rumbo magnético
         q = round(hdg * 2) / 2.0 % 360
         key = (r, q)
         rc = getattr(self, "_rose_rot", None)
@@ -304,7 +304,7 @@ class GlassCockpit:
         pygame.draw.polygon(surf, CYAN, [polar(p, 9, d - 90), polar(p, 9, d + 90), polar(polar(c, r - 12, d), 4, d + 90),
                                          polar(polar(c, r - 12, d), 4, d - 90)])
         # aguja de curso
-        crs = nav.obs if not nav.is_loc else nav.station.course
+        crs = nav.obs if not nav.is_loc else (nav.station.course - world.magvar) % 360
         dc = crs - hdg
         col = GREEN
         pygame.draw.line(surf, col, polar(c, r - 26, dc), polar(c, r * 0.42, dc), 4)

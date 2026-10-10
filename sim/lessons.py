@@ -16,7 +16,7 @@ import math
 
 import numpy as np
 
-from .mathx import FT, KT, NM, clamp, wrap180
+from .mathx import FT, KT, NM, clamp, wrap180, wrap360
 
 PPL = "FAA-S-ACS-6C Piloto Privado"
 IR = "FAA-S-ACS-8C Vuelo Instrumental"
@@ -78,6 +78,16 @@ def rnd10(h):
     return (round(h / 10.0) * 10) % 360 or 360
 
 
+def rnd10m(w, true_hdg):
+    """Rumbo verdadero cuyo valor magnético (el que marca el direccional) es múltiplo de 10: los rumbos se
+    dictan redondos en magnético y se evalúan en verdadero."""
+    return w.true(rnd10(w.mag(true_hdg)))
+
+
+def turn(h, d):
+    return wrap360(h + d)
+
+
 def mon_speed(target, tol_lo, tol_hi=None, weight=10, name="Velocidad"):
     """Velocidad con tolerancia asimétrica (p. ej. ACS: Vy +10/-5)."""
     hi = tol_lo if tol_hi is None else tol_hi
@@ -90,7 +100,7 @@ def mon_alt(target_ft, tol, weight=10, name="Altitud"):
 
 
 def mon_hdg(target, tol, weight=10, name="Rumbo"):
-    return Monitor(name, lambda w: (w.ac.heading, abs(hdg_err(w, target)) <= tol, f"{target:03.0f} ±{tol}°"), weight, "{:03.0f}", "°")
+    return Monitor(name, lambda w: (w.mag(w.ac.heading), abs(hdg_err(w, target)) <= tol, f"{w.mag(target):03.0f} ±{tol}°"), weight, "{:03.0f}", "°")
 
 
 def mon_ball(weight=5):
@@ -565,7 +575,7 @@ class L_Despegue(Lesson):
                  voice="Gases a fondo. Mantenga el eje con los pedales y rote a cincuenta y cinco nudos.",
                  monitors=[Monitor("Eje de pista", lambda w: (self.rw_local(w)[1], abs(self.rw_local(w)[1]) < 4, "±4 m"),
                                    15, "{:+.1f}", "m")]),
-            Step(f"Ascienda a Vy 74 kt con rumbo {H:03.0f} hasta 1000 ft AGL",
+            Step(f"Ascienda a Vy 74 kt con rumbo {world.mag(H):03.0f} hasta 1000 ft AGL",
                  lambda w, L: w.ac.agl / FT > 1000, voice="Despegado. Mantenga setenta y cuatro nudos y rumbo de pista.",
                  monitors=[mon_speed(74, 5, 10, 25, "Velocidad Vy"), mon_hdg(H, 10, 15), mon_ball(5)]),
         ]
@@ -831,18 +841,18 @@ class L_Basico(Lesson):
     def build(self, world):
         A = world.cruise_alt_ft()
         A2 = A + 1000
-        H0 = rnd10(world.ac.heading)
-        H1 = rnd10(H0 + 90)
-        H2 = rnd10(H0 - 90)
+        H0 = rnd10m(world, world.ac.heading)
+        H1 = turn(H0, 90)
+        H2 = turn(H0, -90)
         self.steps = [
-            Step(f"Mantenga {A:.0f} ft y rumbo {H0:03.0f} durante 30 s (compense)", lambda w, L: True, min_time=30,
-                 voice=f"Mantenga {A:.0f} pies y rumbo {H0:03.0f}. Use el compensador para aliviar la presión.",
+            Step(f"Mantenga {A:.0f} ft y rumbo {world.mag(H0):03.0f} durante 30 s (compense)", lambda w, L: True, min_time=30,
+                 voice=f"Mantenga {A:.0f} pies y rumbo {world.mag(H0):03.0f}. Use el compensador para aliviar la presión.",
                  monitors=[mon_alt(A, 100, 12), mon_hdg(H0, 10, 8)]),
-            Step(f"Viraje a la derecha a rumbo {H1:03.0f} con 20° de alabeo", lambda w, L: abs(hdg_err(w, H1)) < 5,
-                 voice=f"Viraje a la derecha a rumbo {H1:03.0f} con veinte grados de alabeo. Coordine con los pedales.",
+            Step(f"Viraje a la derecha a rumbo {world.mag(H1):03.0f} con 20° de alabeo", lambda w, L: abs(hdg_err(w, H1)) < 5,
+                 voice=f"Viraje a la derecha a rumbo {world.mag(H1):03.0f} con veinte grados de alabeo. Coordine con los pedales.",
                  monitors=[mon_alt(A, 100, 10, "Altitud en viraje"), mon_bank(20, 7, 10), mon_ball(6)],
                  hint="Incline a la derecha unos 20° y tire ligeramente para no perder altura."),
-            Step(f"Mantenga rumbo {H1:03.0f} y {A:.0f} ft durante 20 s", lambda w, L: True, min_time=20,
+            Step(f"Mantenga rumbo {world.mag(H1):03.0f} y {A:.0f} ft durante 20 s", lambda w, L: True, min_time=20,
                  voice="Nivele las alas y mantenga el rumbo.", monitors=[mon_alt(A, 100, 8), mon_hdg(H1, 10, 8)]),
             Step(f"Ascienda a {A2:.0f} ft a Vy 74 kt con potencia máxima", lambda w, L: alt(w) > A2 - 50,
                  voice=f"Potencia máxima y ascienda a {A2:.0f} pies manteniendo setenta y cuatro nudos.",
@@ -850,8 +860,8 @@ class L_Basico(Lesson):
             Step(f"Nivele a {A2:.0f} ft, potencia de crucero (2400 RPM) y compense", lambda w, L: True, min_time=25,
                  voice="Nivele, reduzca la potencia a unas dos mil cuatrocientas revoluciones y compense.",
                  monitors=[mon_alt(A2, 100, 10), mon_hdg(H1, 10, 5)]),
-            Step(f"Viraje a la izquierda a rumbo {H2:03.0f} con 20° de alabeo", lambda w, L: abs(hdg_err(w, H2)) < 5,
-                 voice=f"Viraje a la izquierda a rumbo {H2:03.0f}.",
+            Step(f"Viraje a la izquierda a rumbo {world.mag(H2):03.0f} con 20° de alabeo", lambda w, L: abs(hdg_err(w, H2)) < 5,
+                 voice=f"Viraje a la izquierda a rumbo {world.mag(H2):03.0f}.",
                  monitors=[mon_alt(A2, 100, 8, "Altitud en viraje"), mon_bank(20, 7, 8), mon_ball(6)]),
             Step(f"Descienda a {A:.0f} ft a 500 ft/min y nivele", lambda w, L: abs(alt(w) - A) < 60 and abs(w.ind.vs_fpm) < 200,
                  voice=f"Reduzca potencia y descienda a quinientos pies por minuto hasta {A:.0f} pies.",
@@ -875,7 +885,7 @@ class L_Escarpados(Lesson):
 
     def build(self, world):
         A = world.cruise_alt_ft()
-        H0 = rnd10(world.ac.heading)
+        H0 = rnd10m(world, world.ac.heading)
         self.H0 = H0
         self.turned = 0.0
         self.prev_h = None
@@ -892,8 +902,8 @@ class L_Escarpados(Lesson):
             return False
         self.A = A
         self.steps = [
-            Step(f"Estabilice: {A:.0f} ft, rumbo {H0:03.0f}, 95 kt", lambda w, L: True, min_time=12,
-                 voice=f"Estabilice a {A:.0f} pies, rumbo {H0:03.0f} y noventa y cinco nudos.",
+            Step(f"Estabilice: {A:.0f} ft, rumbo {world.mag(H0):03.0f}, 95 kt", lambda w, L: True, min_time=12,
+                 voice=f"Estabilice a {A:.0f} pies, rumbo {world.mag(H0):03.0f} y noventa y cinco nudos.",
                  monitors=[mon_alt(A, 100, 5), mon_speed(95, 10, None, 5)]),
             Step("Viraje de 360° a la izquierda con 45° de alabeo", full_turn,
                  voice="Inicie un viraje completo a la izquierda con cuarenta y cinco grados de alabeo. Tire y añada potencia para mantener la altura.",
@@ -934,7 +944,7 @@ class L_Perdida(Lesson):
         self.secondary = 0
         self.max_bank = 0.0
         self.stalled = False
-        H0 = rnd10(world.ac.heading)
+        H0 = rnd10m(world, world.ac.heading)
 
         def stalled(w, L):
             if w.ac.stall_frac > 0.5 or (w.ac.sys.stall_warning and w.ac.pitch < math.radians(2) and w.ac.alpha > math.radians(13)):
@@ -1077,7 +1087,7 @@ class L_Parcial(Lesson):
 
     def build(self, world):
         A = world.cruise_alt_ft()
-        H0 = rnd10(world.ac.heading)
+        H0 = rnd10m(world, world.ac.heading)
 
         def fail(w, L):
             if L.t > 15:
@@ -1085,10 +1095,10 @@ class L_Parcial(Lesson):
                 return True
             return False
         self.steps = [
-            Step(f"Mantenga {A:.0f} ft y rumbo {H0:03.0f} en nubes", fail, voice=f"Está en nubes. Mantenga {A:.0f} pies y rumbo {H0:03.0f}."),
+            Step(f"Mantenga {A:.0f} ft y rumbo {world.mag(H0):03.0f} en nubes", fail, voice=f"Está en nubes. Mantenga {A:.0f} pies y rumbo {world.mag(H0):03.0f}."),
             Step("Falla de vacío: vuele con panel parcial durante 2 minutos", lambda w, L: True, min_time=120,
                  voice="Falla de vacío. No se fíe del horizonte ni del direccional. Use el coordinador, el altímetro y la brújula.",
-                 monitors=[mon_alt(A, 100, 25), Monitor("Rumbo (brújula)", lambda w: (w.ind.compass, abs(hdg_err(w, H0)) < 10, f"{H0:03.0f} ±10°"), 20, "{:03.0f}", "°"),
+                 monitors=[mon_alt(A, 100, 25), Monitor("Rumbo (brújula)", lambda w: (w.ind.compass, abs(hdg_err(w, H0)) < 10, f"{world.mag(H0):03.0f} ±10°"), 20, "{:03.0f}", "°"),
                            mon_speed(105, 10, None, 10)]),
         ]
 
@@ -1181,7 +1191,7 @@ class L_VOR(_LandingLesson):
         self.steps = [
             Step("Despegue y ascenso inicial", lambda w, L: w.ac.agl / FT > 500, voice="Despegue y ascienda a tres mil quinientos pies."),
             Step("Centre la aguja con el OBS (TO) y vire hacia el VOR VNT",
-                 lambda w, L: w.nav1.to_from == "TO" and abs(w.nav1.cdi) < 0.3 and abs(wrap180(w.ac.heading - w.nav1.obs)) < 25,
+                 lambda w, L: w.nav1.to_from == "TO" and abs(w.nav1.cdi) < 0.3 and abs(wrap180(w.ac.heading - w.true(w.nav1.obs))) < 25,
                  voice="Gire el selector de curso hasta centrar la aguja con indicación TO y vire a ese rumbo.", timeout=120,
                  hint="Use la rueda del ratón sobre el indicador NAV 1 para girar el OBS."),
             Step("Siga el curso hasta el VOR a 3500 ft", at_vor, voice="Mantenga la aguja centrada hasta sobrevolar el VOR.",
@@ -1212,7 +1222,7 @@ class L_BimotorFalla(Lesson):
 
     def build(self, world):
         A = world.cruise_alt_ft()
-        H0 = rnd10(world.ac.heading)
+        H0 = rnd10m(world, world.ac.heading)
         self.H0 = H0
         self.fail_t = None
         self.wrong = False
@@ -1235,7 +1245,7 @@ class L_BimotorFalla(Lesson):
                 return True
             return False
         self.steps = [
-            Step(f"Crucero a {A:.0f} ft, rumbo {H0:03.0f}", fail, voice=f"Mantenga {A:.0f} pies y rumbo {H0:03.0f}."),
+            Step(f"Crucero a {A:.0f} ft, rumbo {world.mag(H0):03.0f}", fail, voice=f"Mantenga {A:.0f} pies y rumbo {world.mag(H0):03.0f}."),
             Step("¡FALLA DE MOTOR! Control, potencia, identificar, verificar y embanderar", feathered,
                  voice="¡Falla de motor! Mantenga el control con el pedal, potencia máxima, identifique, verifique y embandere el motor muerto.",
                  monitors=[mon_hdg(H0, 20, 15, "Rumbo durante la identificación")], timeout=40,
@@ -1280,7 +1290,7 @@ class L_Vmc(Lesson):
                   "Recuperación a la primera señal", "Volver a Vyse sin perder control"]
 
     def build(self, world):
-        H0 = rnd10(world.ac.heading)
+        H0 = rnd10m(world, world.ac.heading)
         self.H0 = H0
         sysm = world.ac.sys
         self.signal_t = None

@@ -20,7 +20,9 @@ enlace ATC, `docs/PROTOCOLO_ATC.md`).
 | Firewall | la primera vez Windows puede preguntar si permite a AeroEscuela usar la red: responder **Permitir** |
 
 Unidades: altitudes en **pies**, velocidades en **nudos**, ángulos en **grados**, velocidades de giro en
-**grados por segundo**, aceleraciones en **g**, frecuencias en **MHz**. Los rumbos son **verdaderos**.
+**grados por segundo**, aceleraciones en **g**, frecuencias en **MHz** (el ADF en kHz). `rumbo` y `derrota` son
+**verdaderos**; `rumbo_mag` es el magnético (el que marcan la brújula y el direccional) y `declinacion` la del lugar
+(+ = este; en Venezuela unos −13, es decir 13° oeste). El OBS (`nav1_obs`) es magnético.
 
 ## Campos
 

@@ -83,6 +83,7 @@ class VOR:
         self.name = name
         self.range_m = 80000.0
         self.kind = "VOR"
+        self.magvar = None             # declinación de su rosa (grados, + = este); None = la del lugar
 
 
 class NDB:
