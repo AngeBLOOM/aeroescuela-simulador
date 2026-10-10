@@ -100,12 +100,6 @@ class WeightBalance:
         t.cg_in = r["cg"]
         return r
 
-
-def reference_cg(t):
-    """CG (pulgadas desde el datum) con que se ajustó el modelo de vuelo: la carga por defecto (piloto e instructor,
-    10 kg de equipaje) con 3/4 de combustible, como empieza cada vuelo."""
-    return WeightBalance(t.id).compute(t.fuel_capacity * 0.75, t.fuel_density)["cg"]
-
     def performance(self, w_lb, field_elev_ft, qnh_hpa, oat_c, headwind_kt, grass=False):
         """Distancias de despegue y aterrizaje (ft) corregidas por altitud de presión, temperatura,
         peso, viento y superficie (regla práctica de los POH)."""
@@ -122,3 +116,9 @@ def reference_cg(t):
                     to_roll=d["to_roll_ft"] * k * f_g, to_50=d["to_50_ft"] * k * f_g,
                     ldg_roll=d["ldg_roll_ft"] * (1 + 0.04 * max(0, da) / 1000) * max(0.4, f_wind) * f_g,
                     ldg_50=d["ldg_50_ft"] * (1 + 0.04 * max(0, da) / 1000) * max(0.4, f_wind) * f_g)
+
+
+def reference_cg(t):
+    """CG (pulgadas desde el datum) con que se ajustó el modelo de vuelo: la carga por defecto (piloto e instructor,
+    10 kg de equipaje) con 3/4 de combustible, como empieza cada vuelo."""
+    return WeightBalance(t.id).compute(t.fuel_capacity * 0.75, t.fuel_density)["cg"]

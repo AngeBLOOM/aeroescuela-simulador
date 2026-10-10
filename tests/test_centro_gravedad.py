@@ -119,5 +119,22 @@ for name in ("referencia", "límite trasero"):
     if not later < 0.3 * first or nose > 15:
         fallos.append(f"CG {name}: la perturbación de cabeceo no se amortigua ({first:.1f} -> {later:.2f} °/s)")
 
+# ---------------------------------------------------------------- 4. distancias de la tableta (peso y rendimiento)
+# a nivel del mar, ISA, peso máximo y sin viento deben salir las cifras del manual, y crecer con altitud y calor
+print("\nDistancias de despegue y aterrizaje de la tableta")
+for tid, d in DATA.items():
+    wb = WeightBalance(tid)
+    try:
+        p = wb.performance(d["mtow_lb"], 0.0, 1013.25, 15.0, 0.0)
+        hot = wb.performance(d["mtow_lb"], 5000.0, 1013.25, 30.0, 0.0)
+    except Exception as ex:
+        fallos.append(f"{tid}: la tableta no calcula las distancias ({ex.__class__.__name__}: {ex})")
+        continue
+    book = abs(p["to_roll"] - d["to_roll_ft"]) < 1 and abs(p["ldg_50"] - d["ldg_50_ft"]) < 1
+    print(f"  {tid:6s} despegue {p['to_roll']:.0f}/{p['to_50']:.0f} ft, aterrizaje {p['ldg_roll']:.0f}/{p['ldg_50']:.0f} ft; "
+          f"a 5000 ft y 30 °C despegue {hot['to_roll']:.0f} ft")
+    if not book or hot["to_roll"] <= p["to_roll"]:
+        fallos.append(f"{tid}: distancias de la tableta fuera del manual")
+
 print("\nFALLOS: " + "; ".join(fallos) if fallos else "\nTODO OK")
 sys.exit(1 if fallos else 0)
