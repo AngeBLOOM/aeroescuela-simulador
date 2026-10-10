@@ -346,7 +346,7 @@ class Renderer:
         self.overlay_swizzle = None
         self.size = tuple(size)
 
-    # ------------------------------------------------------------ foto de cabina (en la GPU)
+    # ------------------------------------------------------------ imagen de fondo (en la GPU): fondo de los menús
     PHOTO_VS = """
 #version 330
 in vec2 in_pos;
@@ -366,7 +366,7 @@ void main() { f_color = texture(u_tex, v_uv); }
 """
 
     def set_photo(self, surf, rect):
-        """Foto de cabina a dibujar este fotograma, debajo de la superposición (None la quita).
+        """Imagen a dibujar este fotograma, debajo de la superposición (None la quita).
         La imagen se sube una sola vez; el escalado y el zoom los hace la tarjeta gráfica."""
         if surf is None:
             self.photo_draw = None

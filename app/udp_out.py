@@ -63,6 +63,9 @@ def snapshot(app):
                   "nav1_hacia": w.nav1.to_from, "xpdr": w.xpdr,
                   "adf_khz": w.adf.freq, "adf_valida": bool(w.adf.valid), "adf_relativa": r(w.adf.relative, 1)},
         "pa": {"conectado": bool(w.ap.engaged), "lateral": w.ap.lat, "vertical": w.ap.vert},
+        "gps": {"cdi_fuente": w.cdi_src, "valido": bool(w.gps.valid), "punto": w.gps.ident if w.gps.valid else None,
+                "dist_nm": r(w.gps.dis_nm, 2) if w.gps.valid else None, "dtk": w.gps.dtk if w.gps.valid else None,
+                "xtk_nm": r(w.gps.xtk_nm, 3), "obs": bool(w.gps.obs_mode)},
         "congelado": sorted(w.frozen), "ritmo": w.sim_rate,
     }
 

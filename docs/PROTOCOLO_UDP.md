@@ -62,6 +62,7 @@ Unidades: altitudes en **pies**, velocidades en **nudos**, ángulos en **grados*
 | `avisos` | luces de aviso del tablero: encender un LED por cada `true` |
 | `nav1_cdi` / `nav1_gs` | desvío del localizador/VOR y de la senda, −1 a 1 (a fondo de escala) |
 | `adf_relativa` | marcación relativa del NDB sintonizado (0 = delante, en el sentido de las agujas); 90 sin señal |
+| `gps` | selector CDI (`GPS`/`VLOC`), punto activo, distancia, curso deseado (magnético) y desvío lateral (NM, + = a la derecha) |
 | `congelado` / `ritmo` | lo que el instructor tiene congelado y el ritmo del tiempo (1, 2 o 4) |
 
 ## Ejemplo de receptor (Python)

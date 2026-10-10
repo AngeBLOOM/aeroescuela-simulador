@@ -232,4 +232,22 @@ assert "serie:X" not in hw4.cfg["unidades"].values()
 plugged[:] = [pedals]
 assert not Hardware({}).twin_groups()
 print("mandos iguales OK")
+
+# consola física = volante (alabeo y cabeceo) asignado y enchufado: decide la cabina automática en pantalla
+v = FakeJoy(30, "Volante B")
+plugged[:] = [v]
+hw5 = Hardware({})
+assert not hw5.console_connected()                         # nada asignado: sin consola
+g = next(iter(hw5.devices))
+hw5.bindings["eje_alabeo"] = dict(dev=g, eje=0, inv=False)
+assert not hw5.console_connected()                         # falta el cabeceo
+hw5.bindings["eje_cabeceo"] = dict(dev=g, eje=1, inv=False)
+assert hw5.console_connected()
+plugged[:] = []
+hw5.refresh()
+assert not hw5.console_connected()                         # volante desenchufado
+plugged[:] = [v]
+hw5.refresh()
+assert hw5.console_connected()                             # vuelto a enchufar
+print("detección de consola OK")
 print("TODO OK")

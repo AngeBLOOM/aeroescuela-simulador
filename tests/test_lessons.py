@@ -169,5 +169,27 @@ def spin_pilot(w, L, t, dt):
 
 
 fly("barrena", spin_pilot, 120)
+
+# la barrena recoloca el avión 6500 ft más alto al prepararse: el variómetro no debe dar un pico falso al empezar
+L = LB["barrena"]()
+L.setup(w)
+vs_pico = 0.0
+for _ in range(60 * 3):
+    w.step(1 / 60)
+    vs_pico = max(vs_pico, abs(w.ind.vs_fpm))
+print(f"  barrena: |VS| máx en los 3 primeros segundos {vs_pico:.0f} ft/min")
+if vs_pico > 2000:
+    fallos.append(f"pico falso de velocidad vertical al empezar la barrena ({vs_pico:.0f} ft/min)")
+
+# un criterio repetido en varios pasos (la altitud del hielo en el carburador) sale en una sola fila de la evaluación
+L = LB["hielo_carb"]()
+L.setup(w)
+L.all_monitors = [m for st in L.steps for m in st.monitors]
+for m in L.all_monitors:
+    m.update(2.0, w)
+filas = [it for it in L.result(w)["items"] if it[0] == "Altitud"]
+print(f"  hielo_carb: filas de Altitud en la evaluación {len(filas)} ({filas[0][1] if filas else '-'}/{filas[0][2] if filas else '-'})")
+if len(filas) != 1 or filas[0][2] != 30:
+    fallos.append(f"la altitud del hielo en el carburador sale en {len(filas)} filas")
 print("FALLOS: " + "; ".join(fallos) if fallos else "TODO OK")
 sys.exit(1 if fallos else 0)
