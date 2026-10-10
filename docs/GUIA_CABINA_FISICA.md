@@ -59,6 +59,12 @@ Cuando una cabina esté lista: Asignar mandos → **Exportar** (crea `cabina_fis
 Copie ese archivo a la carpeta de datos de la otra computadora (`%LOCALAPPDATA%\AeroEscuela\datos`) y pulse
 **Importar**. Funciona si los mandos son del mismo modelo.
 
+## 7. Dos mandos del mismo modelo
+- Se numeran en pantalla: «Cuadrante (1)», «Cuadrante (2)». Cada número recuerda su unidad por el número de serie
+  del mando o, si no tiene, por el **puerto USB**: no cambie esos mandos de puerto.
+- Si aun así quedaron cruzados (por ejemplo, el cuadrante del motor 2 mueve el motor 1), pulse
+  **Intercambiar iguales** en Asignar mandos y vuelva a calibrar sus ejes.
+
 ## Si algo falla
 - Un mando no aparece: otro puerto USB (mejor directo al equipo, sin concentrador) y **Buscar**.
 - Un eje tiembla en reposo: es normal un poco; el simulador ignora los movimientos muy pequeños.

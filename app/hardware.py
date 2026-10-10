@@ -80,6 +80,46 @@ NAMES = {k: n for k, n, _ in FUNCTIONS}
 KIND = {k: t for k, _, t in FUNCTIONS}
 CENTERED = ("eje_alabeo", "eje_cabeceo", "eje_timon", "eje_trim")     # ejes con centro (el resto son palancas)
 SELECTORS = {"mag": "Llave de magnetos", "comb": "Selector de combustible"}
+_SDL = None
+
+
+def _sdl():
+    """El SDL2 que ya usa pygame, para leer lo que pygame no ofrece (número de serie, ruta USB). None si no se puede."""
+    global _SDL
+    if _SDL is None:
+        _SDL = False
+        try:
+            import ctypes
+            lib = ctypes.CDLL(os.path.join(os.path.dirname(pygame.__file__), "SDL2.dll"))
+            lib.SDL_JoystickFromInstanceID.restype = ctypes.c_void_p
+            lib.SDL_JoystickFromInstanceID.argtypes = [ctypes.c_int32]
+            for fn in (lib.SDL_JoystickGetSerial, lib.SDL_JoystickPath):
+                fn.restype = ctypes.c_char_p
+                fn.argtypes = [ctypes.c_void_p]
+            _SDL = lib
+        except (OSError, AttributeError):
+            pass
+    return _SDL or None
+
+
+def unit_id(j):
+    """Identifica la unidad física, no el modelo: número de serie o, si no tiene, la ruta USB (depende del puerto)."""
+    lib = _sdl()
+    if lib is None:
+        return None
+    try:
+        p = lib.SDL_JoystickFromInstanceID(j.get_instance_id())
+        for fn, tag in ((lib.SDL_JoystickGetSerial, "serie"), (lib.SDL_JoystickPath, "ruta")):
+            v = fn(p) if p else None
+            if v:
+                return f"{tag}:{v.decode('utf-8', 'replace')}"
+    except (pygame.error, OSError):
+        pass
+    return None
+
+
+def _model(key):
+    return key.rsplit("#", 1)[0]
 
 
 class Hardware:
@@ -100,20 +140,45 @@ class Hardware:
 
     # ------------------------------------------------------------ dispositivos
     def refresh(self):
-        """Vuelve a abrir todos los mandos. Devuelve (nombres conectados, nombres desconectados) desde la última vez."""
+        """Vuelve a abrir todos los mandos. Devuelve (nombres conectados, nombres desconectados) desde la última vez.
+
+        Cada mando se guarda como «GUID#n». El GUID es del modelo, así que dos unidades iguales (dos cuadrantes,
+        dos paneles) solo se distinguen por n. Para que no se intercambien al cambiar el orden de Windows, cada n
+        recuerda su unidad (número de serie o ruta USB) en "unidades"; sin ese dato se usa el orden, como antes."""
         old = dict(self.names)
         pygame.joystick.init()
-        self.devices = {}
-        self.names = {}
+        joys = []
         for i in range(pygame.joystick.get_count()):
             try:
                 j = pygame.joystick.Joystick(i)
                 j.init()
-                guid = j.get_guid() + f"#{sum(1 for g in self.devices if g.startswith(j.get_guid()))}"
-                self.devices[guid] = j
-                self.names[guid] = j.get_name()
-            except Exception:
+                joys.append((j.get_guid(), j, unit_id(j)))
+            except pygame.error:
                 pass
+        ids = [u for _, _, u in joys if u]
+        joys = [(g, j, u if ids.count(u) == 1 else None) for g, j, u in joys]   # serie repetida: no sirve
+        units = self.cfg.setdefault("unidades", {})                              # "GUID#n" -> unidad
+        keys = {}
+        for n, (guid, j, uid) in enumerate(joys):        # primero las unidades ya conocidas, en su n de siempre
+            k = next((k for k, u in units.items() if u == uid and _model(k) == guid), None) if uid else None
+            if k is not None and k not in keys.values():
+                keys[n] = k
+        for n, (guid, j, uid) in enumerate(joys):        # después las nuevas, en el primer n libre
+            if n not in keys:
+                i = 0
+                while f"{guid}#{i}" in keys.values():
+                    i += 1
+                keys[n] = f"{guid}#{i}"
+        self.devices = {}
+        self.names = {}
+        for n, (guid, j, uid) in enumerate(joys):
+            k = keys[n]
+            self.devices[k] = j
+            self.names[k] = j.get_name()
+            if uid:
+                for stale in [s for s, u in units.items() if u == uid and s != k]:
+                    del units[stale]
+                units[k] = uid
         added = [n for g, n in self.names.items() if g not in old]
         removed = [n for g, n in old.items() if g not in self.names]
         if added or removed:
@@ -122,7 +187,36 @@ class Hardware:
         return added, removed
 
     def device_list(self):
-        return [(g, j.get_name(), j.get_numaxes(), j.get_numbuttons()) for g, j in self.devices.items()]
+        return [(g, self.label(g), j.get_numaxes(), j.get_numbuttons()) for g, j in self.devices.items()]
+
+    def label(self, key):
+        """Nombre del mando; con unidades iguales conectadas se numeran: «Cuadrante (1)», «Cuadrante (2)»."""
+        name = self.names.get(key, "")
+        twins = sum(1 for g in self.devices if _model(g) == _model(key))
+        return f"{name} ({int(key.rsplit('#', 1)[1]) + 1})" if twins > 1 else name
+
+    def twin_groups(self):
+        """Modelos con dos o más unidades conectadas: [(nombre, [claves])]."""
+        groups = {}
+        for g in self.devices:
+            groups.setdefault(_model(g), []).append(g)
+        return [(self.names[ks[0]], sorted(ks)) for ks in groups.values() if len(ks) > 1]
+
+    def swap_twins(self):
+        """Corrige a mano unidades iguales que quedaron cruzadas: las asignaciones pasan de cada unidad a la
+        siguiente (con dos, se intercambian). Devuelve los nombres de los modelos afectados."""
+        done = []
+        for name, ks in self.twin_groups():
+            nxt = {k: ks[(i + 1) % len(ks)] for i, k in enumerate(ks)}
+            for b in self.bindings.values():
+                if b.get("dev") in nxt:
+                    b["dev"] = nxt[b["dev"]]
+                    b.pop("cal", None)       # se midió en la otra unidad: hay que volver a calibrar
+            done.append(name)
+        if done:
+            self.prev.clear()
+            self.sync_pending = True
+        return done
 
     def uses_device(self, joy):
         """True si alguna asignación usa este joystick: así el joystick genérico no lo lee por segunda vez."""
@@ -143,8 +237,7 @@ class Hardware:
         b = self.bindings.get(key)
         if not b:
             return "—"
-        j = self.devices.get(b["dev"])
-        dev = j.get_name()[:22] if j else "(no conectado)"
+        dev = self.label(b["dev"])[:26] if b["dev"] in self.devices else "(no conectado)"
         if "eje" in b:
             return f"{dev} · eje {b['eje']}" + (" (inv.)" if b.get("inv") else "") + (" · cal." if b.get("cal") else "")
         return f"{dev} · botón {b['btn']}"

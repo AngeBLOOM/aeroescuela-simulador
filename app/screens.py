@@ -717,6 +717,12 @@ class ScreensMixin:
             n = hw.import_profile()
             self.flash(f"Importadas {n} asignaciones" if n else "No hay archivo cabina_fisica.json en la carpeta de datos", 5)
             self.save_settings()
+        if hw.twin_groups() and ui.button(s, (box.right - 640, box.y + 50, 160, 28), "Intercambiar iguales", size=12,
+                                          tip="Si dos mandos del mismo modelo quedaron cruzados, pasa las asignaciones "
+                                              "de uno al otro (luego vuelva a calibrar)"):
+            names = hw.swap_twins()
+            self.flash("Asignaciones intercambiadas entre: " + ", ".join(names) + ". Vuelva a calibrar sus ejes.", 6)
+            self.save_settings()
         calibrating = hw.calib is not None
         if ui.button(s, (box.right - 470, box.y + 50, 160, 28), "Terminar calibración" if calibrating else "Calibrar ejes",
                      active=calibrating, size=12,

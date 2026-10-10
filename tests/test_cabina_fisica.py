@@ -8,14 +8,15 @@ import types
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pygame
 
+import app.hardware as hardware
 from app.controls import Controls
 from app.hardware import Hardware
 from sim.world import World
 
 
 class FakeJoy:
-    def __init__(self, iid, name, naxes=6, nbtn=16):
-        self.iid, self.name = iid, name
+    def __init__(self, iid, name, naxes=6, nbtn=16, serial=None):
+        self.iid, self.name, self.serial = iid, name, serial
         self.axes = [0.0] * naxes
         self.btns = [0] * nbtn
 
@@ -34,6 +35,7 @@ plugged = []
 pygame.joystick.init = lambda: None
 pygame.joystick.get_count = lambda: len(plugged)
 pygame.joystick.Joystick = lambda i: plugged[i]
+hardware.unit_id = lambda j: j.serial
 
 
 class FakeApp:
@@ -138,4 +140,40 @@ added, removed = hw.refresh()
 assert removed == ["Pedales"] and not added
 assert hw.refresh() == ([], [])
 print("conexión en caliente OK")
+
+# ---------------------------------------------------------------- 5. dos mandos iguales (mismo modelo)
+q1 = FakeJoy(20, "Cuadrante", serial="serie:A")
+q2 = FakeJoy(21, "Cuadrante", serial="serie:B")
+q1.axes[0], q2.axes[0] = 0.5, -0.5
+plugged[:] = [q1, q2]
+hw2 = Hardware({})
+key = {j.serial: g for g, j in hw2.devices.items()}
+hw2.bindings["eje_gases"] = dict(dev=key["serie:A"], eje=0, inv=False)
+hw2.bindings["eje_gases2"] = dict(dev=key["serie:B"], eje=0, inv=False)
+assert sorted(n for _, n, _, _ in hw2.device_list()) == ["Cuadrante (1)", "Cuadrante (2)"]
+plugged[:] = [q2, q1]                        # Windows los enumera al revés (otro puerto, otro arranque)
+hw2.refresh()
+assert hw2.axis("eje_gases", 0.0) == 0.5 and hw2.axis("eje_gases2", 0.0) == -0.5
+hw3 = Hardware(hw2.cfg)                      # al abrir el programa otra vez, con config.json guardado
+assert hw3.axis("eje_gases", 0.0) == 0.5 and hw3.axis("eje_gases2", 0.0) == -0.5
+
+# sin número de serie ni ruta: se sigue el orden y se corrige con «Intercambiar iguales»
+q1.serial = q2.serial = None
+plugged[:] = [q1, q2]
+hw4 = Hardware({})
+hw4.bindings["eje_gases"] = dict(dev=next(g for g, j in hw4.devices.items() if j is q1), eje=0, inv=False,
+                                 cal=dict(min=-1.0, max=1.0))
+plugged[:] = [q2, q1]
+hw4.refresh()
+assert hw4.axis("eje_gases", 0.0) == -0.5    # cruzados
+assert hw4.swap_twins() == ["Cuadrante"]
+assert hw4.axis("eje_gases", 0.0) == 0.5 and "cal" not in hw4.bindings["eje_gases"]
+
+# el mismo número de serie en las dos unidades (placas baratas) no se usa para distinguirlas
+q1.serial = q2.serial = "serie:X"
+hw4.refresh()
+assert "serie:X" not in hw4.cfg["unidades"].values()
+plugged[:] = [pedals]
+assert not Hardware({}).twin_groups()
+print("mandos iguales OK")
 print("TODO OK")
