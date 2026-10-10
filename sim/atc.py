@@ -104,7 +104,8 @@ class ATC:
         wx = self.world.weather
         if wx.wind_kt < 2.5:
             return "viento en calma", "viento en calma"
-        d = int(round(wx.wind_dir / 10.0) * 10) % 360 or 360
+        # la torre y el ATIS dan el viento magnético (el METAR, verdadero)
+        d = int(round((wx.wind_dir - self.world.magvar) / 10.0) * 10) % 360 or 360
         k = int(round(wx.wind_kt))
         g = f" ráfagas {int(round(wx.wind_kt + wx.gust_kt))}" if wx.gust_kt > 2 else ""
         return f"viento {d:03d}° {k} kt{g}", f"viento {digits(f'{d:03d}')} grados, {k} nudos" + (
