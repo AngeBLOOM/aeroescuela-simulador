@@ -9,7 +9,7 @@ import pygame
 
 from sim.aircraft_data import AIRCRAFT
 from sim.lessons import LESSONS, FreeFlight
-from sim.mathx import FT, KT, clamp
+from sim.mathx import FT, KT, NM, clamp
 from sim.world import POSITIONS
 from ui.ui import COL, panel_box
 
@@ -1494,7 +1494,8 @@ class ScreensMixin:
         panel_box(s, box, 16, (8, 14, 24, 240))
         f.blit(s, "ESTACIÓN DEL INSTRUCTOR", (box.x + 24, box.y + 18), 22, COL["white"], bold=True)
         f.blit(s, "La simulación está en pausa mientras configura.", (box.x + 26, box.y + 50), 13, COL["grey"])
-        tabs = [("clima", "Meteorología"), ("fallas", "Fallas"), ("pos", "Reposicionar"), ("avion", "Avión")]
+        tabs = [("clima", "Meteorología"), ("fallas", "Fallas"), ("pos", "Reposicionar"), ("control", "Congelar y mover"),
+                ("avion", "Avión")]
         tx = box.x + 24
         for key, lab in tabs:
             if ui.button(s, (tx, box.y + 76, 170, 36), lab, active=self.instr_tab == key, size=15):
@@ -1606,6 +1607,37 @@ class ScreensMixin:
                     self.state = "flight"
                     self.flash(POSITIONS[k])
                     return
+        elif tab == "control":
+            f.blit(s, "Congelar", (x0, y + 8), 16, COL["white"])
+            for i, (k, lab) in enumerate(w.FREEZES.items()):
+                on = k in w.frozen
+                if ui.button(s, (x0 + 230 + i * 150, y, 140, 34), ("❄ " if on else "") + lab.capitalize(), active=on,
+                             size=14, tip="Mantiene el valor actual mientras el avión sigue volando"):
+                    w.freeze(k, not on)
+            y += 50
+            f.blit(s, "Ritmo del tiempo", (x0, y + 8), 16, COL["white"])
+            for i, x in enumerate((1, 2, 4)):
+                if ui.button(s, (x0 + 230 + i * 100, y, 90, 34), f"×{x}", active=w.sim_rate == x, size=14,
+                             tip="Acelerar solo en vuelo, por encima de 500 ft; cerca del suelo vuelve a ×1"):
+                    if not w.set_rate(x):
+                        self.flash("El tiempo solo se acelera en vuelo, por encima de 500 ft", 3)
+            y += 50
+            f.blit(s, "Mover el avión", (x0, y + 8), 16, COL["white"])
+            moves = [("1 NM al norte", dict(north_nm=1)), ("1 NM al sur", dict(north_nm=-1)),
+                     ("1 NM al este", dict(east_nm=1)), ("1 NM al oeste", dict(east_nm=-1)),
+                     ("+500 ft", dict(alt_ft=500)), ("−500 ft", dict(alt_ft=-500)),
+                     ("Rumbo −30°", dict(hdg_deg=-30)), ("Rumbo +30°", dict(hdg_deg=30)), ("Dar la vuelta", dict(hdg_deg=180))]
+            for i, (lab, kw) in enumerate(moves):
+                col, row = i % 4, i // 4
+                if ui.button(s, (x0 + 230 + col * 160, y + row * 44, 150, 36), lab, size=14):
+                    if not w.slew(**kw):
+                        self.flash("El avión solo se mueve en vuelo", 3)
+            y += 3 * 44 + 10
+            d = math.hypot(ac.pos[0] - w.home.ref[0], ac.pos[1] - w.home.ref[1]) / NM
+            f.blit(s, f"Ahora: {ac.alt_msl / FT:,.0f} ft · rumbo {ac.heading:03.0f}° · {ac.ias_kt:.0f} kt · "
+                      f"a {d:.1f} NM de {w.home.ident}", (x0, y), 14, COL["grey"])
+            f.blit(s, "Lo congelado y el ritmo se quitan al reposicionar o empezar otra lección.", (x0, y + 24), 13,
+                   COL["grey"])
         elif tab == "avion":
             f.blit(s, "Combustible", (x0, y + 8), 16, COL["white"])
             for i, (lab, frac) in enumerate((("Lleno", 1.0), ("3/4", 0.75), ("Mitad", 0.5), ("Reserva", 0.12))):

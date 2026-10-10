@@ -234,6 +234,11 @@ def step(app, frame):
             app.world.emerg.trigger("smoke"); app.world.ac.sys.smoke_level = 0.35
         elif name == "instrfallas":
             app.state = "instructor"; app.instr_tab = "fallas"
+        elif name == "instrcontrol":
+            app.world.freeze("alt", True); app.world.set_rate(2)
+            app.state = "instructor"; app.instr_tab = "control"
+        elif name == "congelado":
+            app.state = "flight"
         elif name == "fotozoom":
             app.photo_cockpit().zoom = app.photo_cockpit().zoom_target = 2.1
         elif name == "instr":

@@ -9,7 +9,7 @@ from .airports import build_airports
 from .atmosphere import Atmosphere, Weather
 from .autopilot import Autopilot
 from .flightmodel import Aircraft
-from .mathx import FT, KT, NM, clamp, wrap360
+from .mathx import FT, KT, NM, clamp, quat_from_euler, quat_to_euler, wrap360
 from .nav import NavRadio
 from .terrain import Terrain
 from .traffic import Traffic
@@ -170,6 +170,8 @@ class World:
         self.acc = 0.0
         self.aircraft_id = aircraft_id
         self.ac = Aircraft(AIRCRAFT[aircraft_id](), self.terrain, self.atmo)
+        self.sim_rate = 1                # herramientas del instructor: ritmo del tiempo (1, 2 o 4)
+        self.frozen = {}                 # "alt" / "pos" / "fuel" -> valor que se mantiene
         self.events = []
         self.assist_rudder = False
         self.stats = dict(flight_time=0.0, landings=0, airborne=False)
@@ -207,6 +209,65 @@ class World:
     def set_aircraft(self, aircraft_id):
         self.aircraft_id = aircraft_id
         self.ac = Aircraft(AIRCRAFT[aircraft_id](), self.terrain, self.atmo)
+        self.frozen = {}
+
+    # ------------------------------------------------------------ herramientas del instructor
+    FREEZES = {"alt": "altitud", "pos": "posición", "fuel": "combustible"}
+
+    def freeze(self, kind, on):
+        """Congela la altitud, la posición sobre el terreno o el combustible en su valor actual (el avión sigue
+        volando: actitud, velocidad y motor cambian como siempre)."""
+        ac = self.ac
+        if not on:
+            self.frozen.pop(kind, None)
+        elif kind == "alt":
+            self.frozen["alt"] = float(ac.pos[2])
+        elif kind == "pos":
+            self.frozen["pos"] = (float(ac.pos[0]), float(ac.pos[1]))
+        elif kind == "fuel":
+            self.frozen["fuel"] = float(ac.sys.fuel_l)
+
+    def _hold_frozen(self):
+        ac = self.ac
+        f = self.frozen
+        if "alt" in f:
+            ac.pos[2] = f["alt"]
+            ac.vel[2] = min(ac.vel[2], 0.0) if ac.on_ground else 0.0
+        if "pos" in f:
+            ac.pos[0], ac.pos[1] = f["pos"]
+        if "fuel" in f:
+            ac.sys.fuel_l = f["fuel"]
+
+    def set_rate(self, x):
+        """Ritmo del tiempo ×1, ×2 o ×4. Acelerar solo en vuelo y por encima de 500 ft sobre el terreno."""
+        x = int(x) if x in (1, 2, 4) else 1
+        if x > 1 and (self.ac.on_ground or self.ac.crashed or self.ac.agl < 500 * FT):
+            return False
+        self.sim_rate = x
+        return True
+
+    def slew(self, north_nm=0.0, east_nm=0.0, alt_ft=0.0, hdg_deg=0.0):
+        """Mueve el avión al instante (en vuelo): millas al norte y al este, pies de altitud y grados de rumbo.
+        La velocidad gira con el rumbo y nunca baja a menos de 300 ft sobre el terreno."""
+        ac = self.ac
+        if ac.on_ground or ac.crashed:
+            return False
+        ac.pos[0] += north_nm * NM
+        ac.pos[1] += east_nm * NM
+        ac.pos[2] -= alt_ft * FT
+        gh = self.terrain.surface_height(ac.pos[0], ac.pos[1])
+        ac.pos[2] = min(ac.pos[2], -(gh + 300 * FT))
+        if hdg_deg:
+            roll, pitch, yaw = quat_to_euler(ac.q)
+            d = math.radians(hdg_deg)
+            ac.q = quat_from_euler(roll, pitch, yaw + d)
+            c, s = math.cos(d), math.sin(d)
+            ac.vel[0], ac.vel[1] = ac.vel[0] * c - ac.vel[1] * s, ac.vel[0] * s + ac.vel[1] * c
+        for k in ("alt", "pos"):
+            if k in self.frozen:
+                self.freeze(k, True)    # lo congelado pasa a ser la nueva posición
+        ac._update_outputs(np.zeros(3), ac.tas)    # altitud y rumbo al día aunque la simulación esté en pausa
+        return True
 
     # ------------------------------------------------------------ pista en servicio
     def select_runway(self, airport=None):
@@ -244,6 +305,8 @@ class World:
         name = ALIASES.get(name, name)
         ac = self.ac
         home = self.home
+        self.frozen = {}
+        self.sim_rate = 1
         self.select_runway()
         rw = self.active_rw
         thr, hdg, d, r = self.runway_frame()
@@ -334,13 +397,16 @@ class World:
     # ------------------------------------------------------------- paso
     def step(self, frame_dt, controls_fn=None):
         """Avanza la simulación con pasos fijos. controls_fn(world, dt) aplica mandos."""
-        frame_dt = min(frame_dt, 0.1)
-        self.acc += frame_dt
         ac = self.ac
+        if self.sim_rate > 1 and (ac.on_ground or ac.crashed or ac.agl < 500 * FT):
+            self.sim_rate = 1            # cerca del suelo el tiempo vuelve a su ritmo normal
+            self.events.append(("ritmo_normal", {}))
+        frame_dt = min(frame_dt, 0.1) * self.sim_rate
+        self.acc += frame_dt
         # en vuelo basta con 120 Hz; con ruedas en el suelo (amortiguadores rígidos) se usan 240 Hz
         h = 1.0 / (PHYS_HZ if (ac.on_ground or ac.agl < 25) else PHYS_HZ / 2)
         n = 0
-        max_steps = 16
+        max_steps = 16 * self.sim_rate
         while self.acc >= h and n < max_steps:
             self.acc -= h
             n += 1
@@ -348,6 +414,8 @@ class World:
                 controls_fn(self, h)
             self.atmo.update(h, ac.tas, ac.agl, ac.pos)
             ac.step(h)
+            if self.frozen:
+                self._hold_frozen()
             self.sim_time += h
             if not ac.crashed and not ac.on_ground:
                 self.stats["flight_time"] += h

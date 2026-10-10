@@ -11,7 +11,7 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TESTS = ["test_cabina_fisica", "test_frenos", "test_centro_gravedad", "test_physics", "test_aviones", "test_diamond",
-         "test_ap",
+         "test_ap", "test_instructor",
          "test_lessons", "test_emergencias", "test_atc_externo"]
 
 

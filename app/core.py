@@ -490,7 +490,7 @@ class App(ScreensMixin):
             fallas=[dict(k=k, nombre=n, activa=bool(s.failures.get(k)), prog=k in pend) for k, n, ok in CATALOG if ok(ac.t)],
             emergencias=[list(r) for r in w.emerg.report()],
             radio=[[tag.get(who, who), txt] for who, txt, _ in list(self.radio_log)[-8:]],
-            resultado=res, pistas=pistas,
+            resultado=res, pistas=pistas, congelado=sorted(w.frozen), ritmo=w.sim_rate,
             ruta=[[float(p[0]), float(p[1])] for p in w.route] if w.route else None,
             trafico=[[float(p.pos[0]), float(p.pos[1])] for p in w.traffic.planes],
             meteo=dict(wind_dir=wx.wind_dir, wind_kt=wx.wind_kt, gust_kt=wx.gust_kt, visibility_m=wx.visibility_m,
@@ -558,6 +558,15 @@ class App(ScreensMixin):
                     apply_weather_preset(w, pr)
         elif k == "metar":
             self.apply_live_weather()
+        elif k == "congelar" and c.get("k") in w.FREEZES:
+            w.freeze(c["k"], bool(c.get("on")))
+        elif k == "ritmo":
+            if not w.set_rate(c.get("x")):
+                self.flash("El tiempo solo se acelera en vuelo, por encima de 500 ft", 3)
+        elif k == "mover":
+            num = lambda f: float(c[f]) if isinstance(c.get(f), (int, float)) and c[f] == c[f] else 0.0
+            w.slew(clamp(num("n"), -50, 50), clamp(num("e"), -50, 50), clamp(num("alt"), -10000, 10000),
+                   clamp(num("hdg"), -180, 180))
 
     # ------------------------------------------------------------ meteorología real (METAR)
     def apply_live_weather(self):
@@ -1098,12 +1107,15 @@ class App(ScreensMixin):
         self.controls.update(dt, w, keys, mods)
         ac.brake = max(ac.brake, self.hardware.brake_cmd)
         ac.brake_l, ac.brake_r = self.hardware.brake_l, self.hardware.brake_r   # frenos de pie: cada rueda
+        sdt = dt * w.sim_rate            # tiempo simulado (el instructor puede acelerarlo)
         w.step(dt)
         evs = list(w.events)
         w.events.clear()
         for ev, data in evs:
             self.audio.on_event(ev, data)
-            if ev == "choque":
+            if ev == "ritmo_normal":
+                self.flash("Tiempo a ritmo normal: cerca del suelo", 3)
+            elif ev == "choque":
                 self.instructor("¡Accidente! " + data["reason"])
                 self.recorder.mark(w, data["reason"])
             elif ev == "contacto":
@@ -1111,7 +1123,7 @@ class App(ScreensMixin):
         if w.ap.disconnect_alert > 2.4:
             self.audio.play("ap_off")
         if self.lesson is not None:
-            self.lesson.update(dt, w, evs)
+            self.lesson.update(sdt, w, evs)
             if getattr(self.lesson, "switch_to", None):
                 self.lesson_scene_switch()
                 return
@@ -1127,7 +1139,7 @@ class App(ScreensMixin):
             self.crash_t = time.time()
         self.update_radio()
         self.poll_voice_input()
-        self.recorder.sample(dt, w)
+        self.recorder.sample(sdt, w)
         self.audio.update(w, self.camera.mode == "cabina")
 
     # ------------------------------------------------------------ repetición
@@ -1327,6 +1339,14 @@ class App(ScreensMixin):
         if self.flash_msg and time.time() < self.flash_msg[1]:
             self.fonts.blit(self.overlay, self.flash_msg[0], (self.W / 2, self.H * 0.14), 22, COL["white"], bold=True,
                             anchor="center")
+        w = self.world
+        if st in ("flight", "pause") and (w.frozen or w.sim_rate > 1):
+            parts = (["CONGELADO: " + ", ".join(w.FREEZES[k] for k in w.frozen)] if w.frozen else []) + \
+                    ([f"TIEMPO ×{w.sim_rate}"] if w.sim_rate > 1 else [])
+            txt = "   ·   ".join(parts)
+            tw, th = self.fonts.get(15, True).size(txt)
+            pygame.draw.rect(self.overlay, (8, 14, 24, 200), (self.W / 2 - tw / 2 - 12, 4, tw + 24, th + 8), border_radius=6)
+            self.fonts.blit(self.overlay, txt, (self.W / 2, 8), 15, COL["yellow"], bold=True, anchor="midtop")
         if self.settings.get("mostrar_fps"):
             self.fonts.blit(self.overlay, f"{self.fps:4.0f} FPS", (self.W - 10, self.H - 22), 13, COL["grey"], anchor="topright")
         self._draw_fade()

@@ -161,6 +161,12 @@ canvas{width:100%;height:260px;background:#08101a;border-radius:8px}
 <div class="row"><button onclick="cmd({c:'leccion',id:document.getElementById('lsel').value})">▶ Comenzar</button></div>
 <h2 style="margin-top:12px">Vuelo libre / reposicionar</h2><div class="row" id="pos"></div>
 <h2 style="margin-top:12px">Resultado</h2><div id="res" class="k">—</div></section>
+<section><h2>Congelar y mover</h2>
+<div class="row"><span class="k">Congelar:</span><button id="fz_alt" onclick="fz('alt')">Altitud</button><button id="fz_pos" onclick="fz('pos')">Posición</button><button id="fz_fuel" onclick="fz('fuel')">Combustible</button></div>
+<div class="row"><span class="k">Tiempo:</span><button id="rt_1" onclick="cmd({c:'ritmo',x:1})">×1</button><button id="rt_2" onclick="cmd({c:'ritmo',x:2})">×2</button><button id="rt_4" onclick="cmd({c:'ritmo',x:4})">×4</button></div>
+<div class="row"><span class="k">Mover:</span><button onclick="cmd({c:'mover',n:1})">1 NM N</button><button onclick="cmd({c:'mover',n:-1})">1 NM S</button><button onclick="cmd({c:'mover',e:1})">1 NM E</button><button onclick="cmd({c:'mover',e:-1})">1 NM O</button></div>
+<div class="row"><button onclick="cmd({c:'mover',alt:500})">+500 ft</button><button onclick="cmd({c:'mover',alt:-500})">−500 ft</button><button onclick="cmd({c:'mover',hdg:-30})">Rumbo −30°</button><button onclick="cmd({c:'mover',hdg:30})">Rumbo +30°</button><button onclick="cmd({c:'mover',hdg:180})">Dar la vuelta</button></div>
+<p class="k">El tiempo solo se acelera en vuelo, por encima de 500 ft. Mover solo en vuelo.</p></section>
 <section><h2>Fallas</h2><div class="row"><span class="k">Cuándo:</span><select id="when"></select></div>
 <div class="row" id="fails"></div><div class="row"><button onclick="cmd({c:'reparar'})">✔ Reparar todo</button></div>
 <div id="emerg" class="k"></div></section>
@@ -178,6 +184,7 @@ async function api(path,opt={}){opt.headers=Object.assign({'X-Codigo':CODE,'Cont
  const r=await fetch(path,opt);if(r.status==403)throw 'codigo';return r.json();}
 function login(){CODE=document.getElementById('code').value.trim();localStorage.setItem('codigo',CODE);poll(true);}
 function cmd(o){api('/api/cmd',{method:'POST',body:JSON.stringify(o)});}
+let FROZEN=[];function fz(k){cmd({c:'congelar',k:k,on:!FROZEN.includes(k)});}
 function sendWx(){const g=id=>parseFloat(document.getElementById(id).value);
  cmd({c:'clima',wind_dir:g('wdir'),wind_kt:g('wkt'),gust_kt:g('gust'),visibility_m:g('vis'),cloud_base_ft:g('base'),cloud_cover:g('cov'),turbulence:g('turb'),hour:g('hour')});}
 function build(c){cat=c;const s=document.getElementById('lsel');s.innerHTML='';let grp=null,og=null;
@@ -194,6 +201,8 @@ function render(e){document.getElementById('les').textContent=e.leccion||'—';
  f('ias',e.ias.toFixed(0)+' kt');f('alt',e.alt.toFixed(0)+' ft');f('hdg',String(Math.round(e.hdg)).padStart(3,'0')+'°');
  f('vs',(e.vs>0?'+':'')+e.vs.toFixed(0)+' fpm');f('rpm',e.rpm.toFixed(0)+' rpm');f('fuel',e.fuel.toFixed(0)+' L');
  document.getElementById('paso').textContent=e.paso||'';
+ FROZEN=e.congelado||[];['alt','pos','fuel'].forEach(k=>document.getElementById('fz_'+k).className=FROZEN.includes(k)?'on':'');
+ [1,2,4].forEach(x=>document.getElementById('rt_'+x).className=(e.ritmo||1)===x?'pend':'');
  const fl=document.getElementById('fails');const sig=e.fallas.map(x=>x.k).join(',');
  if(fl.dataset.sig!==sig){fl.innerHTML='';fl.dataset.sig=sig;e.fallas.forEach(x=>{const b=document.createElement('button');
   b.id='f_'+x.k;b.onclick=()=>cmd({c:'falla',k:x.k,cuando:document.getElementById('when').value});fl.appendChild(b);});}
