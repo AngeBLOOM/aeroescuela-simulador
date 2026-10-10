@@ -79,6 +79,20 @@ FUNCTIONS = [
 NAMES = {k: n for k, n, _ in FUNCTIONS}
 KIND = {k: t for k, _, t in FUNCTIONS}
 CENTERED = ("eje_alabeo", "eje_cabeceo", "eje_timon", "eje_trim")     # ejes con centro (el resto son palancas)
+SHAPED = ("eje_alabeo", "eje_cabeceo", "eje_timon")    # ejes de vuelo con zona muerta y curva propias (Sensibilidad)
+DEFAULT_DZ = 0.04            # zona muerta por defecto (fracción del recorrido)
+DEFAULT_EXPO = 0.35          # curva por defecto: 0 = lineal, 1 = cúbica (más suave en el centro)
+HAT_DIRS = {"arriba": (0, 1), "abajo": (0, -1), "izquierda": (-1, 0), "derecha": (1, 0)}
+HAT_ARROW = {"arriba": "↑", "abajo": "↓", "izquierda": "←", "derecha": "→"}
+
+
+def shape(v, dz=DEFAULT_DZ, k=DEFAULT_EXPO):
+    """Zona muerta (sin salto: el recorrido que queda va de 0 a 1) y curva exponencial de un eje centrado."""
+    a = abs(v)
+    if a <= dz:
+        return 0.0
+    a = (a - dz) / (1.0 - dz) if dz < 1 else 0.0
+    return math.copysign((1.0 - k) * a + k * a * a * a, v)
 SELECTORS = {"mag": "Llave de magnetos", "comb": "Selector de combustible"}
 _SDL = None
 
@@ -241,6 +255,8 @@ class Hardware:
         dev = self.label(b["dev"])[:26] if b["dev"] in self.devices else "(no conectado)"
         if "eje" in b:
             return f"{dev} · eje {b['eje']}" + (" (inv.)" if b.get("inv") else "") + (" · cal." if b.get("cal") else "")
+        if "hat" in b:
+            return f"{dev} · seta {b['hat']} {HAT_ARROW.get(b.get('dir'), '?')}"
         return f"{dev} · botón {b['btn']}"
 
     # ------------------------------------------------------------ perfiles (copiar una cabina a otra computadora)
@@ -315,6 +331,7 @@ class Hardware:
         self.capture = key
         self.capture_base = {g: [j.get_axis(a) for a in range(j.get_numaxes())] for g, j in self.devices.items()}
         self.capture_btns = {g: [j.get_button(b) for b in range(j.get_numbuttons())] for g, j in self.devices.items()}
+        self.capture_hats = {g: [j.get_hat(h) for h in range(j.get_numhats())] for g, j in self.devices.items()}
 
     def clear(self, key):
         self.bindings.pop(key, None)
@@ -340,6 +357,14 @@ class Hardware:
                         self.bindings[key] = dict(dev=g, btn=b)
                         self.capture = None
                         return
+                # seta (palanca de 4 posiciones): cada dirección vale como un botón
+                for h in range(j.get_numhats()):
+                    hx, hy = j.get_hat(h)
+                    if (hx, hy) != (0, 0) and (hx, hy) != tuple(self.capture_hats[g][h]):
+                        d = "arriba" if hy > 0 else ("abajo" if hy < 0 else ("derecha" if hx > 0 else "izquierda"))
+                        self.bindings[key] = dict(dev=g, hat=h, dir=d)
+                        self.capture = None
+                        return
 
     # ------------------------------------------------------------ lectura
     def axis(self, key, deadzone=0.04):
@@ -358,15 +383,35 @@ class Hardware:
             v = 0.0
         return v
 
+    def shaped(self, key):
+        """Eje de vuelo con la zona muerta ("zm") y la curva ("exp") de ese eje; None si no está asignado."""
+        v = self.axis(key, 0.0)
+        if v is None:
+            return None
+        b = self.bindings[key]
+        return shape(v, b.get("zm", DEFAULT_DZ), b.get("exp", DEFAULT_EXPO))
+
+    def raw_state(self, b):
+        """Estado de un botón o de una dirección de seta asignados; None si el mando no está."""
+        j = self.devices.get(b.get("dev"))
+        if j is None:
+            return None
+        if "btn" in b:
+            return bool(j.get_button(b["btn"])) if b["btn"] < j.get_numbuttons() else None
+        if "hat" in b and b["hat"] < j.get_numhats():
+            hx, hy = j.get_hat(b["hat"])
+            dx, dy = HAT_DIRS.get(b.get("dir"), (0, 0))
+            return bool((dx and hx == dx) or (dy and hy == dy))
+        return None
+
     def button(self, key):
-        """(estado, recién pulsado, recién soltado)"""
+        """(estado, recién pulsado, recién soltado) de un botón o de una dirección de seta."""
         b = self.bindings.get(key)
-        if not b or "btn" not in b:
+        if not b or ("btn" not in b and "hat" not in b):
             return None, False, False
-        j = self.devices.get(b["dev"])
-        if j is None or b["btn"] >= j.get_numbuttons():
+        now = self.raw_state(b)
+        if now is None:
             return None, False, False
-        now = bool(j.get_button(b["btn"]))
         prev = self.prev.get(key, now)
         self.prev[key] = now
         return now, now and not prev, prev and not now
@@ -550,4 +595,4 @@ class Hardware:
 
     def flight_axes(self):
         """(alabeo, cabeceo, timón) de la cabina física, o None si no están asignados."""
-        return self.axis("eje_alabeo"), self.axis("eje_cabeceo"), self.axis("eje_timon")
+        return self.shaped("eje_alabeo"), self.shaped("eje_cabeceo"), self.shaped("eje_timon")

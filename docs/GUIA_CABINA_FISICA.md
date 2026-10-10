@@ -35,6 +35,16 @@ anote qué barra o punto cambia. Así sabrá, por ejemplo, que el timón es el �
 4. Pulse **Terminar calibración**. Los ejes calibrados muestran «cal.» en la lista. Un eje que no se movió conserva
    su calibración anterior; para quitarla, vuelva a asignarlo.
 
+## 3b-2. Sensibilidad del volante y los pedales
+En la pestaña **Sensibilidad**, cada eje de vuelo (alabeo, cabeceo, timón) tiene:
+- **Zona muerta** (0-25 %): cuánto puede moverse el mando en el centro sin efecto. Súbala si el avión se mueve solo
+  con el volante suelto.
+- **Curva** (0-100 %): 0 % es lineal; más alta, más suave cerca del centro, con toda la autoridad al final.
+El dibujo muestra la curva y un punto naranja con la posición real del mando. **Restablecer** vuelve a 4 % y 35 %.
+
+Las **setas** (palancas de 4 posiciones del volante) se asignan como un botón: pulse «Asignar» y mueva la seta hacia
+el lado que quiera (por ejemplo, compensador arriba/abajo).
+
 ## 3c. Interruptores al empezar el vuelo
 - Si la lección empieza con el avión **frío en tierra** (motor parado), el simulador copia la posición de los
   interruptores reales: batería, luces, magnetos, combustible… (el tren nunca se sube en tierra).

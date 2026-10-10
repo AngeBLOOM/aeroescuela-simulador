@@ -40,6 +40,9 @@ def step(app, frame):
             app.hw_tab = "diag"
         elif name == "hardware":
             app.state, app.menu_page = "menu", "hardware"
+        elif name == "sens":
+            app.state, app.menu_page = "menu", "hardware"
+            app.hw_tab = "sens"
         elif name == "settings":
             app.menu_page = "settings"
         elif name == "flight_analog":

@@ -698,11 +698,14 @@ class ScreensMixin:
         # pestañas: asignar mandos · diagnóstico
         if not hasattr(self, "hw_tab"):
             self.hw_tab = "asignar"
-        for i, (k, lab) in enumerate((("asignar", "Asignar mandos"), ("diag", "Diagnóstico y prueba"))):
+        for i, (k, lab) in enumerate((("asignar", "Asignar mandos"), ("sens", "Sensibilidad"), ("diag", "Diagnóstico y prueba"))):
             if ui.button(s, (x0 + 230 + i * 190, box.y + 16, 180, 32), lab, active=self.hw_tab == k, size=13):
                 self.hw_tab = k
         if self.hw_tab == "diag":
             self.page_hw_diag(box)
+            return
+        if self.hw_tab == "sens":
+            self.page_hw_sens(box)
             return
         devs = hw.device_list()
         txt = " · ".join(f"{n} ({a} ejes, {b} botones)" for _, n, a, b in devs) or "No hay dispositivos USB conectados"
@@ -772,10 +775,9 @@ class ScreensMixin:
                 live = "" if v is None else f"  {v:+.2f}"
             else:
                 b = hw.bindings.get(key)
-                if b:
-                    j = hw.devices.get(b["dev"])
-                    if j is not None and b["btn"] < j.get_numbuttons():
-                        live = "  ●" if j.get_button(b["btn"]) else "  ○"
+                st_ = hw.raw_state(b) if b else None
+                if st_ is not None:
+                    live = "  ●" if st_ else "  ○"
             f.blit(s, desc + live, (x + colw * 0.45, y + 3), 12, COL["green"] if desc != "—" else COL["dim"])
             bx = x + colw - 128
             if ui.button(s, (bx, y - 1, 64, 24), "Asignar", active=hw.capture == key, size=11):
@@ -788,6 +790,59 @@ class ScreensMixin:
         f.blit(s, "INT = interruptor con posición fija · PULS = pulsador · MANT = activo mientras se mantiene. "
                   "Rueda del ratón: más funciones. Se guarda al salir.", (x0, box.bottom - 22), 12, COL["grey"])
         hw.update(0.0, self.world, self) if hw.capture else None
+
+    def page_hw_sens(self, box):
+        """Zona muerta y curva de cada eje de vuelo, con la curva dibujada y la posición real del mando encima."""
+        from ui import theme
+        from .hardware import DEFAULT_DZ, DEFAULT_EXPO, NAMES, SHAPED, shape
+        s = self.overlay
+        f = self.fonts
+        ui = self.ui
+        hw = self.hardware
+        x0 = box.x + 22
+        y = box.y + 66
+        f.blit(s, "Zona muerta: cuánto se mueve el mando sin efecto en el centro. Curva: 0 % = lineal; más alta = más "
+                  "suave cerca del centro y la misma autoridad al final del recorrido.", (x0, y), 13, COL["grey"])
+        y += 30
+        rowh = max(150, int((box.bottom - y - 40) / len(SHAPED)))
+        for key in SHAPED:
+            b = hw.bindings.get(key)
+            f.blit(s, NAMES[key], (x0, y + 4), 16, COL["white"], bold=True)
+            f.blit(s, hw.describe(key), (x0, y + 28), 12, COL["green"] if b else COL["dim"])
+            plot = pygame.Rect(box.right - 22 - 130, y, 130, 130)
+            if not b or "eje" not in b:
+                f.blit(s, "Sin asignar: asígnelo en «Asignar mandos».", (x0, y + 56), 13, COL["amber"])
+                y += rowh
+                continue
+            dz, k = b.get("zm", DEFAULT_DZ), b.get("exp", DEFAULT_EXPO)
+            v = ui.slider(s, (x0 + 300, y, 300, 30), dz * 100, 0, 25, "Zona muerta", "{:.0f} %")
+            if v is not None:
+                b["zm"] = round(v / 100, 3)
+            v = ui.slider(s, (x0 + 300, y + 44, 300, 30), k * 100, 0, 100, "Curva", "{:.0f} %")
+            if v is not None:
+                b["exp"] = round(v / 100, 2)
+            if ui.button(s, (x0 + 300, y + 88, 140, 28), "Restablecer", size=12,
+                         tip=f"Zona muerta {DEFAULT_DZ * 100:.0f} % y curva {DEFAULT_EXPO * 100:.0f} %"):
+                b.pop("zm", None)
+                b.pop("exp", None)
+            # curva: entrada (horizontal) → salida (vertical), con la posición actual
+            pygame.draw.rect(s, (8, 22, 34), plot)
+            pygame.draw.rect(s, (*theme.CYAN, 110), plot, 1)
+            pygame.draw.line(s, (40, 70, 90), plot.midleft, plot.midright)
+            pygame.draw.line(s, (40, 70, 90), plot.midtop, plot.midbottom)
+            pygame.draw.line(s, (60, 80, 100), plot.bottomleft, plot.topright)
+            dz, k = b.get("zm", DEFAULT_DZ), b.get("exp", DEFAULT_EXPO)
+            pts = [(plot.x + (i / 40) * plot.w, plot.centery - shape(i / 20 - 1, dz, k) * plot.h / 2) for i in range(41)]
+            pygame.draw.lines(s, theme.CYAN, False, pts, 2)
+            raw = hw.axis(key, 0.0)
+            if raw is not None:
+                out = hw.shaped(key)
+                pygame.draw.circle(s, theme.AMBER, (int(plot.centerx + raw * plot.w / 2), int(plot.centery - out * plot.h / 2)), 5)
+                f.blit(s, f"mando {raw:+.2f} → avión {out:+.2f}", (x0 + 460, y + 94), 13, COL["white"])
+            f.blit(s, "ENTRADA → SALIDA", (plot.centerx, plot.bottom + 4), 10, COL["grey"], anchor="midtop")
+            y += rowh
+        f.blit(s, "Se guarda al salir. Las palancas (gases, mezcla, hélice, frenos) son lineales: use «Calibrar ejes».",
+               (x0, box.bottom - 22), 12, COL["grey"])
 
     def page_hw_diag(self, box):
         """Diagnóstico de la cabina física: dispositivos en bruto, prueba de mandos, micrófono, monitores y lista."""
@@ -1083,6 +1138,16 @@ class ScreensMixin:
                 f.blit(s, lab, (x0, y + 6), 15, COL["white"])
                 if self.ui.button(s, (x0 + 220, y, 120, 30), "Sí" if c.cfg[key] else "No", active=c.cfg[key], size=14):
                     c.cfg[key] = not c.cfg[key]
+                y += 38
+            for key, lab, step, lo, hi in (("zona_muerta", "Zona muerta", 0.02, 0.0, 0.3),
+                                           ("exponencial", "Curva (expo)", 0.05, 0.0, 1.0)):
+                f.blit(s, lab, (x0, y + 6), 15, COL["white"])
+                val = float(c.cfg[key])
+                if self.ui.button(s, (x0 + 220, y, 36, 30), "−", size=16):
+                    c.cfg[key] = round(max(lo, val - step), 2)
+                f.blit(s, f"{val * 100:.0f} %", (x0 + 300, y + 15), 15, COL["white"], bold=True, anchor="center")
+                if self.ui.button(s, (x0 + 344, y, 36, 30), "+", size=16):
+                    c.cfg[key] = round(min(hi, val + step), 2)
                 y += 38
             st["joystick"] = c.cfg
 

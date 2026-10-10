@@ -19,6 +19,7 @@ class FakeJoy:
         self.iid, self.name, self.serial = iid, name, serial
         self.axes = [0.0] * naxes
         self.btns = [0] * nbtn
+        self.hats = [(0, 0)]
 
     def init(self): pass
     def get_guid(self): return f"guid-{self.name}"
@@ -26,9 +27,10 @@ class FakeJoy:
     def get_instance_id(self): return self.iid
     def get_numaxes(self): return len(self.axes)
     def get_numbuttons(self): return len(self.btns)
-    def get_numhats(self): return 0
+    def get_numhats(self): return len(self.hats)
     def get_axis(self, i): return self.axes[i]
     def get_button(self, i): return self.btns[i]
+    def get_hat(self, i): return self.hats[i]
 
 
 plugged = []
@@ -145,6 +147,43 @@ assert hw.brake_l == hw.brake_r == 0.0
 plugged.insert(0, yoke)
 hw.refresh()
 print("frenos de pie OK")
+
+# ---------------------------------------------------------------- 3c. sensibilidad por eje y setas
+from app.hardware import shape
+
+yoke.axes[0] = 0.45                          # con la calibración de arriba = +0,50
+assert abs(hw.axis("eje_alabeo", 0.0) - 0.5) < 1e-6
+assert abs(hw.shaped("eje_alabeo") - shape(0.5)) < 1e-9 and 0.33 < shape(0.5) < 0.37     # por defecto: 4 %, 35 %
+B["eje_alabeo"].update(zm=0.10, exp=0.0)
+assert abs(hw.shaped("eje_alabeo") - 0.4 / 0.9) < 1e-6, hw.shaped("eje_alabeo")            # lineal, sin salto
+yoke.axes[0] = 0.135                         # = +0,05: dentro de la zona muerta del 10 %
+assert hw.shaped("eje_alabeo") == 0.0
+yoke.axes[0] = 0.8
+assert abs(hw.shaped("eje_alabeo") - 1.0) < 1e-9                                           # a fondo sigue siendo 1
+B["eje_alabeo"]["exp"] = 1.0
+yoke.axes[0] = 0.45
+assert abs(hw.shaped("eje_alabeo") - (0.4 / 0.9) ** 3) < 1e-6                              # cúbica
+s.ready_to_fly()
+world.ap.engaged = False
+ctl.update(0.016, world, None, 0)
+assert abs(world.ac.ctl_ail - hw.shaped("eje_alabeo")) < 1e-6, "el avión recibe el eje ya con su curva (sin otra encima)"
+B["eje_alabeo"].pop("zm"); B["eje_alabeo"].pop("exp")
+
+hw.start_capture("btn_trim_arriba")
+yoke.hats[0] = (0, 1)                        # seta del volante hacia arriba
+hw.update(0.016, world, app)
+assert B["btn_trim_arriba"] == dict(dev=dev["Volante"], hat=0, dir="arriba"), B.get("btn_trim_arriba")
+assert "seta 0 ↑" in hw.describe("btn_trim_arriba")
+yoke.hats[0] = (0, 0)
+hw.update(0.016, world, app)
+t0 = world.ac.trim
+yoke.hats[0] = (1, 1)                        # en diagonal también cuenta como arriba
+hw.update(1.0, world, app)
+assert world.ac.trim > t0 + 0.2, (t0, world.ac.trim)
+yoke.hats[0] = (0, -1)
+assert hw.button("btn_trim_arriba")[0] is False
+yoke.hats[0] = (0, 0)
+print("sensibilidad por eje y setas OK")
 
 # ---------------------------------------------------------------- 4. conexión en caliente
 pedals = FakeJoy(12, "Pedales")
