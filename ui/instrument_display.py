@@ -9,7 +9,7 @@ completa en un equipo dedicado.
 - Aviones G1000 (o con el modo cristal elegido): PFD y MFD a toda la pantalla.
 
 Para que las piezas no tiemblen, cada instrumento se repinta en fotogramas alternos
-(la mitad en cada uno), igual que la cabina fotográfica.
+(la mitad en cada uno).
 """
 import math
 
@@ -275,9 +275,12 @@ class InstrumentDisplay:
         elif name == "vsi":
             g.vsi(s, p, r, ind.vs_fpm)
         elif name == "cdi1":
-            g.cdi(s, p, r, world.nav1, "NAV 1")
+            g.cdi(s, p, r, world.nav_source(), "GPS" if world.cdi_src == "GPS" else "NAV 1")
         elif name == "cdi2":
-            g.cdi(s, p, r, world.nav2, "NAV 2")
+            if world.show_adf:
+                g.adf(s, p, r, world.adf)
+            else:
+                g.cdi(s, p, r, world.nav2, "NAV 2")
         elif name == "tach":
             g.tach(s, p, r, sysm.engine.rpm)
         elif name == "engine":
@@ -333,7 +336,8 @@ class InstrumentDisplay:
         pygame.draw.rect(s, (60, 62, 68), rect, 2, border_radius=8)
         rows = [("COM 1", f"{world.com_freq:.3f}", f"{world.com_standby:.3f}"),
                 ("NAV 1", f"{world.nav1.freq:.2f}", f"{world.nav1.standby:.2f}"),
-                ("NAV 2", f"{world.nav2.freq:.2f}", f"{world.nav2.standby:.2f}"),
+                (("ADF", f"{world.adf.freq:.0f}", f"{world.adf.standby:.0f}") if world.show_adf else
+                 ("NAV 2", f"{world.nav2.freq:.2f}", f"{world.nav2.standby:.2f}")),
                 ("XPDR", f"{world.xpdr:04d}", "ALT")]
         hh = rect.h / (len(rows) + 0.6)
         big = max(14, int(hh * 0.42))

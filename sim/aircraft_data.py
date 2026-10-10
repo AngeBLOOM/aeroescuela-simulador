@@ -132,6 +132,7 @@ def cessna172():
     # rasgos generales (los redefinen otros aviones)
     a.engines_y = [0.0]            # posición lateral de cada motor (m)
     a.fadec = False                # motor diésel con control electrónico (sin mezcla ni paso)
+    a.carburetor = False           # motor de carburador (hielo en el carburador y calefacción); el 172S es de inyección
     a.can_feather = False
     a.t_tail = False
     a.canopy = False               # cúpula de burbuja en lugar de techo y puertas
@@ -321,6 +322,7 @@ def cessna152():
     a.id = "c152"
     a.name = "Cessna 152"
     a.short = "C152"
+    a.carburetor = True            # Lycoming O-235 de carburador
     a.empty_mass = 560.0
     a.payload = 150.0
     a.fuel_capacity = 92.0
@@ -365,6 +367,7 @@ def piper_warrior():
     a.id = "pa28w"
     a.name = "Piper PA-28-161 Warrior III"
     a.short = "PA-28-161"
+    a.carburetor = True            # Lycoming O-320 de carburador
     a.empty_mass = 690.0
     a.payload = 200.0
     a.fuel_capacity = 182.0
