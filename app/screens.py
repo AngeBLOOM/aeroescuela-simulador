@@ -74,7 +74,7 @@ KEYS = [
         ("C", "Mantener altitud (ALT)"),
         (", / .", "Marcador de rumbo −5° / +5°"),
         ("Tab", "Cabina clásica / G1000"),
-        ("P", "Cabina 3D · foto · panel 2D · sin panel"),
+        ("P", "Cabina automática · panel 2D · cabina 3D · sin panel"),
         ("1 2 3 4", "Cabina · exterior · torre · libre"),
         ("5", "Vista de instrumentos (cabina 3D)"),
         ("Y", "Mostrar / ocultar el volante"),
