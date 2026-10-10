@@ -8,7 +8,7 @@ import math
 
 import numpy as np
 
-from .lessons import IR, Monitor, Step, _LandingLesson, Lesson, alt, hdg_err, mon_alt, mon_speed
+from .lessons import IR, Monitor, Step, _LandingLesson, Lesson, alt, hdg_err, mon_alt, mon_speed, rnd10m
 from .mathx import FT, KT, NM, clamp, wrap180
 
 CAT = "6 · Vuelo instrumental (IFR)"
@@ -45,7 +45,7 @@ class L_Espera(Lesson):
         vor = min(vors, key=lambda n: math.hypot(*(n.pos - world.home.ref)))
         self.vor = vor
         ac = world.ac
-        self.inbound = (round(world.active_rw.heading / 10) * 10) % 360 or 360
+        self.inbound = rnd10m(world, world.active_rw.heading)     # verdadero; se publica en magnético
         A = round(world.cruise_alt_ft() / 100) * 100
         self.A = A
         # se empieza a 8 NM del VOR, llegando con 60° respecto al curso de acercamiento
@@ -54,8 +54,8 @@ class L_Espera(Lesson):
         hdg = math.degrees(math.atan2(vor.pos[1] - p[1], vor.pos[0] - p[0])) % 360
         ac.place_in_air(p[0], p[1], A * FT, hdg, 90)
         world.nav1.freq = vor.freq
-        world.nav1.obs = self.inbound
-        world.ap.hdg_bug = round(hdg)
+        world.nav1.obs = world.mag(self.inbound)
+        world.ap.hdg_bug = world.mag(hdg)
         self.crossings = 0
         self.prev_tf = None
         self.leg_times = []
@@ -71,10 +71,10 @@ class L_Espera(Lesson):
                       (abs(hdg_err(w, self.inbound)) > 40) or abs(w.nav1.cdi) < 0.75, "≤ 3/4 escala"), 15, "{:+.1f}", "pt")
         self.steps = [
             Step(f"Diríjase al VOR {vor.ident} ({vor.freq:.2f}) a {A:.0f} ft", at_vor,
-                 voice=f"Diríjase al VOR {vor.ident}. Espera publicada: curso de acercamiento {self.inbound:03.0f}, virajes a la derecha, "
+                 voice=f"Diríjase al VOR {vor.ident}. Espera publicada: curso de acercamiento {world.mag(self.inbound):03.0f}, virajes a la derecha, "
                        "tramos de un minuto.",
                  monitors=[mon_alt(A, 100, 10), mon_speed(90, 10, None, 5)]),
-            Step(f"Entrada y dos vueltas de espera (acercamiento {self.inbound:03.0f})", laps,
+            Step(f"Entrada y dos vueltas de espera (acercamiento {world.mag(self.inbound):03.0f})", laps,
                  voice="Sobre el VOR. Haga la entrada y mantenga la espera.",
                  monitors=[mon_alt(A, 100, 20), mon_speed(90, 10, None, 10), inb]),
         ]
@@ -139,7 +139,7 @@ class L_LOC(_LandingLesson):
         ils = world.ils_for(world.active_rw, world.active_end)
         nav = world.nav1
         if ils:
-            nav.freq, nav.obs = ils.freq, round(ils.course) % 360 or 360
+            nav.freq, nav.obs = ils.freq, world.mag(ils.course)
         self.mda = self.elev_ft + 450
         self.faf_alt = self.elev_ft + 2000 if self.elev_ft + 2000 > alt(world) - 200 else alt(world)
         self.below_mda = 0.0
@@ -181,9 +181,9 @@ class L_LOC(_LandingLesson):
                 Step("MAP sin ver la pista: ¡MOTOR Y AL AIRE!", lambda w, L: w.ac.vs_fpm > 300,
                      voice="Punto de aproximación frustrada. No hay referencias visuales: motor y al aire.", timeout=15,
                      hint="Potencia máxima, actitud de ascenso y flaps por etapas."),
-                Step(f"Frustrada publicada: rumbo {H:03.0f} y ascenso a {self.elev_ft + 2000:.0f} ft", climb,
+                Step(f"Frustrada publicada: rumbo {world.mag(H):03.0f} y ascenso a {self.elev_ft + 2000:.0f} ft", climb,
                      voice=f"Aproximación frustrada: rumbo de pista y ascienda a {self.elev_ft + 2000:.0f} pies.",
-                     monitors=[Monitor("Rumbo", lambda w: (w.ac.heading, abs(hdg_err(w, H)) < 10, f"{H:03.0f} ±10°"), 15, "{:03.0f}", "°"),
+                     monitors=[Monitor("Rumbo", lambda w: (w.mag(w.ac.heading), abs(hdg_err(w, H)) < 10, f"{w.mag(H):03.0f} ±10°"), 15, "{:03.0f}", "°"),
                                mon_speed(74, 5, 10, 10, "Velocidad Vy")]),
             ]
             self.landing = None
