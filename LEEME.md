@@ -69,9 +69,12 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
     Vmc ≈ 68 kt y ascenso con un motor ≈ 140‑300 ft/min según embanderado.
 
 **Cabina**
-- **Cabina 3D por dentro** (por defecto): tablero con los instrumentos reales montado en 3D y pulsable con el ratón,
-  visera, brújula, montantes, techo, puertas, asientos, capó del motor a la vista, disco de la hélice, volantes que
-  se mueven con tus mandos y reflejos del sol en el parabrisas. Tecla **P**: cabina 3D · panel 2D · sin panel.
+- **Cabina automática** (por defecto): con la consola física conectada no se dibuja ningún mando (solo el paisaje,
+  con la franja de instrumentos debajo si no van en su propia pantalla); sin consola, el panel 2D, que se maneja
+  con el ratón y con el teclado o un joystick USB. Cambia sola al enchufar o quitar la consola.
+- **Cabina 3D por dentro**: tablero con los instrumentos reales montado en 3D y pulsable con el ratón,
+  visera, brújula, montantes, techo, puertas, asientos, capó del motor a la vista, disco de la hélice y reflejos
+  del sol en el parabrisas; volantes ocultos (tecla **Y**). Tecla **P**: automática · panel 2D · cabina 3D · sin panel.
 - Aspecto fotográfico: marcos metálicos con tornillos, esferas, reflejo del cristal, tablero texturizado y marcos
   físicos de las pantallas G1000. Las texturas se generan por código con `python tools/make_assets.py`
   (carpeta `assets/`); si se sustituyen por fotos o imágenes de IA con el mismo nombre, el simulador las usa.
@@ -257,13 +260,9 @@ CC BY‑NC‑SA); relieve AWS Terrain Tiles / Mapzen; edificios y bosques © Ope
 vectoriales de Esri; aeropuertos y radioayudas OurAirports (dominio público).
 Uso personal y educativo.
 
-## Cabina fotográfica e imágenes propias
+## Imágenes propias
 
-Cada avión tiene una foto de cabina (`assets/cabina_<avión>.jpg`) con las ventanas, relojes y pantallas en
-verde croma: el simulador recorta el verde, detecta cada hueco y dibuja ahí el instrumento vivo (seis básicos,
-NAV, tacómetro, motor, radios, avisos o las pantallas G1000). Tecla **P** para cambiar de cabina y **5** para
-acercar la vista a los instrumentos. Las nubes, el asfalto y el césped también son fotos (generadas con IA);
-para cambiarlas use `python tools/importar_imagenes.py` (nubes sobre fondo negro → transparencia; texturas →
+Las nubes, el asfalto y el césped son fotos (generadas con IA); para cambiarlas use `python tools/importar_imagenes.py` (nubes sobre fondo negro → transparencia; texturas →
 repetibles sin costuras).
 
 ## Cabina física: pantalla solo de instrumentos
@@ -345,12 +344,12 @@ controlador de ejemplo con radar, radio y frases rápidas). Prueba automática: 
 | ← / → | alabeo | , / . | marcador de rumbo |
 | A / D | pedales y rueda de morro | Tab | cabina clásica / G1000 |
 | W / S | gases (Shift: rápido) | 1 2 3 4 | cabina · exterior · torre · libre |
-| P | cabina 3D · foto · panel 2D · sin panel | Rueda | zoom / mandos del tablero |
+| P | cabina automática · panel 2D · cabina 3D · sin panel | Rueda | zoom / mandos del tablero |
 | Q / E | compensador | Ctrl+flechas o botón derecho | mirar alrededor |
 | F / V | flaps | K | lista de verificación (tableta) |
 | T | radio: torre / rodadura / ATIS | 1–9 | (con la radio abierta) elegir transmisión |
 | O | mandos de cada sistema (motor, combustible, eléctrico, luces, flaps/compensador, tren/frenos) | F2 | pantalla solo de instrumentos (cabina física) |
-| 5 | vista de instrumentos | Y | mostrar / ocultar volante |
+| 5 | vista de instrumentos | Y | mostrar / ocultar volantes (cabina 3D) |
 | Espacio / B | frenos / freno de estacionamiento | R | repetición instantánea |
 | M / N | mezcla | I | estación del instructor |
 | G | tren (Arrow) | Esc | pausa / menú |

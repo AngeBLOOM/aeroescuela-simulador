@@ -9,7 +9,7 @@ completa en un equipo dedicado.
 - Aviones G1000 (o con el modo cristal elegido): PFD y MFD a toda la pantalla.
 
 Para que las piezas no tiemblen, cada instrumento se repinta en fotogramas alternos
-(la mitad en cada uno), igual que la cabina fotográfica.
+(la mitad en cada uno).
 """
 import math
 
