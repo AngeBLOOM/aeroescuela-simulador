@@ -84,6 +84,7 @@ class Atmosphere:
         self.w = weather or Weather()
         self.rng = random.Random(seed)
         self.turb = np.zeros(3)
+        self.turb_level, self.sig_w, self.L_w = 0.0, 0.0, 265.0
         self.gust_state = 0.0
         self.gust_target = 0.0
         self.gust_timer = 0.0
@@ -192,6 +193,8 @@ class Atmosphere:
         else:
             self.wet = max(0.0, self.wet - dt / 1200.0)
         turb_level = w.turbulence + 0.9 * self.storm_core + 0.35 * self.storm_near
+        self.turb_level = turb_level
+        self.sig_w, self.L_w = 0.0, 265.0      # intensidad y escala de la ráfaga vertical (turbulencia de giro)
         # ráfagas
         self.gust_timer -= dt
         if self.gust_timer <= 0:
@@ -206,6 +209,7 @@ class Atmosphere:
             sig_w = turb_level * 3.2 * (1.0 if h > 300 else 0.6 + 0.4 * h / 300)
             sig_uv = sig_w * clamp(1.0 / (0.177 + 0.000823 * h) ** 0.4, 1.0, 2.0)
             sig = (sig_uv, sig_uv, sig_w)
+            self.sig_w, self.L_w = sig_w, L * 0.5
             for i in range(3):
                 tau = (L * (0.5 if i == 2 else 1.0)) / V
                 a = math.exp(-dt / tau)

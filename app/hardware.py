@@ -420,6 +420,10 @@ class Hardware:
     def has_axis(self, key):
         return self.axis(key) is not None
 
+    def console_connected(self):
+        """True si hay cabina física: el volante (alabeo y cabeceo) asignado y su mando enchufado."""
+        return self.has_axis("eje_alabeo") and self.has_axis("eje_cabeceo")
+
     # ------------------------------------------------------------ aplicar al avión
     def update(self, dt, world, app):
         self.brake_cmd = self.brake_l = self.brake_r = 0.0   # sin lectura (mando quitado) no queda frenado

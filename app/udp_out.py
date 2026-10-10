@@ -49,6 +49,7 @@ def snapshot(app):
         "flaps": r(s.flaps, 1), "tren": r(s.gear_pos, 3), "freno_estac": bool(s.parking_brake),
         "frenos": [r(max(ac.brake, ac.brake_l), 3), r(max(ac.brake, ac.brake_r), 3)],
         "compensador": r(ac.trim, 3), "en_tierra": bool(ac.on_ground), "choque": bool(ac.crashed),
+        "barrena": r(ac.spin * ac.spin_dir, 2),
         "bus_v": r(s.bus_volts, 1), "comb_l": r(s.fuel_l, 1),
         "luces": {k: bool(v) for k, v in s.lights.items()},
         "interruptores": {"bateria": bool(s.master), "alternador": bool(s.alternator), "avionica": bool(s.avionics),
@@ -62,6 +63,9 @@ def snapshot(app):
                   "nav1_hacia": w.nav1.to_from, "xpdr": w.xpdr,
                   "adf_khz": w.adf.freq, "adf_valida": bool(w.adf.valid), "adf_relativa": r(w.adf.relative, 1)},
         "pa": {"conectado": bool(w.ap.engaged), "lateral": w.ap.lat, "vertical": w.ap.vert},
+        "gps": {"cdi_fuente": w.cdi_src, "valido": bool(w.gps.valid), "punto": w.gps.ident if w.gps.valid else None,
+                "dist_nm": r(w.gps.dis_nm, 2) if w.gps.valid else None, "dtk": w.gps.dtk if w.gps.valid else None,
+                "xtk_nm": r(w.gps.xtk_nm, 3), "obs": bool(w.gps.obs_mode)},
         "congelado": sorted(w.frozen), "ritmo": w.sim_rate,
     }
 

@@ -199,7 +199,7 @@ let wxFilled=false;
 function render(e){document.getElementById('les').textContent=e.leccion||'—';
  const st=document.getElementById('st');st.textContent=e.estado+(e.choque?' · ACCIDENTE':'');st.className='pill '+(e.choque?'err':'');
  const f=(id,v)=>document.getElementById(id).textContent=v;
- f('ias',e.ias.toFixed(0)+' kt');f('alt',e.alt.toFixed(0)+' ft');f('hdg',String(Math.round(e.hdg)).padStart(3,'0')+'°');
+ f('ias',e.ias.toFixed(0)+' kt');f('alt',e.alt.toFixed(0)+' ft');f('hdg',String(Math.round(e.hdg_mag)%360||360).padStart(3,'0')+'°');
  f('vs',(e.vs>0?'+':'')+e.vs.toFixed(0)+' fpm');f('rpm',e.rpm.toFixed(0)+' rpm');f('fuel',e.fuel.toFixed(0)+' L');
  document.getElementById('paso').textContent=e.paso||'';
  FROZEN=e.congelado||[];['alt','pos','fuel'].forEach(k=>document.getElementById('fz_'+k).className=FROZEN.includes(k)?'on':'');

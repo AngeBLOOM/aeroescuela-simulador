@@ -9,7 +9,7 @@ completa en un equipo dedicado.
 - Aviones G1000 (o con el modo cristal elegido): PFD y MFD a toda la pantalla.
 
 Para que las piezas no tiemblen, cada instrumento se repinta en fotogramas alternos
-(la mitad en cada uno), igual que la cabina fotográfica.
+(la mitad en cada uno).
 """
 import math
 
@@ -275,7 +275,7 @@ class InstrumentDisplay:
         elif name == "vsi":
             g.vsi(s, p, r, ind.vs_fpm)
         elif name == "cdi1":
-            g.cdi(s, p, r, world.nav1, "NAV 1")
+            g.cdi(s, p, r, world.nav_source(), "GPS" if world.cdi_src == "GPS" else "NAV 1")
         elif name == "cdi2":
             if world.show_adf:
                 g.adf(s, p, r, world.adf)
