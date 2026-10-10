@@ -13,6 +13,7 @@ from sim.mathx import FT, clamp, wrap180
 from sim.world import World
 
 w = World()
+fallos = []
 
 
 def hold(ac, w, L, dt, target_alt=None, glide=False):
@@ -28,7 +29,8 @@ def hold(ac, w, L, dt, target_alt=None, glide=False):
     ac.ctl_elev = clamp((pitch_cmd - math.degrees(ac.pitch)) * 0.08 - ac.omega[1] * 0.4, -0.7, 0.7)
 
 
-def run(lesson_id, react, secs=150, glide_after_fail=False):
+def run(lesson_id, react, secs=150, glide_after_fail=False, to_end=False):
+    """to_end: el robot aplica el procedimiento completo, así que la lección debe llegar al último paso."""
     L = LB[lesson_id]()
     if w.aircraft_id != L.aircraft:
         w.set_aircraft(L.aircraft)
@@ -55,6 +57,10 @@ def run(lesson_id, react, secs=150, glide_after_fail=False):
     for it in R["items"][-4:]:
         print("    ", it)
     print("    registro:", w.emerg.report())
+    if w.ac.crashed:
+        fallos.append(f"{L.title}: choque ({w.ac.crash_reason})")
+    if to_end and L.idx + 1 < len(L.steps):
+        fallos.append(f"{L.title}: se quedó en el paso {L.idx + 1}/{len(L.steps)}")
     return L
 
 
@@ -99,6 +105,12 @@ def react_alt(w, L, t):
         s.fuel_pump = False
 
 
+def react_carb(w, L, t):
+    """Como un piloto: si las rpm bajan 100 sin tocar el gas, calefacción al carburador."""
+    if L.t_fail is not None and L.rpm0 and w.ac.sys.engine.rpm < L.rpm0 - 100:
+        w.ac.sys.carb_heat = True
+
+
 def react_actitudes(w, L, t):
     e = w.ac.sys.engine
     if L.idx == 1 and L.step.t < 2:
@@ -109,13 +121,18 @@ def react_actitudes(w, L, t):
         e.throttle = 0.6
 
 
-run("fuego", react_fire, 90)
-run("humo", react_smoke, 60)
-run("radio_falla", react_radio, 50)
-run("compensador", react_trim, 80)
-run("tren", react_gear, 60)
-run("alternador", react_alt, 60)
-run("actitudes", react_actitudes, 60)
+run("fuego", react_fire, 90, to_end=True)
+run("humo", react_smoke, 60, to_end=True)
+run("radio_falla", react_radio, 50, to_end=True)
+run("compensador", react_trim, 80, to_end=True)
+run("tren", react_gear, 60, to_end=True)
+run("alternador", react_alt, 60, to_end=True)
+Lc = run("hielo_carb", react_carb, 320, to_end=True)
+if not w.ac.sys.engine.running or (Lc.rpm0 - Lc.rpm_min) < 100:
+    fallos.append(f"Hielo en el carburador: rpm {Lc.rpm0:.0f} → mín {Lc.rpm_min:.0f}, motor "
+                  f"{'en marcha' if w.ac.sys.engine.running else 'parado'}")
+print(f"   hielo: rpm {Lc.rpm0:.0f} → mínimo {Lc.rpm_min:.0f} → final {w.ac.sys.engine.rpm:.0f}; hielo {w.ac.sys.engine.carb_ice:.2f}")
+run("actitudes", react_actitudes, 60, to_end=True)
 run("imc", lambda w, L, t: None, 40)
 run("fuera_campo", lambda w, L, t: None, 30, glide_after_fail=True)
 
@@ -145,3 +162,7 @@ R = L.result(w)
 print("== Examen PPL:", R["grade"], f"{R['score']:.0f}", "tareas", len(R["items"]))
 for it in R["items"]:
     print("    ", it)
+if len(R["items"]) != len(L.tasks):
+    fallos.append(f"Examen PPL: puntuó {len(R['items'])} de {len(L.tasks)} tareas")
+print("FALLOS: " + "; ".join(fallos) if fallos else "TODO OK")
+sys.exit(1 if fallos else 0)

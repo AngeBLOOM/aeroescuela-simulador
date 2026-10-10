@@ -9,7 +9,7 @@ import pygame
 
 from sim.aircraft_data import AIRCRAFT
 from sim.lessons import LESSONS, FreeFlight
-from sim.mathx import FT, KT, clamp
+from sim.mathx import FT, KT, NM, clamp
 from sim.world import POSITIONS
 from ui.ui import COL, panel_box
 
@@ -65,6 +65,8 @@ KEYS = [
         ("L", "Luz de aterrizaje"),
         ("Ctrl+E", "Arranque automático del motor"),
         ("Insert", "Motor de arranque (mantener)"),
+        ("F6", "Calefacción al carburador (C152, PA-28 Warrior)"),
+        ("F7", "CDI: GPS o VLOC (lo que sigue el HSI y el piloto automático)"),
     ]),
     ("Piloto automático y cabina", [
         ("Z", "Conectar / desconectar PA"),
@@ -72,7 +74,7 @@ KEYS = [
         ("C", "Mantener altitud (ALT)"),
         (", / .", "Marcador de rumbo −5° / +5°"),
         ("Tab", "Cabina clásica / G1000"),
-        ("P", "Cabina 3D · foto · panel 2D · sin panel"),
+        ("P", "Cabina automática · panel 2D · cabina 3D · sin panel"),
         ("1 2 3 4", "Cabina · exterior · torre · libre"),
         ("5", "Vista de instrumentos (cabina 3D)"),
         ("Y", "Mostrar / ocultar el volante"),
@@ -698,11 +700,14 @@ class ScreensMixin:
         # pestañas: asignar mandos · diagnóstico
         if not hasattr(self, "hw_tab"):
             self.hw_tab = "asignar"
-        for i, (k, lab) in enumerate((("asignar", "Asignar mandos"), ("diag", "Diagnóstico y prueba"))):
+        for i, (k, lab) in enumerate((("asignar", "Asignar mandos"), ("sens", "Sensibilidad"), ("diag", "Diagnóstico y prueba"))):
             if ui.button(s, (x0 + 230 + i * 190, box.y + 16, 180, 32), lab, active=self.hw_tab == k, size=13):
                 self.hw_tab = k
         if self.hw_tab == "diag":
             self.page_hw_diag(box)
+            return
+        if self.hw_tab == "sens":
+            self.page_hw_sens(box)
             return
         devs = hw.device_list()
         txt = " · ".join(f"{n} ({a} ejes, {b} botones)" for _, n, a, b in devs) or "No hay dispositivos USB conectados"
@@ -717,6 +722,26 @@ class ScreensMixin:
             n = hw.import_profile()
             self.flash(f"Importadas {n} asignaciones" if n else "No hay archivo cabina_fisica.json en la carpeta de datos", 5)
             self.save_settings()
+        if hw.twin_groups() and ui.button(s, (box.right - 640, box.y + 50, 160, 28), "Intercambiar iguales", size=12,
+                                          tip="Si dos mandos del mismo modelo quedaron cruzados, pasa las asignaciones "
+                                              "de uno al otro (luego vuelva a calibrar)"):
+            names = hw.swap_twins()
+            self.flash("Asignaciones intercambiadas entre: " + ", ".join(names) + ". Vuelva a calibrar sus ejes.", 6)
+            self.save_settings()
+        calibrating = hw.calib is not None
+        if ui.button(s, (box.right - 470, box.y + 50, 160, 28), "Terminar calibración" if calibrating else "Calibrar ejes",
+                     active=calibrating, size=12,
+                     tip="Mide el recorrido real de cada eje asignado (tope a tope) y su centro"):
+            if calibrating:
+                n = hw.finish_calibration()
+                self.flash(f"Calibrados {n} ejes" if n else "Ningún eje se movió lo suficiente: no se cambió nada", 5)
+                self.save_settings()
+            else:
+                hw.start_calibration()
+        if hw.calib is not None:
+            hw.poll_calibration()
+            f.blit(s, "Calibrando: mueva cada eje asignado de tope a tope; suelte volante, pedales y compensador en el "
+                      "centro y pulse «Terminar calibración».", (x0, box.y + 76), 15, COL["yellow"], bold=True)
         if hw.capture:
             msg = f"Asignando «{dict((k, n) for k, n, _ in FUNCTIONS)[hw.capture]}»: " + (
                 "MUEVA el eje a fondo" if KIND[hw.capture] == "eje" else "ACCIONE el interruptor o botón")
@@ -752,10 +777,9 @@ class ScreensMixin:
                 live = "" if v is None else f"  {v:+.2f}"
             else:
                 b = hw.bindings.get(key)
-                if b:
-                    j = hw.devices.get(b["dev"])
-                    if j is not None and b["btn"] < j.get_numbuttons():
-                        live = "  ●" if j.get_button(b["btn"]) else "  ○"
+                st_ = hw.raw_state(b) if b else None
+                if st_ is not None:
+                    live = "  ●" if st_ else "  ○"
             f.blit(s, desc + live, (x + colw * 0.45, y + 3), 12, COL["green"] if desc != "—" else COL["dim"])
             bx = x + colw - 128
             if ui.button(s, (bx, y - 1, 64, 24), "Asignar", active=hw.capture == key, size=11):
@@ -768,6 +792,59 @@ class ScreensMixin:
         f.blit(s, "INT = interruptor con posición fija · PULS = pulsador · MANT = activo mientras se mantiene. "
                   "Rueda del ratón: más funciones. Se guarda al salir.", (x0, box.bottom - 22), 12, COL["grey"])
         hw.update(0.0, self.world, self) if hw.capture else None
+
+    def page_hw_sens(self, box):
+        """Zona muerta y curva de cada eje de vuelo, con la curva dibujada y la posición real del mando encima."""
+        from ui import theme
+        from .hardware import DEFAULT_DZ, DEFAULT_EXPO, NAMES, SHAPED, shape
+        s = self.overlay
+        f = self.fonts
+        ui = self.ui
+        hw = self.hardware
+        x0 = box.x + 22
+        y = box.y + 66
+        f.blit(s, "Zona muerta: cuánto se mueve el mando sin efecto en el centro. Curva: 0 % = lineal; más alta = más "
+                  "suave cerca del centro y la misma autoridad al final del recorrido.", (x0, y), 13, COL["grey"])
+        y += 30
+        rowh = max(150, int((box.bottom - y - 40) / len(SHAPED)))
+        for key in SHAPED:
+            b = hw.bindings.get(key)
+            f.blit(s, NAMES[key], (x0, y + 4), 16, COL["white"], bold=True)
+            f.blit(s, hw.describe(key), (x0, y + 28), 12, COL["green"] if b else COL["dim"])
+            plot = pygame.Rect(box.right - 22 - 130, y, 130, 130)
+            if not b or "eje" not in b:
+                f.blit(s, "Sin asignar: asígnelo en «Asignar mandos».", (x0, y + 56), 13, COL["amber"])
+                y += rowh
+                continue
+            dz, k = b.get("zm", DEFAULT_DZ), b.get("exp", DEFAULT_EXPO)
+            v = ui.slider(s, (x0 + 300, y, 300, 30), dz * 100, 0, 25, "Zona muerta", "{:.0f} %")
+            if v is not None:
+                b["zm"] = round(v / 100, 3)
+            v = ui.slider(s, (x0 + 300, y + 44, 300, 30), k * 100, 0, 100, "Curva", "{:.0f} %")
+            if v is not None:
+                b["exp"] = round(v / 100, 2)
+            if ui.button(s, (x0 + 300, y + 88, 140, 28), "Restablecer", size=12,
+                         tip=f"Zona muerta {DEFAULT_DZ * 100:.0f} % y curva {DEFAULT_EXPO * 100:.0f} %"):
+                b.pop("zm", None)
+                b.pop("exp", None)
+            # curva: entrada (horizontal) → salida (vertical), con la posición actual
+            pygame.draw.rect(s, (8, 22, 34), plot)
+            pygame.draw.rect(s, (*theme.CYAN, 110), plot, 1)
+            pygame.draw.line(s, (40, 70, 90), plot.midleft, plot.midright)
+            pygame.draw.line(s, (40, 70, 90), plot.midtop, plot.midbottom)
+            pygame.draw.line(s, (60, 80, 100), plot.bottomleft, plot.topright)
+            dz, k = b.get("zm", DEFAULT_DZ), b.get("exp", DEFAULT_EXPO)
+            pts = [(plot.x + (i / 40) * plot.w, plot.centery - shape(i / 20 - 1, dz, k) * plot.h / 2) for i in range(41)]
+            pygame.draw.lines(s, theme.CYAN, False, pts, 2)
+            raw = hw.axis(key, 0.0)
+            if raw is not None:
+                out = hw.shaped(key)
+                pygame.draw.circle(s, theme.AMBER, (int(plot.centerx + raw * plot.w / 2), int(plot.centery - out * plot.h / 2)), 5)
+                f.blit(s, f"mando {raw:+.2f} → avión {out:+.2f}", (x0 + 460, y + 94), 13, COL["white"])
+            f.blit(s, "ENTRADA → SALIDA", (plot.centerx, plot.bottom + 4), 10, COL["grey"], anchor="midtop")
+            y += rowh
+        f.blit(s, "Se guarda al salir. Las palancas (gases, mezcla, hélice, frenos) son lineales: use «Calibrar ejes».",
+               (x0, box.bottom - 22), 12, COL["grey"])
 
     def page_hw_diag(self, box):
         """Diagnóstico de la cabina física: dispositivos en bruto, prueba de mandos, micrófono, monitores y lista."""
@@ -891,6 +968,8 @@ class ScreensMixin:
             ("Botón de hablar por micrófono (PTT) asignado", bool(hw.bindings.get("btn_ptt_voz"))),
             ("Micrófono probado", getattr(self, "_mic_res", "").startswith("✓")),
             ("Pantalla en «Paisaje + instr.» o «2.º monitor»", st.get("pantalla_instr") in ("ambiente", "segunda", "unica")),
+            ("Ejes calibrados", any(b.get("cal") for b in hw.bindings.values())),
+            ("Interruptores reales iguales que en el avión", not hw.mismatch),
         ]
         for i, (lab, ok) in enumerate(checks):
             cx = x0 + (i % 2) * 480
@@ -950,6 +1029,16 @@ class ScreensMixin:
             for i, ln in enumerate(f.wrap(txt, 12, box.right - (x0 + 590) - 12)[:2]):
                 f.blit(s, ln, (x0 + 590, y - 42 + i * 15), 12, col, bold=True)
         toggle("Timón automático (ayuda)", "timon_auto", lambda: setattr(self.controls, "assist_rudder", st["timon_auto"]))
+        if self.ui.button(s, (x0 + 380, y - 44, 200, 32), "Salida UDP: " + ("Sí" if st.get("udp_salida") else "No"),
+                          active=bool(st.get("udp_salida")), size=13,
+                          tip="Envía los datos de vuelo por la red (instrumentos externos, paneles, movimiento). "
+                              "Formato en docs/PROTOCOLO_UDP.md"):
+            st["udp_salida"] = not st.get("udp_salida")
+            self.apply_udp()
+            self.save_settings()
+        if self.udp is not None:
+            f.blit(s, self.udp.status_text(), (x0 + 590, y - 36), 12,
+                   COL["green"] if self.udp.error is None else COL["amber"], bold=True)
         toggle("Mostrar FPS", "mostrar_fps")
         fondo = st.get("fondo_instr", "futurista")
         if self.ui.button(s, (x0 + 380, y - 44, 300, 32),
@@ -1026,6 +1115,10 @@ class ScreensMixin:
         if self.ui.button(s, (box.right - 170, y - 6, 140, 32), "Buscar", size=14):
             c.refresh_joystick()
         y += 32
+        if c.joy is not None and self.hardware.uses_device(c.joy):
+            f.blit(s, "Este mando está asignado en «Cabina física»: se configura allí y aquí se ignora.", (x0, y), 14,
+                   COL["amber"])
+            y += 28
         if c.joy is not None:
             for key, lab in (("eje_alabeo", "Eje alabeo"), ("eje_cabeceo", "Eje cabeceo"), ("eje_timon", "Eje timón"),
                              ("eje_potencia", "Eje gases")):
@@ -1047,6 +1140,16 @@ class ScreensMixin:
                 f.blit(s, lab, (x0, y + 6), 15, COL["white"])
                 if self.ui.button(s, (x0 + 220, y, 120, 30), "Sí" if c.cfg[key] else "No", active=c.cfg[key], size=14):
                     c.cfg[key] = not c.cfg[key]
+                y += 38
+            for key, lab, step, lo, hi in (("zona_muerta", "Zona muerta", 0.02, 0.0, 0.3),
+                                           ("exponencial", "Curva (expo)", 0.05, 0.0, 1.0)):
+                f.blit(s, lab, (x0, y + 6), 15, COL["white"])
+                val = float(c.cfg[key])
+                if self.ui.button(s, (x0 + 220, y, 36, 30), "−", size=16):
+                    c.cfg[key] = round(max(lo, val - step), 2)
+                f.blit(s, f"{val * 100:.0f} %", (x0 + 300, y + 15), 15, COL["white"], bold=True, anchor="center")
+                if self.ui.button(s, (x0 + 344, y, 36, 30), "+", size=16):
+                    c.cfg[key] = round(min(hi, val + step), 2)
                 y += 38
             st["joystick"] = c.cfg
 
@@ -1468,7 +1571,8 @@ class ScreensMixin:
         panel_box(s, box, 16, (8, 14, 24, 240))
         f.blit(s, "ESTACIÓN DEL INSTRUCTOR", (box.x + 24, box.y + 18), 22, COL["white"], bold=True)
         f.blit(s, "La simulación está en pausa mientras configura.", (box.x + 26, box.y + 50), 13, COL["grey"])
-        tabs = [("clima", "Meteorología"), ("fallas", "Fallas"), ("pos", "Reposicionar"), ("avion", "Avión")]
+        tabs = [("clima", "Meteorología"), ("fallas", "Fallas"), ("pos", "Reposicionar"), ("control", "Congelar y mover"),
+                ("avion", "Avión")]
         tx = box.x + 24
         for key, lab in tabs:
             if ui.button(s, (tx, box.y + 76, 170, 36), lab, active=self.instr_tab == key, size=15):
@@ -1505,6 +1609,8 @@ class ScreensMixin:
                 ("Base de nubes (QNH)", f"{wx.cloud_base_ft:.0f} ft", lambda: setattr(wx, "cloud_base_ft", max(500, wx.cloud_base_ft - 250)),
                  lambda: setattr(wx, "cloud_base_ft", min(12000, wx.cloud_base_ft + 250))),
                 ("QNH", f"{wx.qnh_hpa:.0f} hPa", lambda: setattr(wx, "qnh_hpa", wx.qnh_hpa - 1), lambda: setattr(wx, "qnh_hpa", wx.qnh_hpa + 1)),
+                ("Humedad (temp − rocío)", f"{wx.dew_spread:.0f} °C", lambda: setattr(wx, "dew_spread", max(0.0, wx.dew_spread - 1)),
+                 lambda: setattr(wx, "dew_spread", min(25.0, wx.dew_spread + 1))),
                 ("Hora local", f"{int(wx.hour):02d}:{int(wx.hour % 1 * 60):02d}", lambda: setattr(wx, "hour", (wx.hour - 0.5) % 24),
                  lambda: setattr(wx, "hour", (wx.hour + 0.5) % 24)),
             ]
@@ -1561,6 +1667,8 @@ class ScreensMixin:
             if ui.button(s, (x0, ry, 220, 36), "Reparar todo", size=14, color=(30, 110, 70)):
                 for k in ac.sys.failures:
                     ac.sys.failures[k] = False
+                for en in ac.sys.engines:
+                    en.carb_ice = 0.0
                 em.plan = []
                 ac.sys.fire_level = ac.sys.smoke_level = 0.0
                 ac.sys.gear_emergency = False
@@ -1580,6 +1688,37 @@ class ScreensMixin:
                     self.state = "flight"
                     self.flash(POSITIONS[k])
                     return
+        elif tab == "control":
+            f.blit(s, "Congelar", (x0, y + 8), 16, COL["white"])
+            for i, (k, lab) in enumerate(w.FREEZES.items()):
+                on = k in w.frozen
+                if ui.button(s, (x0 + 230 + i * 150, y, 140, 34), ("❄ " if on else "") + lab.capitalize(), active=on,
+                             size=14, tip="Mantiene el valor actual mientras el avión sigue volando"):
+                    w.freeze(k, not on)
+            y += 50
+            f.blit(s, "Ritmo del tiempo", (x0, y + 8), 16, COL["white"])
+            for i, x in enumerate((1, 2, 4)):
+                if ui.button(s, (x0 + 230 + i * 100, y, 90, 34), f"×{x}", active=w.sim_rate == x, size=14,
+                             tip="Acelerar solo en vuelo, por encima de 500 ft; cerca del suelo vuelve a ×1"):
+                    if not w.set_rate(x):
+                        self.flash("El tiempo solo se acelera en vuelo, por encima de 500 ft", 3)
+            y += 50
+            f.blit(s, "Mover el avión", (x0, y + 8), 16, COL["white"])
+            moves = [("1 NM al norte", dict(north_nm=1)), ("1 NM al sur", dict(north_nm=-1)),
+                     ("1 NM al este", dict(east_nm=1)), ("1 NM al oeste", dict(east_nm=-1)),
+                     ("+500 ft", dict(alt_ft=500)), ("−500 ft", dict(alt_ft=-500)),
+                     ("Rumbo −30°", dict(hdg_deg=-30)), ("Rumbo +30°", dict(hdg_deg=30)), ("Dar la vuelta", dict(hdg_deg=180))]
+            for i, (lab, kw) in enumerate(moves):
+                col, row = i % 4, i // 4
+                if ui.button(s, (x0 + 230 + col * 160, y + row * 44, 150, 36), lab, size=14):
+                    if not w.slew(**kw):
+                        self.flash("El avión solo se mueve en vuelo", 3)
+            y += 3 * 44 + 10
+            d = math.hypot(ac.pos[0] - w.home.ref[0], ac.pos[1] - w.home.ref[1]) / NM
+            f.blit(s, f"Ahora: {ac.alt_msl / FT:,.0f} ft · rumbo {w.mag(ac.heading):03.0f}° · {ac.ias_kt:.0f} kt · "
+                      f"a {d:.1f} NM de {w.home.ident}", (x0, y), 14, COL["grey"])
+            f.blit(s, "Lo congelado y el ritmo se quitan al reposicionar o empezar otra lección.", (x0, y + 24), 13,
+                   COL["grey"])
         elif tab == "avion":
             f.blit(s, "Combustible", (x0, y + 8), 16, COL["white"])
             for i, (lab, frac) in enumerate((("Lleno", 1.0), ("3/4", 0.75), ("Mitad", 0.5), ("Reserva", 0.12))):
@@ -1624,6 +1763,15 @@ class ScreensMixin:
         f.blit(s, title, (box.x + 28, box.y + 40), 28, COL["white"], bold=True)
         lw = box.w * 0.48
         y = box.y + 92
+        # notas al pie (emergencias y radio): debajo del tiempo de vuelo, que sube lo necesario para no pisarlas
+        notes = [(f"Emergencia — {name}: {txt}", COL["green"] if ok else COL["red"])
+                 for name, txt, ok in self.world.emerg.report()[-3:]]
+        atc = self.world.atc
+        if atc.engaged or atc.violations:
+            txt = "Radio (ATC): " + ("; ".join(atc.violations) if atc.violations else "comunicaciones correctas")
+            notes.append((f.wrap(txt, 13, lw - 420)[0] if lw > 600 else txt[:70],
+                          COL["amber"] if atc.violations else COL["green"]))
+        foot_y = box.bottom - 80 - 20 * len(notes)
         if R is not None:
             from ui import theme
             sc = R["score"]
@@ -1646,7 +1794,7 @@ class ScreensMixin:
             f.blit(s, "Concepto", (box.x + 28, y), 13, COL["grey"], bold=True)
             f.blit(s, "Puntos", (box.x + lw - 10, y), 13, COL["grey"], bold=True, anchor="topright")
             y += 22
-            maxrows = int((box.bottom - 90 - y) / 38)
+            maxrows = int((foot_y - 10 - y) / 38)
             for name, got, mx, com in R["items"][:maxrows]:
                 pygame.draw.line(s, (40, 48, 60), (box.x + 28, y - 3), (box.x + lw, y - 3))
                 f.blit(s, name, (box.x + 28, y), 15, COL["white"], bold=True)
@@ -1659,18 +1807,9 @@ class ScreensMixin:
             f.blit(s, "Vuelo libre registrado en la bitácora.", (box.x + 28, y), 18, COL["white"])
             y += 30
         f.blit(s, f"Tiempo de vuelo: {getattr(self, 'debrief_flight_s', 0) / 60:.1f} min   ·   Aterrizajes: {getattr(self, 'debrief_landings', 0)}"
-                  f"   ·   G máx: {self.world.ac.max_g:.1f}", (box.x + 28, box.bottom - 80), 14, COL["grey"])
-        em_rep = self.world.emerg.report()
-        if em_rep:
-            yy = box.bottom - 56 - 20 * min(3, len(em_rep))
-            for name, txt, ok in em_rep[-3:]:
-                f.blit(s, f"Emergencia — {name}: {txt}", (box.x + 28, yy), 13, COL["green"] if ok else COL["red"])
-                yy += 20
-        atc = self.world.atc
-        if atc.engaged or atc.violations:
-            txt = "Radio (ATC): " + ("; ".join(atc.violations) if atc.violations else "comunicaciones correctas")
-            f.blit(s, f.wrap(txt, 13, lw - 420)[0] if lw > 600 else txt[:70], (box.x + 28, box.bottom - 56), 13,
-                   COL["amber"] if atc.violations else COL["green"])
+                  f"   ·   G máx: {self.world.ac.max_g:.1f}", (box.x + 28, foot_y), 14, COL["grey"])
+        for i, (txt, c) in enumerate(notes):
+            f.blit(s, txt, (box.x + 28, foot_y + 24 + 20 * i), 13, c)
         # gráficas
         gx = box.x + lw + 30
         gw = box.right - gx - 28

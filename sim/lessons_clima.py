@@ -292,10 +292,10 @@ class NC_Desvio(_Clima, M_Libertador):
         return [("el punto SUR", local(world, TORMENTA_SUR))]
 
     def wp_voice(self, k, name, leg):
-        return f"Rumbo {leg.hdg:03.0f} hacia el punto SUR, rodeando la tormenta por el sur. Manténgase lejos de ella."
+        return f"Rumbo {leg.hdg_m:03d} hacia el punto SUR, rodeando la tormenta por el sur. Manténgase lejos de ella."
 
     def last_voice(self, dest, leg):
-        return f"Punto SUR. Nuevo rumbo {leg.hdg:03.0f} hacia El Libertador, con la tormenta a su izquierda."
+        return f"Punto SUR. Nuevo rumbo {leg.hdg_m:03d} hacia El Libertador, con la tormenta a su izquierda."
 
     def build(self, world):
         super().build(world)

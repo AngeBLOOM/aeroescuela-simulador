@@ -41,6 +41,7 @@ FUNCTIONS = [
     ("sw_taxi", "Luz de rodaje", "interruptor"),
     ("sw_landing", "Luz de aterrizaje", "interruptor"),
     ("sw_pitot", "Calefacción del pitot", "interruptor"),
+    ("sw_calef_carb", "Calefacción al carburador", "interruptor"),
     ("sw_tren", "Palanca del tren (ON = abajo)", "interruptor"),
     ("sw_freno_est", "Freno de estacionamiento", "interruptor"),
     ("sw_motor1", "MOTOR / ENGINE MASTER 1 (FADEC)", "interruptor"),
@@ -78,6 +79,62 @@ FUNCTIONS = [
 ]
 NAMES = {k: n for k, n, _ in FUNCTIONS}
 KIND = {k: t for k, _, t in FUNCTIONS}
+CENTERED = ("eje_alabeo", "eje_cabeceo", "eje_timon", "eje_trim")     # ejes con centro (el resto son palancas)
+SHAPED = ("eje_alabeo", "eje_cabeceo", "eje_timon")    # ejes de vuelo con zona muerta y curva propias (Sensibilidad)
+DEFAULT_DZ = 0.04            # zona muerta por defecto (fracción del recorrido)
+DEFAULT_EXPO = 0.35          # curva por defecto: 0 = lineal, 1 = cúbica (más suave en el centro)
+HAT_DIRS = {"arriba": (0, 1), "abajo": (0, -1), "izquierda": (-1, 0), "derecha": (1, 0)}
+HAT_ARROW = {"arriba": "↑", "abajo": "↓", "izquierda": "←", "derecha": "→"}
+
+
+def shape(v, dz=DEFAULT_DZ, k=DEFAULT_EXPO):
+    """Zona muerta (sin salto: el recorrido que queda va de 0 a 1) y curva exponencial de un eje centrado."""
+    a = abs(v)
+    if a <= dz:
+        return 0.0
+    a = (a - dz) / (1.0 - dz) if dz < 1 else 0.0
+    return math.copysign((1.0 - k) * a + k * a * a * a, v)
+SELECTORS = {"mag": "Llave de magnetos", "comb": "Selector de combustible"}
+_SDL = None
+
+
+def _sdl():
+    """El SDL2 que ya usa pygame, para leer lo que pygame no ofrece (número de serie, ruta USB). None si no se puede."""
+    global _SDL
+    if _SDL is None:
+        _SDL = False
+        try:
+            import ctypes
+            lib = ctypes.CDLL(os.path.join(os.path.dirname(pygame.__file__), "SDL2.dll"))
+            lib.SDL_JoystickFromInstanceID.restype = ctypes.c_void_p
+            lib.SDL_JoystickFromInstanceID.argtypes = [ctypes.c_int32]
+            for fn in (lib.SDL_JoystickGetSerial, lib.SDL_JoystickPath):
+                fn.restype = ctypes.c_char_p
+                fn.argtypes = [ctypes.c_void_p]
+            _SDL = lib
+        except (OSError, AttributeError):
+            pass
+    return _SDL or None
+
+
+def unit_id(j):
+    """Identifica la unidad física, no el modelo: número de serie o, si no tiene, la ruta USB (depende del puerto)."""
+    lib = _sdl()
+    if lib is None:
+        return None
+    try:
+        p = lib.SDL_JoystickFromInstanceID(j.get_instance_id())
+        for fn, tag in ((lib.SDL_JoystickGetSerial, "serie"), (lib.SDL_JoystickPath, "ruta")):
+            v = fn(p) if p else None
+            if v:
+                return f"{tag}:{v.decode('utf-8', 'replace')}"
+    except (pygame.error, OSError):
+        pass
+    return None
+
+
+def _model(key):
+    return key.rsplit("#", 1)[0]
 
 
 class Hardware:
@@ -85,28 +142,108 @@ class Hardware:
         self.cfg = cfg if cfg is not None else {}
         self.cfg.setdefault("asignaciones", {})
         self.devices = {}            # guid -> Joystick
+        self.names = {}              # guid -> nombre (guardado: un mando ya desconectado no lo da)
         self.prev = {}
         self.capture = None          # función que se está asignando
         self.capture_base = None
+        self.calib = None            # calibración en curso: función -> (mínimo, máximo) leídos
+        self.sync_pending = True     # copiar la posición de los interruptores reales en la próxima lectura
+        self.mismatch = set()        # interruptores reales que no coinciden con el avión
         self.radio_sel = 0
-        self.brake_cmd = 0.0
+        self.brake_cmd = 0.0         # botón de frenos (los dos lados)
+        self.brake_l = self.brake_r = 0.0   # frenos de pie, cada uno en su rueda
         self.refresh()
 
     # ------------------------------------------------------------ dispositivos
     def refresh(self):
+        """Vuelve a abrir todos los mandos. Devuelve (nombres conectados, nombres desconectados) desde la última vez.
+
+        Cada mando se guarda como «GUID#n». El GUID es del modelo, así que dos unidades iguales (dos cuadrantes,
+        dos paneles) solo se distinguen por n. Para que no se intercambien al cambiar el orden de Windows, cada n
+        recuerda su unidad (número de serie o ruta USB) en "unidades"; sin ese dato se usa el orden, como antes."""
+        old = dict(self.names)
         pygame.joystick.init()
-        self.devices = {}
+        joys = []
         for i in range(pygame.joystick.get_count()):
             try:
                 j = pygame.joystick.Joystick(i)
                 j.init()
-                guid = j.get_guid() + f"#{sum(1 for g in self.devices if g.startswith(j.get_guid()))}"
-                self.devices[guid] = j
-            except Exception:
+                joys.append((j.get_guid(), j, unit_id(j)))
+            except pygame.error:
                 pass
+        ids = [u for _, _, u in joys if u]
+        joys = [(g, j, u if ids.count(u) == 1 else None) for g, j, u in joys]   # serie repetida: no sirve
+        units = self.cfg.setdefault("unidades", {})                              # "GUID#n" -> unidad
+        keys = {}
+        for n, (guid, j, uid) in enumerate(joys):        # primero las unidades ya conocidas, en su n de siempre
+            k = next((k for k, u in units.items() if u == uid and _model(k) == guid), None) if uid else None
+            if k is not None and k not in keys.values():
+                keys[n] = k
+        for n, (guid, j, uid) in enumerate(joys):        # después las nuevas, en el primer n libre
+            if n not in keys:
+                i = 0
+                while f"{guid}#{i}" in keys.values():
+                    i += 1
+                keys[n] = f"{guid}#{i}"
+        self.devices = {}
+        self.names = {}
+        for n, (guid, j, uid) in enumerate(joys):
+            k = keys[n]
+            self.devices[k] = j
+            self.names[k] = j.get_name()
+            if uid:
+                for stale in [s for s, u in units.items() if u == uid and s != k]:
+                    del units[stale]
+                units[k] = uid
+        added = [n for g, n in self.names.items() if g not in old]
+        removed = [n for g, n in old.items() if g not in self.names]
+        if added or removed:
+            self.prev.clear()
+            self.sync_pending = True
+        return added, removed
 
     def device_list(self):
-        return [(g, j.get_name(), j.get_numaxes(), j.get_numbuttons()) for g, j in self.devices.items()]
+        return [(g, self.label(g), j.get_numaxes(), j.get_numbuttons()) for g, j in self.devices.items()]
+
+    def label(self, key):
+        """Nombre del mando; con unidades iguales conectadas se numeran: «Cuadrante (1)», «Cuadrante (2)»."""
+        name = self.names.get(key, "")
+        twins = sum(1 for g in self.devices if _model(g) == _model(key))
+        return f"{name} ({int(key.rsplit('#', 1)[1]) + 1})" if twins > 1 else name
+
+    def twin_groups(self):
+        """Modelos con dos o más unidades conectadas: [(nombre, [claves])]."""
+        groups = {}
+        for g in self.devices:
+            groups.setdefault(_model(g), []).append(g)
+        return [(self.names[ks[0]], sorted(ks)) for ks in groups.values() if len(ks) > 1]
+
+    def swap_twins(self):
+        """Corrige a mano unidades iguales que quedaron cruzadas: las asignaciones pasan de cada unidad a la
+        siguiente (con dos, se intercambian). Devuelve los nombres de los modelos afectados."""
+        done = []
+        for name, ks in self.twin_groups():
+            nxt = {k: ks[(i + 1) % len(ks)] for i, k in enumerate(ks)}
+            for b in self.bindings.values():
+                if b.get("dev") in nxt:
+                    b["dev"] = nxt[b["dev"]]
+                    b.pop("cal", None)       # se midió en la otra unidad: hay que volver a calibrar
+            done.append(name)
+        if done:
+            self.prev.clear()
+            self.sync_pending = True
+        return done
+
+    def uses_device(self, joy):
+        """True si alguna asignación usa este joystick: así el joystick genérico no lo lee por segunda vez."""
+        if joy is None:
+            return False
+        try:
+            iid = joy.get_instance_id()
+            return any(j is not None and j.get_instance_id() == iid
+                       for j in (self.devices.get(b.get("dev")) for b in self.bindings.values()))
+        except pygame.error:
+            return False
 
     @property
     def bindings(self):
@@ -116,10 +253,11 @@ class Hardware:
         b = self.bindings.get(key)
         if not b:
             return "—"
-        j = self.devices.get(b["dev"])
-        dev = j.get_name()[:22] if j else "(no conectado)"
+        dev = self.label(b["dev"])[:26] if b["dev"] in self.devices else "(no conectado)"
         if "eje" in b:
-            return f"{dev} · eje {b['eje']}" + (" (inv.)" if b.get("inv") else "")
+            return f"{dev} · eje {b['eje']}" + (" (inv.)" if b.get("inv") else "") + (" · cal." if b.get("cal") else "")
+        if "hat" in b:
+            return f"{dev} · seta {b['hat']} {HAT_ARROW.get(b.get('dir'), '?')}"
         return f"{dev} · botón {b['btn']}"
 
     # ------------------------------------------------------------ perfiles (copiar una cabina a otra computadora)
@@ -144,11 +282,57 @@ class Hardware:
         self.bindings.update(data.get("asignaciones", {}))
         return len(self.bindings)
 
+    # ------------------------------------------------------------ calibración (mínimo, centro y máximo de cada eje)
+    def start_calibration(self):
+        self.capture = None
+        self.calib = {}
+
+    def poll_calibration(self):
+        for key, b in self.bindings.items():
+            j = self.devices.get(b.get("dev"))
+            if "eje" not in b or j is None or b["eje"] >= j.get_numaxes():
+                continue
+            v = j.get_axis(b["eje"])
+            lo, hi = self.calib.get(key, (v, v))
+            self.calib[key] = (min(lo, v), max(hi, v))
+
+    def finish_calibration(self):
+        """Guarda el recorrido medido. El centro es la posición actual (volante, pedales y compensador sueltos).
+        Devuelve cuántos ejes se calibraron; los que apenas se movieron conservan su calibración anterior."""
+        n = 0
+        for key, (lo, hi) in (self.calib or {}).items():
+            if hi - lo < 0.3:
+                continue
+            b = self.bindings[key]
+            cal = {"min": round(lo, 4), "max": round(hi, 4)}
+            if key in CENTERED:
+                j = self.devices.get(b["dev"])
+                v = j.get_axis(b["eje"]) if j is not None else (lo + hi) / 2
+                q = (hi - lo) * 0.25
+                cal["cen"] = round(v if lo + q < v < hi - q else (lo + hi) / 2, 4)
+            b["cal"] = cal
+            n += 1
+        self.calib = None
+        return n
+
+    @staticmethod
+    def _calibrated(v, cal):
+        lo, hi, c = cal["min"], cal["max"], cal.get("cen")
+        if c is None:
+            v = 2 * (v - lo) / (hi - lo) - 1 if hi > lo else v
+        elif v >= c:
+            v = (v - c) / (hi - c) if hi > c else 0.0
+        else:
+            v = (v - c) / (c - lo) if c > lo else 0.0
+        return clamp(v, -1.0, 1.0)
+
     # ------------------------------------------------------------ asignación
     def start_capture(self, key):
+        self.calib = None
         self.capture = key
         self.capture_base = {g: [j.get_axis(a) for a in range(j.get_numaxes())] for g, j in self.devices.items()}
         self.capture_btns = {g: [j.get_button(b) for b in range(j.get_numbuttons())] for g, j in self.devices.items()}
+        self.capture_hats = {g: [j.get_hat(h) for h in range(j.get_numhats())] for g, j in self.devices.items()}
 
     def clear(self, key):
         self.bindings.pop(key, None)
@@ -174,6 +358,14 @@ class Hardware:
                         self.bindings[key] = dict(dev=g, btn=b)
                         self.capture = None
                         return
+                # seta (palanca de 4 posiciones): cada dirección vale como un botón
+                for h in range(j.get_numhats()):
+                    hx, hy = j.get_hat(h)
+                    if (hx, hy) != (0, 0) and (hx, hy) != tuple(self.capture_hats[g][h]):
+                        d = "arriba" if hy > 0 else ("abajo" if hy < 0 else ("derecha" if hx > 0 else "izquierda"))
+                        self.bindings[key] = dict(dev=g, hat=h, dir=d)
+                        self.capture = None
+                        return
 
     # ------------------------------------------------------------ lectura
     def axis(self, key, deadzone=0.04):
@@ -184,21 +376,43 @@ class Hardware:
         if j is None or b["eje"] >= j.get_numaxes():
             return None
         v = j.get_axis(b["eje"])
+        if b.get("cal"):
+            v = self._calibrated(v, b["cal"])
         if b.get("inv"):
             v = -v
         if abs(v) < deadzone:
             v = 0.0
         return v
 
+    def shaped(self, key):
+        """Eje de vuelo con la zona muerta ("zm") y la curva ("exp") de ese eje; None si no está asignado."""
+        v = self.axis(key, 0.0)
+        if v is None:
+            return None
+        b = self.bindings[key]
+        return shape(v, b.get("zm", DEFAULT_DZ), b.get("exp", DEFAULT_EXPO))
+
+    def raw_state(self, b):
+        """Estado de un botón o de una dirección de seta asignados; None si el mando no está."""
+        j = self.devices.get(b.get("dev"))
+        if j is None:
+            return None
+        if "btn" in b:
+            return bool(j.get_button(b["btn"])) if b["btn"] < j.get_numbuttons() else None
+        if "hat" in b and b["hat"] < j.get_numhats():
+            hx, hy = j.get_hat(b["hat"])
+            dx, dy = HAT_DIRS.get(b.get("dir"), (0, 0))
+            return bool((dx and hx == dx) or (dy and hy == dy))
+        return None
+
     def button(self, key):
-        """(estado, recién pulsado, recién soltado)"""
+        """(estado, recién pulsado, recién soltado) de un botón o de una dirección de seta."""
         b = self.bindings.get(key)
-        if not b or "btn" not in b:
+        if not b or ("btn" not in b and "hat" not in b):
             return None, False, False
-        j = self.devices.get(b["dev"])
-        if j is None or b["btn"] >= j.get_numbuttons():
+        now = self.raw_state(b)
+        if now is None:
             return None, False, False
-        now = bool(j.get_button(b["btn"]))
         prev = self.prev.get(key, now)
         self.prev[key] = now
         return now, now and not prev, prev and not now
@@ -206,8 +420,13 @@ class Hardware:
     def has_axis(self, key):
         return self.axis(key) is not None
 
+    def console_connected(self):
+        """True si hay cabina física: el volante (alabeo y cabeceo) asignado y su mando enchufado."""
+        return self.has_axis("eje_alabeo") and self.has_axis("eje_cabeceo")
+
     # ------------------------------------------------------------ aplicar al avión
     def update(self, dt, world, app):
+        self.brake_cmd = self.brake_l = self.brake_r = 0.0   # sin lectura (mando quitado) no queda frenado
         if self.capture:
             self._poll_capture()
             return
@@ -245,29 +464,42 @@ class Hardware:
         v = self.axis("eje_trim", 0.0)
         if v is not None:
             ac.trim = clamp(v, -1, 1)
-        # interruptores (se aplican al cambiar, para no pelear con lecciones ni teclado)
-        sw = {"sw_bat": lambda on: setattr(s, "master", on), "sw_alt": lambda on: setattr(s, "alternator", on),
-              "sw_avionica": lambda on: setattr(s, "avionics", on), "sw_bomba": lambda on: setattr(s, "fuel_pump", on),
-              "sw_pitot": lambda on: setattr(s, "pitot_heat", on), "sw_tren": lambda on: setattr(s, "gear_down", on),
-              "sw_freno_est": lambda on: setattr(s, "parking_brake", on)}
+        # interruptores (se aplican al cambiar, para no pelear con lecciones ni teclado): clave -> (leer, poner)
+        def attr(obj, name):
+            return (lambda: bool(getattr(obj, name)), lambda on: setattr(obj, name, on))
+        sw = {"sw_bat": attr(s, "master"), "sw_alt": attr(s, "alternator"), "sw_avionica": attr(s, "avionics"),
+              "sw_bomba": attr(s, "fuel_pump"), "sw_pitot": attr(s, "pitot_heat"), "sw_tren": attr(s, "gear_down"),
+              "sw_calef_carb": attr(s, "carb_heat"),
+              "sw_freno_est": attr(s, "parking_brake")}
         for k, light in (("sw_beacon", "beacon"), ("sw_nav", "nav"), ("sw_strobe", "strobe"), ("sw_taxi", "taxi"),
                          ("sw_landing", "landing")):
-            sw[k] = (lambda L: (lambda on: s.lights.__setitem__(L, on)))(light)
+            sw[k] = (lambda L: (lambda: bool(s.lights.get(L)), lambda on: s.lights.__setitem__(L, on)))(light)
         for i, k in enumerate(("sw_motor1", "sw_motor2")):
             if i < len(engs):
-                sw[k] = (lambda en: (lambda on: setattr(en, "magnetos", 3 if on else 0)))(engs[i])
-        for k, fn in sw.items():
+                sw[k] = (lambda en: (lambda: en.magnetos > 0,
+                                     lambda on: setattr(en, "magnetos", 3 if on else 0)))(engs[i])
+        # selectores de varias posiciones (un botón por posición): grupo -> (posiciones, leer, poner)
+        def set_mags(v):
+            engs[0].magnetos = v
+        def set_fuel(v):
+            s.fuel_selector = v
+        sel = {"mag": ((("mag_off", 0), ("mag_der", 1), ("mag_izq", 2), ("mag_ambos", 3)),
+                       lambda: engs[0].magnetos, set_mags),
+               "comb": ((("comb_cerrado", 0), ("comb_izq", 1), ("comb_der", 2), ("comb_ambos", 3)),
+                        lambda: s.fuel_selector, set_fuel)}
+        if self.sync_pending:
+            self._sync_switches(world, app, sw, sel)
+        for k, (_, put) in sw.items():
             st, pr, rl = self.button(k)
             if pr or rl:
-                fn(bool(st))
-        for k, val in (("mag_off", 0), ("mag_der", 1), ("mag_izq", 2), ("mag_ambos", 3)):
-            st, pr, _ = self.button(k)
-            if pr:
-                engs[0].magnetos = val
-        for k, val in (("comb_cerrado", 0), ("comb_izq", 1), ("comb_der", 2), ("comb_ambos", 3)):
-            st, pr, _ = self.button(k)
-            if pr:
-                s.fuel_selector = val
+                put(bool(st))
+                self.mismatch.discard(k)
+        for g, (positions, _, put) in sel.items():
+            for k, val in positions:
+                st, pr, _ = self.button(k)
+                if pr:
+                    put(val)
+                    self.mismatch.discard(g)
         starter = False
         for k in ("mag_arranque", "btn_arranque"):
             st, _, _ = self.button(k)
@@ -280,7 +512,11 @@ class Hardware:
         st, _, _ = self.button("btn_frenos")
         fl = lever01("eje_freno_izq")
         fr = lever01("eje_freno_der")
-        self.brake_cmd = max(fl or 0.0, fr or 0.0, 1.0 if st else 0.0)
+        if (fl is None) != (fr is None):             # un solo eje de freno asignado: frena las dos ruedas
+            fl = fr = fl if fr is None else fr
+        self.brake_l = fl if fl and fl > 0.02 else 0.0
+        self.brake_r = fr if fr and fr > 0.02 else 0.0
+        self.brake_cmd = 1.0 if st else 0.0          # botón de frenos: los dos lados
         for k, d in (("btn_trim_arriba", 1), ("btn_trim_abajo", -1)):
             st, _, _ = self.button(k)
             if st:
@@ -334,6 +570,35 @@ class Hardware:
                 world.xpdr = code
                 app.flash(f"Transpondedor {code}", 1.5)
 
+    def request_sync(self):
+        """Al empezar un vuelo: la próxima lectura compara los interruptores reales con el avión."""
+        self.sync_pending = True
+
+    def _sync_switches(self, world, app, sw, sel):
+        """Con el avión frío en tierra (motor parado) copia la posición de los interruptores reales. Si la lección
+        empieza con el avión ya preparado (motor en marcha o en vuelo) no cambia nada: avisa de los que no coinciden,
+        y cada uno toma el mando en cuanto se mueve."""
+        self.sync_pending = False
+        cold = world.ac.on_ground and not any(en.running for en in world.ac.sys.engines)
+        diff = []                         # (clave, posición real, poner)
+        for k, (get, put) in sw.items():
+            st, _, _ = self.button(k)
+            if st is not None and bool(st) != get():
+                diff.append((k, bool(st), put))
+        for g, (positions, get, put) in sel.items():
+            real = [val for k, val in positions if self.button(k)[0]]
+            if real and real[0] != get():
+                diff.append((g, real[0], put))
+        self.mismatch = set()
+        for k, real, put in diff:
+            if cold and k != "sw_tren":   # el tren nunca se sube en tierra por sincronizar
+                put(real)
+            else:
+                self.mismatch.add(k)
+        if self.mismatch:
+            names = ", ".join(SELECTORS.get(k) or NAMES[k] for k in sorted(self.mismatch))
+            app.flash(f"Cabina física distinta del avión: {names}. Póngalos como en el simulador.", 8)
+
     def flight_axes(self):
         """(alabeo, cabeceo, timón) de la cabina física, o None si no están asignados."""
-        return self.axis("eje_alabeo"), self.axis("eje_cabeceo"), self.axis("eje_timon")
+        return self.shaped("eje_alabeo"), self.shaped("eje_cabeceo"), self.shaped("eje_timon")
