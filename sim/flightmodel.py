@@ -447,8 +447,9 @@ class Aircraft:
         if np.any(f_spec):
             self.nz = -f_spec[2] / G
             self.ny = f_spec[1] / G
+            self.nx = f_spec[0] / G
         else:
-            self.nz, self.ny = 1.0, 0.0
+            self.nz, self.ny, self.nx = 1.0, 0.0, 0.0
         p, q, r = self.omega
         cphi, sphi = math.cos(roll), math.sin(roll)
         cth = max(math.cos(pitch), 0.05)

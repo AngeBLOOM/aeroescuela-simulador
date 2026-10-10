@@ -972,6 +972,16 @@ class ScreensMixin:
             for i, ln in enumerate(f.wrap(txt, 12, box.right - (x0 + 590) - 12)[:2]):
                 f.blit(s, ln, (x0 + 590, y - 42 + i * 15), 12, col, bold=True)
         toggle("Timón automático (ayuda)", "timon_auto", lambda: setattr(self.controls, "assist_rudder", st["timon_auto"]))
+        if self.ui.button(s, (x0 + 380, y - 44, 200, 32), "Salida UDP: " + ("Sí" if st.get("udp_salida") else "No"),
+                          active=bool(st.get("udp_salida")), size=13,
+                          tip="Envía los datos de vuelo por la red (instrumentos externos, paneles, movimiento). "
+                              "Formato en docs/PROTOCOLO_UDP.md"):
+            st["udp_salida"] = not st.get("udp_salida")
+            self.apply_udp()
+            self.save_settings()
+        if self.udp is not None:
+            f.blit(s, self.udp.status_text(), (x0 + 590, y - 36), 12,
+                   COL["green"] if self.udp.error is None else COL["amber"], bold=True)
         toggle("Mostrar FPS", "mostrar_fps")
         fondo = st.get("fondo_instr", "futurista")
         if self.ui.button(s, (x0 + 380, y - 44, 300, 32),

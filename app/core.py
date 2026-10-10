@@ -47,6 +47,9 @@ DEFAULT_SETTINGS = dict(
     fondo_instr="futurista",  # fondo de la pantalla de instrumentos: "futurista" o "negro" (tablero físico recortado)       # False: paisaje de foto satelital pura · True: con edificios 3D de OpenStreetMap
     atc_externo=False,        # enlace con un simulador de tránsito aéreo externo (app/atc_link.py, puerto 8770)
     atc_externo_puerto=8770,
+    udp_salida=False,         # datos de vuelo por UDP para instrumentos, paneles o movimiento (app/udp_out.py)
+    udp_destino="127.0.0.1",  # otra computadora: su IP; toda la red local: termina en .255
+    udp_puerto=49020, udp_hz=30,
     monitores_paisaje=1,      # nº de monitores (de izquierda a derecha) que ocupa la vista exterior
     vistas=1,                 # 1 o 3 vistas (izquierda · frente · derecha) en la vista exterior
     pantalla_instr="no",      # "no" · "ambiente" (paisaje + instrumentos) · "unica" (solo instrumentos) · "segunda" (2.º monitor)
@@ -168,6 +171,8 @@ class App(ScreensMixin):
         self.atc_bridge = None
         self._ptt_prev = False
         self.apply_atc_link()
+        self.udp = None
+        self.apply_udp()
         # barra de botones para el ratón (se esconde sola: en la cabina física no hay ratón)
         self._mouse_t = time.time()
         self._bar_rect = None
@@ -427,6 +432,21 @@ class App(ScreensMixin):
         elif not on and self.remote is not None:
             self.remote.stop()
             self.remote = None
+
+    # ------------------------------------------------------------ salida de datos UDP
+    def apply_udp(self):
+        from .udp_out import UdpOut
+        st = self.settings
+        if self.udp is not None:
+            self.udp.stop()
+            self.udp = None
+        if st.get("udp_salida"):
+            try:
+                self.udp = UdpOut(str(st.get("udp_destino") or "127.0.0.1"), int(st.get("udp_puerto") or 49020),
+                                  int(st.get("udp_hz") or 30))
+            except (OSError, ValueError) as ex:
+                self.flash(f"No se pudo abrir la salida UDP: {ex}", 5)
+                st["udp_salida"] = False
 
     # ------------------------------------------------------------ simulador de ATC externo
     def apply_atc_link(self):
@@ -1214,6 +1234,8 @@ class App(ScreensMixin):
             self.ui.begin(events)
             self.update_remote(dt)
             self.update_atc_link(dt)
+            if self.udp is not None:
+                self.udp.update(dt, self)
             self.frame(dt, events)
             pygame.display.flip()
             self.draw_instrument_window()
@@ -1224,6 +1246,8 @@ class App(ScreensMixin):
             if self.autotest and self.autotest(self, frames):
                 break
         self.save_settings()
+        if self.udp is not None:
+            self.udp.stop()
         if self.atc_bridge is not None:
             self.atc_bridge.stop()
         self.voice.stop()
