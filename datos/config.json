@@ -1,0 +1,21 @@
+{
+ "ancho": 0,
+ "alto": 0,
+ "pantalla_completa": false,
+ "volumen": 0.75,
+ "voz": true,
+ "timon_auto": false,
+ "cabina": "analog",
+ "avion": "c172",
+ "mostrar_fps": false,
+ "joystick": {},
+ "ubicacion": "SVBS",
+ "cabina_estilo": "foto",
+ "calidad": "auto",
+ "fluidez": "auto",
+ "indicativo": "YV2026",
+ "atc": true,
+ "trafico": true,
+ "pantalla_instr": "ambiente",
+ "foto_migrado": true
+}

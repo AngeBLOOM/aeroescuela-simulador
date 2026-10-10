@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+.venv/
+
+# Compilación e instalador (se regeneran con tools/construir.py)
+dist/
+build/
+construir_log.txt
+
+# Datos locales: caché geográfica pesada, progreso y capturas personales
+datos/geo/
+datos/capturas/
+datos/alumnos/
+datos/progreso.json
+
+# Vídeos de demostración (pesados; se entregan aparte)
+demostracion/
+
+# Firma / credenciales
+*.pfx
+*.key

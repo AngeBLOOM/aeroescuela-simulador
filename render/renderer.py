@@ -1,0 +1,1056 @@
+"""Renderizador OpenGL (moderngl) del simulador."""
+import math
+
+import moderngl
+import numpy as np
+
+from sim.mathx import (axis_rotation, clamp, gl_bytes, look_dir, lerp, model_matrix, perspective,
+                       quat_to_mat, smoothstep, translate)
+
+from . import geometry as geo
+from . import shaders as sh
+from . import textures as tx
+from .cockpit3d import Cockpit3D
+from .scenery import Scenery
+
+FAR = 140000.0
+
+
+def mix3(a, b, t):
+    return tuple(a[i] + (b[i] - a[i]) * t for i in range(3))
+
+
+class GPUMesh:
+    def __init__(self, ctx, prog, data, fmt="3f 3f 3f", attrs=("in_pos", "in_norm", "in_col"), index=None):
+        self.ctx = ctx
+        self.prog = prog
+        data = np.ascontiguousarray(data, dtype=np.float32)
+        if data.size == 0:
+            data = np.zeros((3, len(fmt.split()) and sum(int(f[:-1]) for f in fmt.split())), np.float32)
+        self.vbo = ctx.buffer(data.tobytes())
+        self.ibo = ctx.buffer(np.ascontiguousarray(index, dtype=np.uint32).tobytes()) if index is not None else None
+        # los atributos que el shader no usa se sustituyen por relleno
+        fmts = fmt.split()
+        keep_f, keep_a = [], []
+        for f, a in zip(fmts, attrs):
+            if a in prog:
+                keep_f.append(f)
+                keep_a.append(a)
+            else:
+                keep_f.append(f"{int(f[:-1]) * 4}x")
+        content = [(self.vbo, " ".join(keep_f), *keep_a)]
+        self.vao = ctx.vertex_array(prog, content, self.ibo) if self.ibo else ctx.vertex_array(prog, content)
+
+    def render(self, mode=moderngl.TRIANGLES):
+        self.vao.render(mode)
+
+    def release(self):
+        self.vao.release()
+        self.vbo.release()
+        if self.ibo:
+            self.ibo.release()
+
+
+class Renderer:
+    def __init__(self, ctx, world, size, progress=None):
+        self.ctx = ctx
+        self.world = world
+        self.size = size
+        self.time = 0.0
+        self._progress = progress or (lambda msg: None)
+        ctx.enable(moderngl.DEPTH_TEST)
+        ctx.enable(moderngl.PROGRAM_POINT_SIZE)
+
+        self._progress("Compilando shaders…")
+        self.p_terrain = ctx.program(vertex_shader=sh.TERRAIN_VS, fragment_shader=sh.TERRAIN_FS)
+        self.p_water = ctx.program(vertex_shader=sh.WATER_VS, fragment_shader=sh.WATER_FS)
+        self.p_obj = ctx.program(vertex_shader=sh.OBJECT_VS, fragment_shader=sh.OBJECT_FS)
+        self.p_tex = ctx.program(vertex_shader=sh.TEX_VS, fragment_shader=sh.TEX_FS)
+        self.p_sky = ctx.program(vertex_shader=sh.SKY_VS, fragment_shader=sh.SKY_FS)
+        self.p_light = ctx.program(vertex_shader=sh.LIGHT_VS, fragment_shader=sh.LIGHT_FS)
+        self.p_cloud = ctx.program(vertex_shader=sh.CLOUD_VS, fragment_shader=sh.CLOUD_FS)
+        self.p_overlay = ctx.program(vertex_shader=sh.OVERLAY_VS, fragment_shader=sh.OVERLAY_FS)
+
+        # texturas
+        det = tx.detail_noise()
+        self.t_detail = ctx.texture((det.shape[1], det.shape[0]), 4, det.tobytes())
+        self.t_detail.build_mipmaps()
+        self.t_detail.repeat_x = self.t_detail.repeat_y = True
+        self.t_detail.anisotropy = 8.0
+        self.t_cloud, self.n_cloud_var = self._cloud_atlas()
+        self.t_asph, self.asph_gain = self._photo_texture("asfalto.png")
+        self.t_grass, self.grass_gain = self._photo_texture("cesped.png")
+        self.t_skin, _ = self._photo_texture("pintura_avion.png")
+        deck = tx.cloud_deck()
+        self.t_deck = ctx.texture((deck.shape[1], deck.shape[0]), 4, deck.tobytes())
+        self.t_deck.build_mipmaps()
+        self.t_deck.repeat_x = self.t_deck.repeat_y = True
+        D = 70000.0
+        uvk = 1.0 / 2600.0
+        deck_v = np.array([[x, y, 0.0, x * uvk, y * uvk] for x, y in
+                           ((-D, -D), (D, -D), (D, D), (-D, -D), (D, D), (-D, D))], np.float32)
+        self.m_deck = GPUMesh(ctx, self.p_tex, deck_v, fmt="3f 2f", attrs=("in_pos", "in_uv"))
+
+        quad = np.array([-1, -1, 3, -1, -1, 3], dtype="f4")
+        self.vbo_tri = ctx.buffer(quad.tobytes())
+        self.vao_sky = ctx.vertex_array(self.p_sky, [(self.vbo_tri, "2f", "in_pos")])
+        quad2 = np.array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1], dtype="f4")
+        self.vbo_quad = ctx.buffer(quad2.tobytes())
+        self.vao_overlay = ctx.vertex_array(self.p_overlay, [(self.vbo_quad, "2f", "in_pos")])
+        self.t_overlay = None
+
+        self._progress("Construyendo terreno y escenario…")
+        self.scn = Scenery(world)
+        self.m_terrain = GPUMesh(ctx, self.p_terrain, self.scn.terrain_vertices, index=self.scn.terrain_indices)
+        self.sat = []
+        loc = getattr(world, "location", None)
+        if loc is not None:
+            self._progress("Cargando fotografía satelital…")
+            for img, rect in loc["sat"]:
+                img = np.ascontiguousarray(img, dtype=np.uint8)
+                t = ctx.texture((img.shape[1], img.shape[0]), 3, img.tobytes())
+                t.build_mipmaps()
+                t.anisotropy = 16.0
+                t.repeat_x = t.repeat_y = False
+                self.sat.append((t, tuple(float(v) for v in rect)))
+            self.t_lake = None
+            if loc.get("water") is not None:
+                m, rect = loc["water"]
+                m = np.ascontiguousarray(m, dtype=np.uint8)
+                t = ctx.texture((m.shape[1], m.shape[0]), 1, m.tobytes())
+                t.build_mipmaps()
+                t.repeat_x = t.repeat_y = False
+                self.t_lake = (t, tuple(float(v) for v in rect))
+        E = 140000.0
+        water = np.array([
+            [-E, -E, 0, 0, 0, -1, 0, 0, 0], [E, -E, 0, 0, 0, -1, 0, 0, 0], [E, E, 0, 0, 0, -1, 0, 0, 0],
+            [-E, -E, 0, 0, 0, -1, 0, 0, 0], [E, E, 0, 0, 0, -1, 0, 0, 0], [-E, E, 0, 0, 0, -1, 0, 0, 0]], np.float32)
+        self.m_water = GPUMesh(ctx, self.p_water, water)
+        self.m_objects = GPUMesh(ctx, self.p_obj, self.scn.objects)
+        self.runway_meshes = []
+        for surf, verts in self.scn.runways:
+            data = tx.surface_rgba(surf, True)
+            tex = ctx.texture(surf.get_size(), 4, data)
+            tex.build_mipmaps()
+            tex.anisotropy = 16.0
+            tex.repeat_x = False
+            tex.repeat_y = True
+            m = GPUMesh(ctx, self.p_tex, verts, fmt="3f 2f", attrs=("in_pos", "in_uv"))
+            self.runway_meshes.append((tex, m))
+        # luces
+        self.light_data = self.scn.lights_static.copy()
+        self.vbo_lights = ctx.buffer(self.light_data.tobytes())
+        self.vao_lights = ctx.vertex_array(self.p_light, [(self.vbo_lights, "3f 3f 1f", "in_pos", "in_col", "in_size")])
+        tl = self.scn.town_lights
+        self.n_town = len(tl)
+        self.vbo_town = ctx.buffer(tl.tobytes() if len(tl) else np.zeros((1, 7), np.float32).tobytes())
+        self.vao_town = ctx.vertex_array(self.p_light, [(self.vbo_town, "3f 3f 1f", "in_pos", "in_col", "in_size")])
+        self.vbo_dyn = ctx.buffer(reserve=7 * 4 * 256, dynamic=True)
+        self.vao_dyn = ctx.vertex_array(self.p_light, [(self.vbo_dyn, "3f 3f 1f", "in_pos", "in_col", "in_size")])
+
+        # avión
+        self._progress("Preparando aeronave…")
+        self.build_aircraft()
+        # manga de viento y aros de misión
+        ws = geo.MeshBuilder()
+        ws.cylinder((0, 0, 0), (0, 0, -7.0), 0.08, (0.7, 0.7, 0.7), segs=6)
+        sock = geo.MeshBuilder()
+        for i in range(5):
+            col = (1.0, 0.45, 0.05) if i % 2 == 0 else (0.95, 0.95, 0.95)
+            r0 = 0.45 - i * 0.06
+            r1 = 0.45 - (i + 1) * 0.06
+            sock.cone((i * 0.7, 0, 0), ((i + 1) * 0.7, 0, 0), r0, col, segs=8, cap=False) if False else \
+                sock.cylinder((i * 0.7, 0, 0), ((i + 1) * 0.7, 0, 0), (r0 + r1) / 2, col, segs=8, caps=False)
+        self.m_pole = GPUMesh(ctx, self.p_obj, ws.array())
+        self.m_sock = GPUMesh(ctx, self.p_obj, sock.array())
+        self.m_ring = GPUMesh(ctx, self.p_obj, geo.ring_template())
+        arrow = geo.MeshBuilder()
+        arrow.cone((0, 0, 0), (6, 0, 0), 1.6, (1, 1, 1), segs=8)
+        self.m_arrow = GPUMesh(ctx, self.p_obj, arrow.array())
+
+        # nubes
+        self.vbo_cloud_inst = None
+        self.vao_cloud = None
+        self.n_clouds = 0
+        self.cloud_key = None
+        corners = np.array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1], dtype="f4")
+        self.vbo_corners = ctx.buffer(corners.tobytes())
+        self.env = {}
+        self.rscale = 1.0
+        self.samples = 4
+        self.fbo_ms = self.fbo_res = self.tex_res = None
+        self.p_comp = ctx.program(
+            vertex_shader="#version 330\nin vec2 in_pos; void main(){ gl_Position = vec4(in_pos, 0.0, 1.0); }",
+            fragment_shader="#version 330\nuniform sampler2D u_tex; uniform vec2 u_screen; out vec4 c;"
+                            "uniform vec4 u_vp; void main(){ c = vec4(texture(u_tex, (gl_FragCoord.xy - u_vp.xy) / u_vp.zw).rgb, 1.0); }")
+        self.vao_comp = ctx.vertex_array(self.p_comp, [(self.vbo_tri, "2f", "in_pos")])
+        self.cockpit = Cockpit3D(ctx, self._photo_texture)
+        self.last_view = self.last_proj = None
+        self.ensure_overlay(size)
+
+    # ------------------------------------------------------------ texturas fotográficas
+    def _load_rgba(self, name):
+        import pygame
+        from ui import assets
+        img = assets.image(name)
+        if img is None:
+            return None
+        rgb = pygame.surfarray.array3d(img).transpose(1, 0, 2)
+        try:
+            a = pygame.surfarray.array_alpha(img).T
+        except Exception:
+            a = np.full(rgb.shape[:2], 255, np.uint8)
+        return np.dstack([rgb, a]).astype(np.uint8)
+
+    def _photo_texture(self, name):
+        arr = self._load_rgba(name)
+        if arr is None:
+            return None, 1.0
+        arr = arr[::-1].copy()
+        t = self.ctx.texture((arr.shape[1], arr.shape[0]), 4, arr.tobytes())
+        t.build_mipmaps()
+        t.repeat_x = t.repeat_y = True
+        t.anisotropy = 16.0
+        mean = float(arr[..., :3].mean()) / 255.0
+        return t, 1.0 / max(mean, 0.05)
+
+    def _cloud_atlas(self):
+        imgs = [self._load_rgba(f"nube_{i}.png") for i in (1, 2, 3)]
+        imgs = [i for i in imgs if i is not None]
+        if not imgs:
+            puff = tx.cloud_puff()[::-1].copy()
+            t = self.ctx.texture((puff.shape[1], puff.shape[0]), 4, puff.tobytes())
+            t.build_mipmaps()
+            return t, 1
+        h = min(i.shape[0] for i in imgs)
+        atlas = np.concatenate([i[:h, :h] for i in imgs], axis=1)[::-1].copy()
+        # color premultiplicado para mezclar sin halos oscuros
+        t = self.ctx.texture((atlas.shape[1], atlas.shape[0]), 4, atlas.tobytes())
+        t.build_mipmaps()
+        return t, len(imgs)
+
+    # ------------------------------------------------------------ avión
+    def build_aircraft(self):
+        if hasattr(self, "ac_meshes"):
+            for m, _p, _a in self.ac_meshes.values():
+                m.release()
+        t = self.world.ac.t
+        parts, lights = geo.aircraft_parts(t)
+        self.ac_meshes = {k: (GPUMesh(self.ctx, self.p_obj, a), np.array(p), np.array(ax)) for k, (a, p, ax) in parts.items()}
+        self.ac_lights = lights
+        self.ac_type_id = t.id
+
+    # ------------------------------------------------------------ tráfico IA
+    ACCENTS = [(0.70, 0.08, 0.08), (0.08, 0.20, 0.55), (0.10, 0.40, 0.22), (0.85, 0.45, 0.05)]
+
+    def traffic_mesh(self, type_id, accent):
+        """Mallas (sin cabina ni hélice) de un avión del tráfico, con su pintura."""
+        if not hasattr(self, "tr_meshes"):
+            self.tr_meshes = {}
+        key = (type_id, accent)
+        if key not in self.tr_meshes and type_id in geo.JETS:
+            # avión de línea: accent son los colores de la aerolínea (deriva, franja)
+            parts, lights = geo.jet_parts(type_id, accent[0], accent[1])
+            self.tr_meshes[key] = ({k: GPUMesh(self.ctx, self.p_obj, a) for k, (a, p, ax) in parts.items()}, lights)
+        if key not in self.tr_meshes:
+            from sim.aircraft_data import AIRCRAFT
+            t = AIRCRAFT[type_id]()
+            t.paint = ((0.93, 0.93, 0.92), self.ACCENTS[accent % len(self.ACCENTS)])
+            parts, lights = geo.aircraft_parts(t)
+            keep = {k: v for k, v in parts.items() if k not in ("cowl", "prop", "prop2")}
+            self.tr_meshes[key] = ({k: GPUMesh(self.ctx, self.p_obj, a) for k, (a, p, ax) in keep.items()}, lights)
+        return self.tr_meshes[key]
+
+    def _draw_traffic(self, cam_eye):
+        po = self.p_obj
+        planes = getattr(self.world, "traffic", None)
+        if planes is None or not planes.planes:
+            return
+        po["u_spec"].value = 0.5
+        if self.t_skin is not None:
+            self.t_skin.use(8)
+            po["u_skin_tex"] = 8
+            po["u_skin"].value = 1
+        for p in planes.planes:
+            d = p.pos - cam_eye
+            if float(d @ d) > 16000.0 ** 2:
+                continue
+            meshes, _ = self.traffic_mesh(p.type_id, getattr(p, 'livery', None) or hash(p.callsign) % 4)
+            M = model_matrix(quat_to_mat(p.quat), p.pos)
+            po["u_model"].write(gl_bytes(M))
+            if float(d @ d) > 2500.0 ** 2:
+                meshes["body"].render()
+                continue
+            hide_gear = p.type_id == "pa28r" and not p.on_ground and p.leg not in ("final", "toma", "base")
+            for name, m in meshes.items():
+                if name == "gear" and hide_gear:
+                    continue
+                if name.startswith("disc"):
+                    self.ctx.enable(moderngl.BLEND)
+                    self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+                    po["u_tint"].value = (1.0, 1.0, 1.0, 0.25)
+                    po["u_model"].write(gl_bytes(M))
+                    m.render()
+                    po["u_tint"].value = (1.0, 1.0, 1.0, 1.0)
+                    self.ctx.disable(moderngl.BLEND)
+                    continue
+                m.render()
+        po["u_spec"].value = 0.15
+        if "u_skin" in po:
+            po["u_skin"].value = 0
+
+    # ------------------------------------------------------------ calidad gráfica
+    def set_quality(self, scale, samples):
+        self.rscale = float(scale)
+        self.samples = int(samples)
+        for o in (self.fbo_ms, self.fbo_res, self.tex_res):
+            if o is not None:
+                o.release()
+        self.fbo_ms = self.fbo_res = self.tex_res = None
+
+    def _ensure_fbo(self, W=None, H=None):
+        """Búfer de dibujo del tamaño de la vista 3D (no de toda la ventana): con la franja de instrumentos
+        abajo se dibuja y se resuelve el antialiasing solo donde se ve el paisaje."""
+        if W is None:
+            W, H = self.size
+        sw, sh = max(16, int(W * self.rscale)), max(16, int(H * self.rscale))
+        if self.tex_res is not None and self.tex_res.size == (sw, sh):
+            return
+        for o in (self.fbo_ms, self.fbo_res, self.tex_res):
+            if o is not None:
+                o.release()
+        ctx = self.ctx
+        self.tex_res = ctx.texture((sw, sh), 4)
+        self.tex_res.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        self.fbo_res = ctx.framebuffer([self.tex_res])
+        try:
+            if self.samples > 1:
+                rb = ctx.renderbuffer((sw, sh), 4, samples=self.samples)
+                db = ctx.depth_renderbuffer((sw, sh), samples=self.samples)
+                self.fbo_ms = ctx.framebuffer([rb], db)
+            else:
+                raise RuntimeError
+        except Exception:
+            self.samples = 0
+            self.fbo_ms = ctx.framebuffer([self.tex_res], ctx.depth_renderbuffer((sw, sh)))
+
+    # ------------------------------------------------------------ superposición
+    def ensure_overlay(self, size):
+        if self.t_overlay is not None and self.t_overlay.size == tuple(size):
+            return
+        if self.t_overlay is not None:
+            self.t_overlay.release()
+        self.t_overlay = self.ctx.texture(tuple(size), 4, bytes(size[0] * size[1] * 4))
+        self.t_overlay.filter = (moderngl.NEAREST, moderngl.NEAREST)
+        self._ov_prev = None
+        self.overlay_swizzle = None
+        self.size = tuple(size)
+
+    # ------------------------------------------------------------ foto de cabina (en la GPU)
+    PHOTO_VS = """
+#version 330
+in vec2 in_pos;
+uniform vec4 u_rect;
+out vec2 v_uv;
+void main() {
+    v_uv = in_pos;
+    gl_Position = vec4(mix(u_rect.x, u_rect.z, in_pos.x), mix(u_rect.y, u_rect.w, in_pos.y), 0.0, 1.0);
+}
+"""
+    PHOTO_FS = """
+#version 330
+uniform sampler2D u_tex;
+in vec2 v_uv;
+out vec4 f_color;
+void main() { f_color = texture(u_tex, v_uv); }
+"""
+
+    def set_photo(self, surf, rect):
+        """Foto de cabina a dibujar este fotograma, debajo de la superposición (None la quita).
+        La imagen se sube una sola vez; el escalado y el zoom los hace la tarjeta gráfica."""
+        if surf is None:
+            self.photo_draw = None
+            return
+        import pygame
+        if getattr(self, "_photo_src", None) is not surf:
+            if getattr(self, "t_photo", None) is not None:
+                self.t_photo.release()
+            # alfa premultiplicado: los píxeles recortados (verde croma) no tiñen los bordes al escalar
+            arr = np.frombuffer(pygame.image.tobytes(surf, "RGBA"), np.uint8).reshape(-1, 4).astype(np.uint16)
+            arr[:, :3] = arr[:, :3] * arr[:, 3:4] // 255
+            self.t_photo = self.ctx.texture(surf.get_size(), 4, arr.astype(np.uint8).tobytes())
+            self.t_photo.build_mipmaps()
+            self.t_photo.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
+            self.t_photo.anisotropy = 4.0
+            self._photo_src = surf
+            if not hasattr(self, "p_photo"):
+                self.p_photo = self.ctx.program(vertex_shader=self.PHOTO_VS, fragment_shader=self.PHOTO_FS)
+                vb = self.ctx.buffer(np.array([0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1], "f4").tobytes())
+                self.vao_photo = self.ctx.vertex_array(self.p_photo, [(vb, "2f", "in_pos")])
+        self.photo_draw = rect
+
+    def _draw_photo(self):
+        rect = getattr(self, "photo_draw", None)
+        if rect is None:
+            return
+        W, H = self.size
+        x, y, w, h = rect
+        ctx = self.ctx
+        ctx.screen.use()
+        ctx.viewport = (0, 0, W, H)
+        ctx.disable(moderngl.DEPTH_TEST)
+        ctx.enable(moderngl.BLEND)
+        ctx.blend_func = moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA
+        self.t_photo.use(0)
+        self.p_photo["u_tex"] = 0
+        self.p_photo["u_rect"].value = (x / W * 2 - 1, 1 - y / H * 2, (x + w) / W * 2 - 1, 1 - (y + h) / H * 2)
+        self.vao_photo.render()
+        ctx.disable(moderngl.BLEND)
+        ctx.enable(moderngl.DEPTH_TEST)
+        self.photo_draw = None
+
+    def draw_overlay(self, surf):
+        self.ensure_overlay(surf.get_size())
+        self._draw_photo()
+        if self.overlay_swizzle is None:
+            masks = surf.get_masks()
+            if masks[:3] == (0xFF0000, 0xFF00, 0xFF):
+                self.overlay_swizzle = "BGRA"
+            elif masks[:3] == (0xFF, 0xFF00, 0xFF0000):
+                self.overlay_swizzle = "RGBA"
+            else:
+                self.overlay_swizzle = "copy"
+            if self.overlay_swizzle in ("BGRA", "RGBA"):
+                self.t_overlay.swizzle = self.overlay_swizzle
+        import pygame
+        # zona con contenido: búsqueda rápida sobre el canal alfa submuestreado
+        a = pygame.surfarray.pixels_alpha(surf)
+        sub = a[::4, ::4]
+        cols = np.flatnonzero(sub.any(axis=1))
+        rows = np.flatnonzero(sub.any(axis=0))
+        del a, sub
+        if len(cols) and len(rows):
+            W_, H_ = surf.get_size()
+            x0 = max(0, cols[0] * 4 - 4)
+            x1 = min(W_, cols[-1] * 4 + 8)
+            y0 = max(0, rows[0] * 4 - 4)
+            y1 = min(H_, rows[-1] * 4 + 8)
+            bb = pygame.Rect(x0, y0, x1 - x0, y1 - y0)
+        else:
+            bb = pygame.Rect(0, 0, 0, 0)
+        prev = getattr(self, "_ov_prev", None)
+        region = bb.union(prev) if (prev is not None and prev.w and prev.h) else bb
+        self._ov_prev = bb
+        if region.w == 0 or region.h == 0:
+            return
+        W_, H_ = surf.get_size()
+        pitch = surf.get_pitch()
+        if self.overlay_swizzle != "copy" and pitch == W_ * 4:
+            # franja de filas completas: es un trozo contiguo de memoria, se sube sin copiar
+            y0, y1 = region.y, min(H_, region.bottom)
+            view = surf.get_view("1")
+            data = np.frombuffer(view, np.uint8)[y0 * pitch:y1 * pitch]
+            self.t_overlay.write(data, viewport=(0, y0, W_, y1 - y0))
+            del data, view
+        else:
+            fmt = "RGBA" if self.overlay_swizzle in ("copy", "RGBA") else "BGRA"
+            data = pygame.image.tobytes(surf.subsurface(region), fmt)
+            self.t_overlay.write(data, viewport=(region.x, region.y, region.w, region.h))
+        ctx = self.ctx
+        ctx.screen.use()
+        ctx.viewport = (0, 0, *self.size)
+        ctx.disable(moderngl.DEPTH_TEST)
+        ctx.enable(moderngl.BLEND)
+        ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+        self.t_overlay.use(0)
+        self.p_overlay["u_tex"] = 0
+        self.vao_overlay.render()
+        ctx.disable(moderngl.BLEND)
+        ctx.enable(moderngl.DEPTH_TEST)
+
+    # ------------------------------------------------------------ entorno
+    def environment(self, cam_alt):
+        w = self.world.weather
+        hour = w.hour % 24
+        # Sol y Luna reales para la fecha, la hora local y el lugar del escenario
+        import datetime as _dt
+        from sim import astro
+        loc = getattr(self.world, "location", None) or {}
+        date = w.date or _dt.date.today()
+        key = (round(hour, 3), date, loc.get("lat0"), loc.get("lon0"))
+        if getattr(self, "_astro_key", None) != key:
+            self._astro_key = key
+            self._astro = astro.sky(loc.get("lat0", 10.25), loc.get("lon0", -67.65), loc.get("country", "VE"), date, hour)
+        se, sa, me, ma, mk = self._astro
+        el, az = math.radians(se), math.radians(sa)
+        sun = np.array([math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), -math.sin(el)])
+        mel, maz = math.radians(me), math.radians(ma)
+        moon = np.array([math.cos(mel) * math.cos(maz), math.cos(mel) * math.sin(maz), -math.sin(mel)])
+        eld = math.degrees(el)
+        day = smoothstep(-6.0, 10.0, eld)
+        dusk = smoothstep(-8.0, 2.0, eld) * (1.0 - smoothstep(2.0, 22.0, eld))
+        night = 1.0 - smoothstep(-10.0, 0.0, eld)
+        top_m = w.cloud_top_ft * 0.3048
+        ov = smoothstep(0.6, 0.98, w.cloud_cover) * (1.0 - smoothstep(top_m - 30.0, top_m + 120.0, cam_alt))
+        zen = mix3((0.015, 0.022, 0.055), (0.20, 0.40, 0.78), day)
+        hor = mix3((0.06, 0.07, 0.11), (0.70, 0.80, 0.92), day)
+        hor = mix3(hor, (0.98, 0.62, 0.38), dusk * 0.85)
+        zen = mix3(zen, (0.30, 0.34, 0.55), dusk * 0.4)
+        grey = mix3((0.04, 0.045, 0.06), (0.62, 0.65, 0.68), day)
+        zen = mix3(zen, grey, ov * 0.85)
+        hor = mix3(hor, grey, ov * 0.85)
+        sun_col = mix3((0.0, 0.0, 0.0), (0.92, 0.89, 0.82), day)
+        sun_col = mix3(sun_col, (1.0, 0.58, 0.32), dusk * 0.7)
+        sun_col = tuple(c * (1.0 - 0.75 * ov) for c in sun_col)
+        # bajo un cielo cubierto o en la niebla la luz es gris: sin el tono anaranjado del amanecer
+        lum = sum(sun_col) / 3.0
+        sun_col = mix3(sun_col, (lum, lum, lum), ov)
+        amb = mix3((0.075, 0.085, 0.13), (0.36, 0.41, 0.48), day)
+        amb = mix3(amb, (0.55, 0.57, 0.6), ov * day * 0.6)
+        # luz de la Luna: con luna llena alta se distingue el paisaje; sin luna la noche es muy oscura
+        moon_light = night * mk * smoothstep(-2.0, 25.0, me) * (1.0 - 0.8 * ov)
+        amb = tuple(c * (0.55 + 0.45 * mk if night > 0.5 else 1.0) + moon_light * k
+                    for c, k in zip(amb, (0.05, 0.06, 0.085)))
+        atmo = self.world.atmo
+        rain = float(getattr(atmo, "rain_here", 0.0))
+        if rain > 0.01:
+            # bajo la lluvia: cielo gris plomizo, sin sol directo y todo más apagado
+            wet_grey = mix3((0.03, 0.035, 0.045), (0.42, 0.45, 0.48), day)
+            zen = mix3(zen, wet_grey, rain * 0.8)
+            hor = mix3(hor, mix3(wet_grey, (0.55, 0.58, 0.6), day * 0.5), rain * 0.8)
+            sun_col = tuple(c * (1.0 - 0.7 * rain) for c in sun_col)
+            amb = tuple(c * (1.0 - 0.25 * rain) for c in amb)
+            ov = max(ov, min(1.0, rain * 1.3))        # sin estrellas ni sol bajo la lluvia
+        flash = float(getattr(atmo, "flash", 0.0))
+        if flash > 0.01:
+            # relámpago: todo se ilumina un instante con luz blanca azulada
+            amb = tuple(c + flash * k for c, k in zip(amb, (0.32, 0.35, 0.45)))
+            zen = tuple(c + flash * k for c, k in zip(zen, (0.2, 0.22, 0.3)))
+            hor = tuple(c + flash * k for c, k in zip(hor, (0.26, 0.28, 0.36)))
+        # niebla: visibilidad y nubes
+        base = w.cloud_base_ft * 0.3048
+        top = w.cloud_top_ft * 0.3048
+        vis = max(atmo.visibility() if hasattr(atmo, "visibility") else w.visibility_m, 200.0)
+        incloud = w.cloud_cover > 0.8 and base < cam_alt < top
+        fog_col = hor
+        if incloud:
+            vis = 70.0
+            fog_col = mix3((0.08, 0.08, 0.1), (0.78, 0.8, 0.82), day)
+        dens = 1.987 / vis + 1.0 / 400000.0
+        ground = mix3(hor, (0.25, 0.3, 0.25), 0.3)
+        self.env = dict(sun=sun, sun_col=sun_col, amb=amb, zen=zen, hor=hor, fog_col=fog_col, fog=dens,
+                        night=night, day=day, overcast=ov, incloud=incloud, ground=ground,
+                        moon=moon, moon_k=mk, moon_on=(1.0 - ov) * smoothstep(-1.0, 1.0, me) * (0.25 + 0.75 * night))
+        return self.env
+
+    def _set_common(self, prog, view, proj, cam_pos):
+        env = self.env
+        prog["u_proj"].write(gl_bytes(proj))
+        prog["u_view"].write(gl_bytes(view))
+        for name, val in (("u_campos", tuple(cam_pos)), ("u_sun", tuple(env["sun"])), ("u_sun_col", env["sun_col"]),
+                          ("u_amb", env["amb"]), ("u_fog_col", env["fog_col"])):
+            if name in prog:
+                prog[name].value = tuple(float(x) for x in val)
+        if "u_fog_density" in prog:
+            prog["u_fog_density"].value = float(env["fog"])
+        if "u_logc" in prog:
+            prog["u_logc"].value = 2.0 / math.log2(FAR + 1.0)
+
+    # ------------------------------------------------------------ nubes
+    def _landing_light(self, env):
+        """Intensidad, posición y dirección del foco de aterrizaje (solo se nota de noche o con poca luz)."""
+        ac = self.world.ac
+        s = ac.sys
+        on = bool(s.lights.get("landing") or s.lights.get("taxi")) and s.electric_ok
+        k = clamp(env["night"] * 1.0 + (1.0 - env["day"]) * 0.3, 0.0, 1.0) if on else 0.0
+        if k <= 0.0:
+            return 0.0, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)
+        R = ac.R
+        p = ac.pos + R @ np.array([1.2, 0.0, 0.4])
+        d = R @ np.array([math.cos(math.radians(5.0)), 0.0, math.sin(math.radians(5.0))])
+        return float(k), tuple(float(v) for v in p), tuple(float(v) for v in d / np.linalg.norm(d))
+
+    def _storm_vaos(self):
+        """Cumulonimbo (columna + yunque) y cortina de lluvia, centrados en el origen; se desplazan con u_offset."""
+        w = self.world.weather
+        key = (round(w.storm_r), round(w.cloud_base_ft), round(self.world.home.elev))
+        if getattr(self, "_storm_built", None) is not None and self._storm_key == key:
+            return self._storm_built
+        self._storm_key = key
+        rng = np.random.default_rng(7)
+        r = max(w.storm_r, 800.0)
+        gnd = max(self.world.home.elev, 0.0)
+        base = max(w.cloud_base_ft * 0.3048, gnd + 500.0)
+        top = gnd + 11000.0
+        tower, shaft = [], []
+        for _ in range(210):
+            h = base + (top - base) * rng.uniform(0.0, 1.0) ** 0.8
+            f = (h - base) / (top - base)
+            rad = r * (0.75 + 0.25 * f) if f < 0.82 else r * (1.0 + 2.4 * (f - 0.82) / 0.18)
+            a = rng.uniform(0, 2 * math.pi)
+            q = rad * math.sqrt(rng.uniform(0.0, 1.0))
+            size = rng.uniform(1100, 1900) * (1.0 + 0.6 * f)
+            tower.append((q * math.cos(a), q * math.sin(a), -h, size, 0.2 + 0.8 * f, float(rng.integers(0, 3))))
+        for _ in range(55):
+            h = gnd + (base - gnd) * rng.uniform(0.0, 1.0)
+            a = rng.uniform(0, 2 * math.pi)
+            q = r * 0.8 * math.sqrt(rng.uniform(0.0, 1.0))
+            shaft.append((q * math.cos(a), q * math.sin(a), -h, rng.uniform(700, 1100), 0.0, float(rng.integers(0, 3))))
+        out = []
+        for inst in (tower, shaft):
+            arr = np.array(inst, np.float32)
+            vbo = self.ctx.buffer(arr.tobytes())
+            vao = self.ctx.vertex_array(self.p_cloud, [(self.vbo_corners, "2f", "in_corner"),
+                                                        (vbo, "4f 1f 1f/i", "in_center", "in_shade", "in_var")])
+            out.append((vao, len(arr)))
+        self._storm_built = out
+        return out
+
+    def _draw_storm(self, cam, env):
+        w = self.world.weather
+        (tower, n_t), (shaft, n_s) = self._storm_vaos()
+        pc = self.p_cloud
+        self.ctx.blend_func = moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA
+        right = np.cross(cam.fwd, cam.up)
+        right /= np.linalg.norm(right)
+        up = np.cross(right, cam.fwd)
+        pc["u_right"].value = tuple(float(v) for v in right)
+        pc["u_up"].value = tuple(float(v) for v in up)
+        self.t_cloud.use(2)
+        pc["u_tex"] = 2
+        pc["u_nvar"].value = float(self.n_cloud_var)
+        pc["u_offset"].value = (float(w.storm_n), float(w.storm_e), 0.0)
+        pc["u_alpha"].value = 0.55
+        pc["u_dark"].value = 0.42
+        shaft.render(instances=n_s, vertices=6)
+        pc["u_alpha"].value = 0.97
+        # el relámpago ilumina la nube por dentro
+        pc["u_dark"].value = 0.62 + 2.5 * float(getattr(self.world.atmo, "flash", 0.0))
+        tower.render(instances=n_t, vertices=6)
+        pc["u_offset"].value = (0.0, 0.0, 0.0)
+        pc["u_dark"].value = 1.0
+
+    def _update_clouds(self):
+        w = self.world.weather
+        key = (round(w.cloud_cover, 2), round(w.cloud_base_ft), round(w.cloud_top_ft))
+        if key == self.cloud_key:
+            return
+        self.cloud_key = key
+        rng = np.random.default_rng(99)
+        cov = w.cloud_cover
+        base = w.cloud_base_ft * 0.3048
+        top = max(w.cloud_top_ft * 0.3048, base + 150)
+        inst = []
+        if cov > 0.02:
+            n_cl = int(cov * 420) if cov < 0.85 else 260
+            cx = rng.uniform(-30000, 30000, n_cl)
+            cy = rng.uniform(-30000, 30000, n_cl)
+            for i in range(n_cl):
+                k = rng.integers(2, 5)
+                ext = rng.uniform(500, 1200) * (0.6 + cov)
+                for j in range(k):
+                    px = cx[i] + rng.normal(0, ext * 0.4)
+                    py = cy[i] + rng.normal(0, ext * 0.4)
+                    hz = base + (top - base) * rng.uniform(0.1, 0.6) ** 1.4
+                    size = rng.uniform(380, 820) * (0.7 + 0.6 * (hz - base) / (top - base + 1))
+                    shade = 0.35 + 0.65 * (hz - base) / (top - base + 1)
+                    inst.append((px, py, -(hz + size * 0.2), size, shade, float(rng.integers(0, 3))))
+            if cov >= 0.85:
+                g = np.arange(-32000, 32001, 1100.0)
+                for x in g:
+                    for y in g:
+                        if x * x + y * y > 33000 ** 2:
+                            continue
+                        for lvl in (0.15, 0.6):
+                            hz = base + (top - base) * lvl
+                            inst.append((x + rng.uniform(-300, 300), y + rng.uniform(-300, 300), -hz,
+                                         rng.uniform(900, 1250), 0.3 + 0.6 * lvl, float(rng.integers(0, 3))))
+        if self.vao_cloud is not None:
+            self.vao_cloud.release()
+            self.vbo_cloud_inst.release()
+            self.vao_cloud = None
+        self.n_clouds = len(inst)
+        if self.n_clouds:
+            arr = np.array(inst, np.float32)
+            self.vbo_cloud_inst = self.ctx.buffer(arr.tobytes())
+            self.vao_cloud = self.ctx.vertex_array(self.p_cloud, [
+                (self.vbo_corners, "2f", "in_corner"),
+                (self.vbo_cloud_inst, "4f 1f 1f/i", "in_center", "in_shade", "in_var")])
+
+    # ------------------------------------------------------------ dibujo principal
+    def render(self, cam, viewport, extra=None, pose=None, show_aircraft=True, dt=0.016, cockpit=None):
+        """Dibuja la escena 3D en 'viewport' (x, y, w, h en píxeles GL)."""
+        ctx = self.ctx
+        world = self.world
+        ac = world.ac
+        self.time += dt
+        extra = extra or {}
+        if self.ac_type_id != ac.t.id:
+            self.build_aircraft()
+            self.cockpit.configure(ac.t)
+        screen_vp = viewport
+        self._ensure_fbo(viewport[2], viewport[3])
+        self.fbo_ms.use()
+        x, y, w, h = 0, 0, self.tex_res.size[0], self.tex_res.size[1]
+        viewport = (x, y, w, h)
+        ctx.viewport = viewport
+        ctx.scissor = viewport
+        env = self.environment(-cam.eye[2])
+        ctx.clear(*env["hor"], 1.0, depth=1.0)
+        aspect = w / max(h, 1)
+        fovy = cam.fov
+        if cam.mode == "cabina":
+            # en cabina el campo de visión se define en horizontal (como en los simuladores comerciales)
+            fovy = math.degrees(2 * math.atan(math.tan(math.radians(cam.fov) / 2) / aspect))
+        self.fovy = fovy
+        proj = perspective(fovy, aspect, cam.near, FAR)
+        view = look_dir(cam.eye, cam.fwd, cam.up)
+        self.last_view, self.last_proj, self.last_viewport = view, proj, screen_vp
+        rot_view = view.copy()
+        rot_view[:3, 3] = 0
+        inv = np.linalg.inv(proj @ rot_view)
+
+        # cielo
+        ctx.disable(moderngl.DEPTH_TEST)
+        ps = self.p_sky
+        ps["u_inv"].write(gl_bytes(inv))
+        ps["u_sun"].value = tuple(float(v) for v in env["sun"])
+        ps["u_sun_col"].value = env["sun_col"]
+        ps["u_zenith"].value = env["zen"]
+        ps["u_horizon"].value = env["hor"] if not env["incloud"] else env["fog_col"]
+        ps["u_ground"].value = env["ground"] if not env["incloud"] else env["fog_col"]
+        ps["u_night"].value = float(env["night"])
+        ps["u_overcast"].value = float(env["overcast"])
+        if "u_moon" in ps:
+            ps["u_moon"].value = tuple(float(v) for v in env["moon"])
+            ps["u_moon_on"].value = float(env["moon_on"]) * (0.0 if env["incloud"] else 1.0)
+        self.vao_sky.render()
+        ctx.enable(moderngl.DEPTH_TEST)
+
+        # terreno y agua
+        for prog in (self.p_terrain, self.p_water, self.p_obj, self.p_tex, self.p_light, self.p_cloud):
+            self._set_common(prog, view, proj, cam.eye)
+        self.t_detail.use(1)
+        self.p_terrain["u_detail"] = 1
+        pt = self.p_terrain
+        if self.t_grass is not None:
+            self.t_grass.use(7)
+            pt["u_grass"] = 7
+            pt["u_grass_on"].value = 1
+            pt["u_grass_gain"].value = float(self.grass_gain)
+        if self.sat:
+            pt["u_sat_on"].value = 1
+            for i, (tex, rect) in enumerate(self.sat[:3]):
+                tex.use(3 + i)
+                pt[f"u_sat{i}"] = 3 + i
+                pt[f"u_rect{i}"].value = rect
+        elif "u_sat_on" in pt:
+            pt["u_sat_on"].value = 0
+        ll = self._landing_light(env)
+        for prog in (pt, self.p_tex):
+            if "u_ll_on" in prog:
+                prog["u_ll_on"].value = ll[0]
+                prog["u_ll_pos"].value = ll[1]
+                prog["u_ll_dir"].value = ll[2]
+        if "u_night" in pt:
+            pt["u_night"].value = float(env["night"])
+        lake = getattr(self, "t_lake", None)
+        if "u_water_on" in pt:
+            pt["u_water_on"].value = 1 if lake is not None else 0
+            if lake is not None:
+                lake[0].use(10)
+                pt["u_water"] = 10
+                pt["u_wrect"].value = lake[1]
+                pt["u_time"].value = self.time
+        self.m_terrain.render()
+        self.p_water["u_detail"] = 1
+        self.p_water["u_time"].value = self.time
+        self.m_water.render()
+
+        # pistas
+        self.p_tex["u_model"].write(gl_bytes(np.identity(4)))
+        self.p_tex["u_detail"] = 1
+        self.p_tex["u_tint"].value = (1.0, 1.0, 1.0, 1.0)
+        if self.t_asph is not None:
+            self.t_asph.use(6)
+            self.p_tex["u_asph"] = 6
+            self.p_tex["u_asph_on"].value = 1
+            self.p_tex["u_asph_gain"].value = float(self.asph_gain)
+        for tex, m in self.runway_meshes:
+            tex.use(0)
+            self.p_tex["u_tex"] = 0
+            m.render()
+
+        # objetos estáticos
+        po = self.p_obj
+        po["u_model"].write(gl_bytes(np.identity(4)))
+        po["u_tint"].value = (1.0, 1.0, 1.0, 1.0)
+        po["u_flat"].value = 0.0
+        po["u_spec"].value = 0.15
+        self.m_objects.render()
+
+        # mangas de viento
+        wdir = math.radians(world.weather.wind_dir + 180.0)
+        wspd = world.weather.wind_kt
+        droop = math.radians(clamp(70.0 - wspd * 4.5, 0.0, 70.0))
+        for p in self.scn.windsocks:
+            po["u_model"].write(gl_bytes(translate(p)))
+            self.m_pole.render()
+            M = translate((p[0], p[1], p[2] - 6.8)) @ axis_rotation((0, 0, 1), wdir) @ axis_rotation((0, 1, 0), -droop)
+            po["u_model"].write(gl_bytes(M))
+            self.m_sock.render()
+
+        # aros/guías de la misión
+        for ring in extra.get("rings", []):
+            pos, hdg, radius, col = ring
+            M = translate(pos) @ axis_rotation((0, 0, 1), math.radians(hdg)) @ np.diag([radius, radius, radius, 1.0])
+            po["u_model"].write(gl_bytes(M))
+            po["u_tint"].value = col
+            po["u_flat"].value = 0.6
+            self.m_ring.render()
+        po["u_flat"].value = 0.0
+        po["u_tint"].value = (1.0, 1.0, 1.0, 1.0)
+
+        # avión
+        if pose is None:
+            pos, R = ac.pos, ac.R
+        else:
+            pos, R = pose[0], quat_to_mat(pose[1])
+        body_M = model_matrix(R, pos)
+        inside = cam.mode == "cabina"
+        self._cab3d = cockpit is not None
+        if show_aircraft:
+            self._draw_aircraft(body_M, inside, pose)
+            # sombra plana sobre el terreno
+            gh = max(world.terrain.height(pos[0], pos[1]), 0.0)
+            hgt = -pos[2] - gh
+            if hgt < 400 and env["day"] > 0.2:
+                ctx.enable(moderngl.BLEND)
+                ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+                S = np.identity(4)
+                S[2, 2] = 0.0
+                S[2, 3] = -(gh + 0.12)
+                alpha = 0.42 * (1 - hgt / 400) * env["day"] * (1 - env["overcast"] * 0.6)
+                po["u_tint"].value = (0.0, 0.0, 0.0, float(alpha))
+                po["u_flat"].value = 1.0
+                for name in ("body", "gear", "elevator", "rudder", "ail_l", "ail_r", "flap_l", "flap_r"):
+                    if name == "gear" and ac.sys.gear_pos < 0.5:
+                        continue
+                    m, piv, ax = self.ac_meshes[name]
+                    po["u_model"].write(gl_bytes(S @ body_M))
+                    m.render()
+                po["u_tint"].value = (1.0, 1.0, 1.0, 1.0)
+                po["u_flat"].value = 0.0
+                ctx.disable(moderngl.BLEND)
+
+        # tráfico
+        self._draw_traffic(cam.eye)
+
+        # luces
+        ctx.enable(moderngl.BLEND)
+        ctx.blend_func = moderngl.ONE, moderngl.ONE
+        ctx.depth_mask = False
+        px = h / (2 * math.tan(math.radians(fovy) / 2))
+        pl = self.p_light
+        pl["u_px"].value = float(px)
+        bright = clamp(env["night"] * 1.2 + (1 - env["day"]) * 0.4 + env["overcast"] * 0.4 + (0.6 if world.atmo.visibility() < 3000 else 0), 0.15, 1.0)
+        pl["u_bright"].value = float(bright)
+        self._update_dynamic_lights(cam, pos, R, show_aircraft)
+        self.vao_lights.render(moderngl.POINTS)
+        if self.n_dyn:
+            self.vao_dyn.render(moderngl.POINTS, vertices=self.n_dyn)
+        if self.n_town and env["night"] > 0.3:
+            pl["u_bright"].value = float(env["night"])
+            self.vao_town.render(moderngl.POINTS)
+
+        # nubes: capa continua si está cubierto
+        self._update_clouds()
+        w = world.weather
+        if w.cloud_cover >= 0.85:
+            ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+            self.t_deck.use(0)
+            pt = self.p_tex
+            pt["u_tex"] = 0
+            day = env["day"]
+            if "u_asph_on" in pt:
+                pt["u_asph_on"].value = 0
+            for alt_ft, shade in ((w.cloud_base_ft, 0.55), (w.cloud_top_ft, 1.15)):
+                pt["u_model"].write(gl_bytes(translate((0.0, 0.0, -alt_ft * 0.3048))))
+                k = shade * (0.25 + 0.75 * day)
+                pt["u_tint"].value = (k, k, k, 0.97)
+                self.m_deck.render()
+            pt["u_model"].write(gl_bytes(np.identity(4)))
+            pt["u_tint"].value = (1.0, 1.0, 1.0, 1.0)
+        if self.vao_cloud is not None:
+            ctx.blend_func = moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA
+            pc = self.p_cloud
+            right = np.cross(cam.fwd, cam.up)
+            right /= np.linalg.norm(right)
+            up = np.cross(right, cam.fwd)
+            pc["u_right"].value = tuple(float(v) for v in right)
+            pc["u_up"].value = tuple(float(v) for v in up)
+            self.t_cloud.use(2)
+            pc["u_tex"] = 2
+            pc["u_alpha"].value = 0.95
+            pc["u_nvar"].value = float(self.n_cloud_var)
+            pc["u_offset"].value = (0.0, 0.0, 0.0)
+            pc["u_dark"].value = 1.0
+            self.vao_cloud.render(instances=self.n_clouds, vertices=6)
+        if w.storm:
+            self._draw_storm(cam, env)
+        ctx.depth_mask = True
+        ctx.disable(moderngl.BLEND)
+        # cabina 3D por dentro
+        if cockpit is not None:
+            self.cockpit.draw(view, proj, cam.eye, env, body_M, 2.0 / math.log2(FAR + 1.0),
+                              yoke=cockpit.get("yoke", (0.0, 0.0)), night=env["night"],
+                              show_yoke=cockpit.get("show_yoke", True))
+        ctx.scissor = None
+        # resolver el antialiasing y componer en la ventana
+        if self.fbo_ms is not self.fbo_res and self.samples > 1:
+            ctx.copy_framebuffer(self.fbo_res, self.fbo_ms)
+        ctx.screen.use()
+        ctx.viewport = screen_vp
+        ctx.scissor = screen_vp
+        ctx.disable(moderngl.DEPTH_TEST)
+        self.tex_res.use(0)
+        self.p_comp["u_tex"] = 0
+        self.p_comp["u_vp"].value = tuple(float(v) for v in screen_vp)
+        self.vao_comp.render()
+        ctx.enable(moderngl.DEPTH_TEST)
+        ctx.scissor = None
+
+    def _draw_aircraft(self, body_M, inside, pose):
+        po = self.p_obj
+        ac = self.world.ac
+        s = ac.sys
+        t = ac.t
+        ang = {
+            "elevator": ac.de - ac.trim * t.trim_range,
+            "rudder": -ac.dr,
+            "ail_l": ac.da,
+            "ail_r": -ac.da,
+            "flap_l": math.radians(s.flaps),
+            "flap_r": math.radians(s.flaps),
+        }
+        rpms = [e.rpm for e in s.engines]
+        if not hasattr(self, "prop_angles"):
+            self.prop_angles = [0.0, 0.0]
+        for i, r_ in enumerate(rpms[:2]):
+            self.prop_angles[i] = (self.prop_angles[i] + r_ / 60.0 * 2 * math.pi * 0.016 * 0.37) % (2 * math.pi)
+        po["u_spec"].value = 0.5
+        if self.t_skin is not None:
+            self.t_skin.use(8)
+            po["u_skin_tex"] = 8
+            po["u_skin"].value = 1
+        for name, (m, piv, ax) in self.ac_meshes.items():
+            if inside and name in ("body", "gear", "elevator", "rudder"):
+                continue
+            if name == "cowl" and not (inside and getattr(self, "_cab3d", False)):
+                continue
+            if name.startswith("disc") and inside and not getattr(self, "_cab3d", False) and not s.twin:
+                continue
+            if name == "gear" and s.gear_pos < 0.3:
+                continue
+            M = body_M
+            if name in ang:
+                M = body_M @ translate(piv) @ axis_rotation(ax, ang[name]) @ translate(-piv)
+            elif name.startswith("prop"):
+                k = 1 if name == "prop2" else 0
+                rpm = rpms[min(k, len(rpms) - 1)]
+                if rpm > 350 or (inside and not s.twin):
+                    continue
+                M = body_M @ translate(piv) @ axis_rotation(ax, self.prop_angles[k]) @ translate(-piv)
+            elif name.startswith("disc"):
+                k = 1 if name == "disc2" else 0
+                rpm = rpms[min(k, len(rpms) - 1)]
+                if rpm <= 350:
+                    continue
+                self.ctx.enable(moderngl.BLEND)
+                self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+                po["u_tint"].value = (1.0, 1.0, 1.0, 0.05 if inside else 0.28)
+                po["u_model"].write(gl_bytes(M))
+                m.render()
+                po["u_tint"].value = (1.0, 1.0, 1.0, 1.0)
+                self.ctx.disable(moderngl.BLEND)
+                continue
+            if name == "gear" and s.gear_pos < 0.98:
+                M = body_M @ translate((0, 0, -(1 - s.gear_pos) * 0.6))
+            po["u_model"].write(gl_bytes(M))
+            m.render()
+        po["u_spec"].value = 0.15
+        if "u_skin" in po:
+            po["u_skin"].value = 0
+
+    def _update_dynamic_lights(self, cam, pos, R, show_aircraft):
+        world = self.world
+        L = []
+        # PAPI
+        for (x, y, z, ang) in self.scn.papis:
+            dx, dy = cam.eye[0] - x, cam.eye[1] - y
+            hz = z - cam.eye[2]
+            el = math.degrees(math.atan2(hz, math.hypot(dx, dy)))
+            col = (1.0, 1.0, 1.0) if el > ang else (1.0, 0.08, 0.05)
+            L.append((x, y, z, *col, 4.5))
+        # luces de destello secuencial ("conejo")
+        if self.scn.rabbits:
+            ph = (self.time * 2.0) % 1.0
+            n = len(self.scn.rabbits)
+            k = int((1.0 - ph) * n * 1.2)
+            for i, (x, y, z, dist) in enumerate(sorted(self.scn.rabbits, key=lambda r: -r[3])):
+                if i == k % (n + 4):
+                    L.append((x, y, z, 1.0, 1.0, 1.0, 9.0))
+        # luces del avión
+        if show_aircraft:
+            s = world.ac.sys
+            lt = self.ac_lights
+            if s.electric_ok:
+                if s.lights["nav"]:
+                    for key, col in (("left", (1.0, 0.1, 0.05)), ("right", (0.1, 1.0, 0.2)), ("tail", (1.0, 1.0, 1.0))):
+                        p = pos + R @ np.array(lt[key])
+                        L.append((*p, *col, 0.7))
+                if s.lights["beacon"] and (self.time % 1.2) < 0.15:
+                    p = pos + R @ np.array(lt["beacon"])
+                    L.append((*p, 1.0, 0.1, 0.05, 1.4))
+                if s.lights["strobe"] and (self.time % 1.0) < 0.06:
+                    for key in ("left", "right"):
+                        p = pos + R @ np.array(lt[key])
+                        L.append((*p, 1.0, 1.0, 1.0, 2.5))
+                if s.lights["landing"] and cam.mode != "cabina":
+                    p = pos + R @ np.array(lt["landing"])
+                    L.append((*p, 1.0, 0.98, 0.9, 1.6))
+        # luces del tráfico (navegación, anticolisión, estroboscópicas y de aterrizaje)
+        tr = getattr(world, "traffic", None)
+        if tr is not None:
+            for p in tr.planes:
+                if not hasattr(self, "tr_meshes") or not self.tr_meshes:
+                    break
+                _, lt = self.traffic_mesh(p.type_id, getattr(p, 'livery', None) or hash(p.callsign) % 4)
+                Rp = quat_to_mat(p.quat)
+                ph = (self.time + (hash(p.callsign) % 100) * 0.013)
+                for key, col in (("left", (1.0, 0.1, 0.05)), ("right", (0.1, 1.0, 0.2)), ("tail", (1.0, 1.0, 1.0))):
+                    L.append((*(p.pos + Rp @ np.array(lt[key])), *col, 0.8))
+                if ph % 1.2 < 0.15:
+                    L.append((*(p.pos + Rp @ np.array(lt["beacon"])), 1.0, 0.1, 0.05, 1.5))
+                if not p.on_ground and ph % 1.0 < 0.06:
+                    for key in ("left", "right"):
+                        L.append((*(p.pos + Rp @ np.array(lt[key])), 1.0, 1.0, 1.0, 3.0))
+                if not p.on_ground or p.state == "carrera":
+                    L.append((*(p.pos + Rp @ np.array(lt["landing"])), 1.0, 0.98, 0.9, 2.2))
+        # colores bicolor de los umbrales según el lado desde el que se mira
+        data = self.light_data
+        for rw, sa, sb in self.scn.light_groups:
+            rel = cam.eye[:2] - rw.center
+            behind = float(rel @ rw.dir) < 0
+            ga = (0.2, 1.0, 0.35) if behind else (1.0, 0.15, 0.1)
+            gb = (1.0, 0.15, 0.1) if behind else (0.2, 1.0, 0.35)
+            data[sa, 3:6] = ga
+            data[sb, 3:6] = gb
+        key = tuple(round(float(v), 2) for v in data[[g[1].start for g in self.scn.light_groups], 3])
+        if key != getattr(self, "_light_key", None):
+            self._light_key = key
+            self.vbo_lights.write(data.tobytes())
+        arr = np.array(L, np.float32) if L else np.zeros((0, 7), np.float32)
+        self.n_dyn = min(len(arr), 256)
+        if self.n_dyn:
+            self.vbo_dyn.write(arr[:256].tobytes())

@@ -1,0 +1,10 @@
+pygame-ce>=2.5
+moderngl>=5.10
+numpy>=1.26
+comtypes>=1.4 ; sys_platform == "win32"
+# opcional: hablar con la torre por micrófono (reconocimiento de voz de Windows)
+winrt-runtime ; sys_platform == "win32"
+winrt-Windows.Media.SpeechRecognition ; sys_platform == "win32"
+winrt-Windows.Globalization ; sys_platform == "win32"
+winrt-Windows.Foundation ; sys_platform == "win32"
+winrt-Windows.Foundation.Collections ; sys_platform == "win32"
