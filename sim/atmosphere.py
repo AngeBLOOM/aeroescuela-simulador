@@ -17,6 +17,7 @@ class Weather:
     def __init__(self):
         self.qnh_hpa = 1013.25
         self.temp_offset = 0.0          # desviación ISA en °C
+        self.dew_spread = 8.0           # temperatura − punto de rocío (°C): pequeño = aire húmedo
         self.wind_dir = 360.0           # grados desde donde sopla
         self.wind_kt = 5.0
         self.gust_kt = 0.0
@@ -62,7 +63,7 @@ class Weather:
             wx = " -RA" if self.rain < 0.35 else (" RA" if self.rain < 0.75 else " +RA")
         cb = "CB" if self.storm else ""
         return (f"{int(self.wind_dir) % 360:03d}{int(self.wind_kt):02d}{gust}KT {vis}{wx} "
-                f"{nub}{base:03d}{cb} {int(t):02d}/{int(t - 8):02d} Q{int(round(self.qnh_hpa))}")
+                f"{nub}{base:03d}{cb} {int(t):02d}/{int(round(t - self.dew_spread)):02d} Q{int(round(self.qnh_hpa))}")
 
 
 def rain_visibility(rain):
@@ -99,6 +100,10 @@ class Atmosphere:
         self.thunder = []               # truenos pendientes: [segundos hasta oírse, volumen]
 
     # ------------------------------------------------------------ propiedades
+    def moisture_spread(self):
+        """Diferencia temperatura − rocío en el avión (°C): con lluvia el aire está casi saturado."""
+        return min(self.w.dew_spread, 1.0) if self.rain_here > 0.2 else self.w.dew_spread
+
     def properties(self, alt_m):
         """Devuelve (T [K], p [Pa], rho [kg/m3], a [m/s]) a una altitud MSL."""
         h = clamp(alt_m, -500.0, 11000.0)

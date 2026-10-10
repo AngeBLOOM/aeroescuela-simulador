@@ -242,6 +242,11 @@ def step(app, frame):
             app.state = "instructor"; app.instr_tab = "control"
         elif name == "congelado":
             app.state = "flight"
+        elif name == "c152":
+            app.cockpit_style = "2d"; app.panel.mode = "analog"; app.settings["pantalla_instr"] = "no"
+            app.world.set_aircraft("c152")
+            app.start_lesson(LB["hielo_carb"])
+            app.world.ac.sys.carb_heat = True
         elif name == "adf":
             app.cockpit_style = "2d"; app.panel.mode = "analog"; app.settings["pantalla_instr"] = "no"
             app.start_lesson(FreeFlight("final10"))

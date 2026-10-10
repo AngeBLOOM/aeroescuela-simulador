@@ -533,6 +533,9 @@ class CockpitPanel:
         ]
         if sysm.twin:
             items = items[:-2]
+        if ac.t.carburetor:
+            items.append(("CALEF CARB", sysm.carb_heat, lambda: setattr(sysm, "carb_heat", not sysm.carb_heat),
+                          "Calefacción al carburador (F6): úsela si bajan las rpm o el motor va irregular"))
         for lab, val, fn, tip in items:
             if ui.toggle(surf, (x, y, sw, h), lab, val, size=10, tip=tip):
                 fn()

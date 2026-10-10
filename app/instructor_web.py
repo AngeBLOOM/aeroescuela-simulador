@@ -174,7 +174,8 @@ canvas{width:100%;height:260px;background:#08101a;border-radius:8px}
 <label class="k">Viento (°)<input id="wdir" type="number" step="10"></label><label class="k">Viento (kt)<input id="wkt" type="number"></label>
 <label class="k">Ráfagas (kt)<input id="gust" type="number"></label><label class="k">Visibilidad (m)<input id="vis" type="number" step="500"></label>
 <label class="k">Base nubes (ft)<input id="base" type="number" step="100"></label><label class="k">Nubosidad (0-1)<input id="cov" type="number" step="0.1" min="0" max="1"></label>
-<label class="k">Turbulencia (0-1)<input id="turb" type="number" step="0.1" min="0" max="1"></label><label class="k">Hora local<input id="hour" type="number" step="0.5"></label></div>
+<label class="k">Turbulencia (0-1)<input id="turb" type="number" step="0.1" min="0" max="1"></label><label class="k">Hora local<input id="hour" type="number" step="0.5"></label>
+<label class="k">Temp − rocío (°C, 0-3 = muy húmedo)<input id="dew" type="number" step="1" min="0" max="25"></label></div>
 <div class="row"><button onclick="sendWx()">Aplicar meteorología</button></div><p id="metar" class="k"></p></section>
 <section><h2>Radio (ATC)</h2><div id="log"></div></section>
 </main></div>
@@ -186,7 +187,7 @@ function login(){CODE=document.getElementById('code').value.trim();localStorage.
 function cmd(o){api('/api/cmd',{method:'POST',body:JSON.stringify(o)});}
 let FROZEN=[];function fz(k){cmd({c:'congelar',k:k,on:!FROZEN.includes(k)});}
 function sendWx(){const g=id=>parseFloat(document.getElementById(id).value);
- cmd({c:'clima',wind_dir:g('wdir'),wind_kt:g('wkt'),gust_kt:g('gust'),visibility_m:g('vis'),cloud_base_ft:g('base'),cloud_cover:g('cov'),turbulence:g('turb'),hour:g('hour')});}
+ cmd({c:'clima',wind_dir:g('wdir'),wind_kt:g('wkt'),gust_kt:g('gust'),visibility_m:g('vis'),cloud_base_ft:g('base'),cloud_cover:g('cov'),turbulence:g('turb'),hour:g('hour'),dew_spread:g('dew')});}
 function build(c){cat=c;const s=document.getElementById('lsel');s.innerHTML='';let grp=null,og=null;
  c.lecciones.forEach(l=>{if(l.cat!==grp){grp=l.cat;og=document.createElement('optgroup');og.label=grp;s.appendChild(og);}
   const o=document.createElement('option');o.value=l.id;o.textContent=l.titulo+(l.acs?'  ('+l.acs+')':'');og.appendChild(o);});
@@ -212,7 +213,7 @@ function render(e){document.getElementById('les').textContent=e.leccion||'—';
  document.getElementById('log').innerHTML=e.radio.slice().reverse().map(r=>`<div><b>${r[0]}</b> ${r[1]}</div>`).join('');
  document.getElementById('res').innerHTML=e.resultado?`<b class="${e.resultado.apto?'ok':'err'}">${e.resultado.nota.toFixed(0)} · ${e.resultado.calif}</b><br>`+e.resultado.items.map(i=>`${i[0]}: ${i[1]}/${i[2]} — ${i[3]}`).join('<br>'):'—';
  document.getElementById('metar').textContent=e.meteo.texto;
- if(!wxFilled){const m=e.meteo;[['wdir',m.wind_dir],['wkt',m.wind_kt],['gust',m.gust_kt],['vis',m.visibility_m],['base',m.cloud_base_ft],['cov',m.cloud_cover],['turb',m.turbulence],['hour',m.hour]].forEach(([i,v])=>document.getElementById(i).value=Math.round(v*100)/100);wxFilled=true;}
+ if(!wxFilled){const m=e.meteo;[['wdir',m.wind_dir],['wkt',m.wind_kt],['gust',m.gust_kt],['vis',m.visibility_m],['base',m.cloud_base_ft],['cov',m.cloud_cover],['turb',m.turbulence],['hour',m.hour],['dew',m.dew_spread]].forEach(([i,v])=>document.getElementById(i).value=Math.round(v*100)/100);wxFilled=true;}
  track.push([e.x,e.y]);if(track.length>900)track.shift();drawMap(e);}
 function drawMap(e){const c=document.getElementById('map'),g=c.getContext('2d');const W=c.width,H=c.height;g.clearRect(0,0,W,H);
  const sc=H/(2*12000);const cx=W/2,cy=H/2;const P=(n,ea)=>[cx+(ea-e.y)*sc,cy-(n-e.x)*sc];

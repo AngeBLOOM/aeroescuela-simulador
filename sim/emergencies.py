@@ -11,6 +11,8 @@ procedimiento real del manual (POH/AFM):
   door        Puerta abierta en vuelo: más resistencia y ruido; cerrar por debajo de 80 kt.
   magneto     Magneto derecho en falla: motor irregular en AMBOS; seleccionar IZQ.
   fuel_leak   Fuga de combustible: el nivel baja deprisa; aterrizar cuanto antes.
+  carb_ice    Hielo en el carburador (C152, PA-28 Warrior): bajan las rpm y el motor va irregular;
+              calefacción al carburador (empeora unos segundos al fundirse y luego se recupera).
 """
 import math
 import random
@@ -30,6 +32,7 @@ CATALOG = [
     ("pitot", "Pitot obstruido", lambda t: True),
     ("static", "Toma estática obstruida", lambda t: True),
     ("magneto", "Magneto en falla (motor irregular)", lambda t: not t.fadec),
+    ("carb_ice", "Hielo en el carburador", lambda t: getattr(t, "carburetor", False)),
     ("fuel_leak", "Fuga de combustible", lambda t: True),
     ("gear", "El tren no baja", lambda t: t.retractable),
     ("trim", "Compensador desbocado", lambda t: True),
@@ -212,6 +215,10 @@ class Emergencies:
                 en.bad_mag = 0
         elif e0.magnetos == 2 and not any(x["key"] == "magneto" and x["resolved"] for x in self.log):
             self.resolve("magneto", "magneto izquierdo seleccionado")
+        # --- hielo en el carburador: la calefacción termina la falla (el hielo ya formado se funde en el motor)
+        if f.get("carb_ice") and s.carb_heat:
+            f["carb_ice"] = False
+            self.resolve("carb_ice", "calefacción al carburador")
         # --- procedimientos cumplidos (para el informe)
         if f.get("radio") and w.xpdr == 7600:
             self.resolve_once("radio", "transpondedor 7600")

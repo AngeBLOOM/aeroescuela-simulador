@@ -190,6 +190,8 @@ class Aircraft:
         self.p_amb = p_amb
         self.temp_k = T_k
 
+        s.oat_c = T_k - 273.15                       # para el hielo en el carburador
+        s.dew_spread = self.atmo.moisture_spread() if hasattr(self.atmo, "moisture_spread") else 8.0
         s.update(dt, rho, p_amb, max(u, 0.0), self.on_ground)
 
         # actuadores

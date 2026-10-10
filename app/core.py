@@ -515,6 +515,7 @@ class App(ScreensMixin):
             trafico=[[float(p.pos[0]), float(p.pos[1])] for p in w.traffic.planes],
             meteo=dict(wind_dir=wx.wind_dir, wind_kt=wx.wind_kt, gust_kt=wx.gust_kt, visibility_m=wx.visibility_m,
                        cloud_base_ft=wx.cloud_base_ft, cloud_cover=wx.cloud_cover, turbulence=wx.turbulence, hour=wx.hour,
+                       dew_spread=wx.dew_spread,
                        texto=wx.describe()))
 
     def update_remote(self, dt):
@@ -560,13 +561,16 @@ class App(ScreensMixin):
         elif k == "reparar":
             for f in s.failures:
                 s.failures[f] = False
+            for en in s.engines:
+                en.carb_ice = 0.0
             w.emerg.plan = []
             s.fire_level = s.smoke_level = 0.0
             s.gear_emergency = False
             s.trim_cb = True
         elif k == "clima":
             wx = w.weather
-            for f in ("wind_dir", "wind_kt", "gust_kt", "visibility_m", "cloud_base_ft", "cloud_cover", "turbulence", "hour"):
+            for f in ("wind_dir", "wind_kt", "gust_kt", "visibility_m", "cloud_base_ft", "cloud_cover", "turbulence", "hour",
+                      "dew_spread"):
                 v = c.get(f)
                 if isinstance(v, (int, float)) and v == v:
                     setattr(wx, f, float(v))
@@ -961,6 +965,12 @@ class App(ScreensMixin):
             self.screenshot()
         elif k == pygame.K_F9:
             self.settings["mostrar_fps"] = not self.settings["mostrar_fps"]
+        elif k == pygame.K_F6:
+            if ac.t.carburetor:
+                ac.sys.carb_heat = not ac.sys.carb_heat
+                self.flash("Calefacción al carburador " + ("CONECTADA" if ac.sys.carb_heat else "quitada"), 1.5)
+            else:
+                self.flash("Este avión tiene inyección: no lleva calefacción al carburador", 2.0)
 
     def toggle_instr_editor(self):
         if self.settings.get("pantalla_instr") in ("unica", "ambiente"):

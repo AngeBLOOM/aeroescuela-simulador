@@ -55,6 +55,8 @@ def apply(weather, m, field_elev_ft=0.0):
     if m.get("temp") is not None:
         isa = 15.0 - 1.98 * field_elev_ft / 1000.0
         w.temp_offset = float(m["temp"]) - isa
+        if m.get("dewp") is not None:
+            w.dew_spread = max(0.0, float(m["temp"]) - float(m["dewp"]))
     clouds = m.get("clouds") or []
     if clouds:
         worst = max(clouds, key=lambda c: COVER.get(c.get("cover", "SKC"), 0))

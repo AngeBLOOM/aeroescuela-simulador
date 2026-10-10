@@ -65,6 +65,7 @@ KEYS = [
         ("L", "Luz de aterrizaje"),
         ("Ctrl+E", "Arranque automático del motor"),
         ("Insert", "Motor de arranque (mantener)"),
+        ("F6", "Calefacción al carburador (C152, PA-28 Warrior)"),
     ]),
     ("Piloto automático y cabina", [
         ("Z", "Conectar / desconectar PA"),
@@ -1607,6 +1608,8 @@ class ScreensMixin:
                 ("Base de nubes (QNH)", f"{wx.cloud_base_ft:.0f} ft", lambda: setattr(wx, "cloud_base_ft", max(500, wx.cloud_base_ft - 250)),
                  lambda: setattr(wx, "cloud_base_ft", min(12000, wx.cloud_base_ft + 250))),
                 ("QNH", f"{wx.qnh_hpa:.0f} hPa", lambda: setattr(wx, "qnh_hpa", wx.qnh_hpa - 1), lambda: setattr(wx, "qnh_hpa", wx.qnh_hpa + 1)),
+                ("Humedad (temp − rocío)", f"{wx.dew_spread:.0f} °C", lambda: setattr(wx, "dew_spread", max(0.0, wx.dew_spread - 1)),
+                 lambda: setattr(wx, "dew_spread", min(25.0, wx.dew_spread + 1))),
                 ("Hora local", f"{int(wx.hour):02d}:{int(wx.hour % 1 * 60):02d}", lambda: setattr(wx, "hour", (wx.hour - 0.5) % 24),
                  lambda: setattr(wx, "hour", (wx.hour + 0.5) % 24)),
             ]
@@ -1663,6 +1666,8 @@ class ScreensMixin:
             if ui.button(s, (x0, ry, 220, 36), "Reparar todo", size=14, color=(30, 110, 70)):
                 for k in ac.sys.failures:
                     ac.sys.failures[k] = False
+                for en in ac.sys.engines:
+                    en.carb_ice = 0.0
                 em.plan = []
                 ac.sys.fire_level = ac.sys.smoke_level = 0.0
                 ac.sys.gear_emergency = False
