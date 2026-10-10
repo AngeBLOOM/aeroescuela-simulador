@@ -1715,7 +1715,7 @@ class ScreensMixin:
                         self.flash("El avión solo se mueve en vuelo", 3)
             y += 3 * 44 + 10
             d = math.hypot(ac.pos[0] - w.home.ref[0], ac.pos[1] - w.home.ref[1]) / NM
-            f.blit(s, f"Ahora: {ac.alt_msl / FT:,.0f} ft · rumbo {ac.heading:03.0f}° · {ac.ias_kt:.0f} kt · "
+            f.blit(s, f"Ahora: {ac.alt_msl / FT:,.0f} ft · rumbo {w.mag(ac.heading):03.0f}° · {ac.ias_kt:.0f} kt · "
                       f"a {d:.1f} NM de {w.home.ident}", (x0, y), 14, COL["grey"])
             f.blit(s, "Lo congelado y el ritmo se quitan al reposicionar o empezar otra lección.", (x0, y + 24), 13,
                    COL["grey"])
@@ -1763,6 +1763,15 @@ class ScreensMixin:
         f.blit(s, title, (box.x + 28, box.y + 40), 28, COL["white"], bold=True)
         lw = box.w * 0.48
         y = box.y + 92
+        # notas al pie (emergencias y radio): debajo del tiempo de vuelo, que sube lo necesario para no pisarlas
+        notes = [(f"Emergencia — {name}: {txt}", COL["green"] if ok else COL["red"])
+                 for name, txt, ok in self.world.emerg.report()[-3:]]
+        atc = self.world.atc
+        if atc.engaged or atc.violations:
+            txt = "Radio (ATC): " + ("; ".join(atc.violations) if atc.violations else "comunicaciones correctas")
+            notes.append((f.wrap(txt, 13, lw - 420)[0] if lw > 600 else txt[:70],
+                          COL["amber"] if atc.violations else COL["green"]))
+        foot_y = box.bottom - 80 - 20 * len(notes)
         if R is not None:
             from ui import theme
             sc = R["score"]
@@ -1785,7 +1794,7 @@ class ScreensMixin:
             f.blit(s, "Concepto", (box.x + 28, y), 13, COL["grey"], bold=True)
             f.blit(s, "Puntos", (box.x + lw - 10, y), 13, COL["grey"], bold=True, anchor="topright")
             y += 22
-            maxrows = int((box.bottom - 90 - y) / 38)
+            maxrows = int((foot_y - 10 - y) / 38)
             for name, got, mx, com in R["items"][:maxrows]:
                 pygame.draw.line(s, (40, 48, 60), (box.x + 28, y - 3), (box.x + lw, y - 3))
                 f.blit(s, name, (box.x + 28, y), 15, COL["white"], bold=True)
@@ -1798,18 +1807,9 @@ class ScreensMixin:
             f.blit(s, "Vuelo libre registrado en la bitácora.", (box.x + 28, y), 18, COL["white"])
             y += 30
         f.blit(s, f"Tiempo de vuelo: {getattr(self, 'debrief_flight_s', 0) / 60:.1f} min   ·   Aterrizajes: {getattr(self, 'debrief_landings', 0)}"
-                  f"   ·   G máx: {self.world.ac.max_g:.1f}", (box.x + 28, box.bottom - 80), 14, COL["grey"])
-        em_rep = self.world.emerg.report()
-        if em_rep:
-            yy = box.bottom - 56 - 20 * min(3, len(em_rep))
-            for name, txt, ok in em_rep[-3:]:
-                f.blit(s, f"Emergencia — {name}: {txt}", (box.x + 28, yy), 13, COL["green"] if ok else COL["red"])
-                yy += 20
-        atc = self.world.atc
-        if atc.engaged or atc.violations:
-            txt = "Radio (ATC): " + ("; ".join(atc.violations) if atc.violations else "comunicaciones correctas")
-            f.blit(s, f.wrap(txt, 13, lw - 420)[0] if lw > 600 else txt[:70], (box.x + 28, box.bottom - 56), 13,
-                   COL["amber"] if atc.violations else COL["green"])
+                  f"   ·   G máx: {self.world.ac.max_g:.1f}", (box.x + 28, foot_y), 14, COL["grey"])
+        for i, (txt, c) in enumerate(notes):
+            f.blit(s, txt, (box.x + 28, foot_y + 24 + 20 * i), 13, c)
         # gráficas
         gx = box.x + lw + 30
         gw = box.right - gx - 28

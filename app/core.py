@@ -504,7 +504,7 @@ class App(ScreensMixin):
         return dict(
             leccion=L.title if L is not None else "", estado={"flight": "en vuelo", "pause": "PAUSA", "instructor": "instructor",
                                                              "debrief": "informe", "menu": "menú", "replay": "repetición"}.get(self.state, self.state),
-            choque=ac.crashed, ias=float(w.ind.ias), alt=float(w.ind.alt_ft), hdg=float(ac.heading), vs=float(w.ind.vs_fpm),
+            choque=ac.crashed, ias=float(w.ind.ias), alt=float(w.ind.alt_ft), hdg=float(ac.heading), hdg_mag=float(w.mag(ac.heading)), vs=float(w.ind.vs_fpm),
             rpm=float(s.engine.rpm), fuel=float(s.fuel_l), x=float(ac.pos[0]), y=float(ac.pos[1]),
             paso=(f"Paso {L.idx + 1}/{len(L.steps)}: {st.text}" if st is not None else ""),
             fallas=[dict(k=k, nombre=n, activa=bool(s.failures.get(k)), prog=k in pend) for k, n, ok in CATALOG if ok(ac.t)],
@@ -751,6 +751,9 @@ class App(ScreensMixin):
                 self.world.set_aircraft(L.aircraft)
         if self.world.ac.t.default_cockpit == "glass":
             self.panel.mode = "glass"
+        # cada vuelo empieza con el GPS sin plan y el CDI en VLOC (la lección puede cambiarlo en setup)
+        self.world.gps.clear()
+        self.world.cdi_src = "VLOC"
         L.setup(self.world)
         self.world.sim_time = 0.0
         self.world.events.clear()

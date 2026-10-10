@@ -53,7 +53,9 @@ class Indications:
         self.dg_drift = 0.0
         self.compass = self.dg
         self.ai_err_roll = self.ai_err_pitch = 0.0
-        self.alt_ft = Atmosphere.pressure_altitude(ac.p_amb if hasattr(ac, "p_amb") else 101325.0, kollsman) / FT
+        # presión en la posición actual (p_amb es la del último paso de física: tras recolocar el avión, vieja)
+        p = ac.atmo.properties(ac.alt_msl)[1] if getattr(ac, "atmo", None) is not None else getattr(ac, "p_amb", 101325.0)
+        self.alt_ft = Atmosphere.pressure_altitude(p, kollsman) / FT
 
     def update(self, dt, ac, atmo, kollsman, rng):
         s = ac.sys
