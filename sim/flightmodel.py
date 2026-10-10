@@ -58,6 +58,9 @@ class Aircraft:
         self.max_g = 1.0
         self.min_g = 1.0
         self.overstress = False
+        self._cg_dx = 0.0
+        self._alpha_prev = None
+        self._adot = 0.0
         self._update_outputs(np.zeros(3), 0.0)
 
     # --------------------------------------------------------------- posición
@@ -72,6 +75,8 @@ class Aircraft:
         self.brake_l = self.brake_r = 0.0
         self.max_g = self.min_g = 1.0
         self.overstress = False
+        self._alpha_prev = None
+        self._adot = 0.0
         self._contact_prev = {}
         self.ditched = False
         self.soft_field = False
@@ -141,10 +146,16 @@ class Aircraft:
         thr = clamp((pf / dens - 0.025) / 0.975, 0.0, 1.0)
         T = t.prop_eff * t.engine_power * n_eng * pf / math.sqrt(V * V + t.prop_vc ** 2)
         qc = qbar + t.slipstream * max(T, 0)
-        Cm = t.Cm0 + t.Cma * alpha + t.Cm_flaps * ff
+        Cm = t.Cm0 + t.Cma * alpha + t.Cm_flaps * ff + CL * self.cg_dx() / t.c
         de = -Cm * qbar / (t.Cmde * qc)
         trim = clamp(-de / t.trim_range, -1.0, 1.0)
         return alpha, trim, thr
+
+    def cg_dx(self):
+        """Cuánto está el CG por detrás (m, + = atrás) del CG con que se ajustó el modelo, según el peso y
+        balance cargado (sim/weight.py). Sin hoja de carga es 0 y el avión vuela como siempre."""
+        cg = getattr(self.t, "cg_in", None)
+        return 0.0 if cg is None else (cg - self.t.cg_ref_in) * 0.0254
 
     # -------------------------------------------------------------- dinámica
     def step(self, dt):
@@ -223,8 +234,14 @@ class Aircraft:
         wobble = math.sin(self.time * 1.7) * 0.6 + math.sin(self.time * 0.63 + 1.0) * 0.4
         Cl = (t.Clb * beta + t.Clp * ph * (1 - 0.9 * sb) + t.Clr * rh
               + sb * (0.02 * wobble + 0.15 * beta) + t.rig_roll)
+        # retardo de la estela del ala sobre la cola: amortigua los cambios rápidos de alfa
+        if V > 15.0 and self._alpha_prev is not None:
+            self._adot += ((alpha - self._alpha_prev) / dt - self._adot) * min(1.0, dt / 0.05)
+        else:
+            self._adot = 0.0
+        self._alpha_prev = alpha
         Cm = (t.Cm0 + t.Cma * alpha + t.Cmq * qh + t.Cm_flaps * ff + sb * t.Cm_stall
-              - 0.04 * (1 - phi_ge))
+              - 0.04 * (1 - phi_ge) + t.Cmadot * self._adot * t.c / (2 * Vn))
         Cn = t.Cnb * beta + t.Cnp * ph + t.Cnr * rh * (1 - 0.4 * sb) + t.rig_yaw
 
         L_aero = qbar * t.S * CL + qc * t.S * t.CLde * de
@@ -237,12 +254,18 @@ class Aircraft:
         F += L_aero * vec(math.sin(alpha), 0.0, -math.cos(alpha))
         F[1] += Y_aero
         F[0] += thrust
+        # el modelo está ajustado con el CG de referencia: si la carga lo mueve dx hacia atrás, las fuerzas
+        # aerodinámicas quedan dx más adelante del CG (CG atrás: más nariz arriba y menos estable)
+        dx = self._cg_dx = self.cg_dx()
 
         M = vec(
             qbar * t.S * t.b * Cl + qbar * t.S * t.b * t.Clda * self.da - qc * t.S * t.b * t.Cldr * self.dr,
             qbar * t.S * t.c * Cm + qc * t.S * t.c * t.Cmde * de,
             qbar * t.S * t.b * Cn + qbar * t.S * t.b * t.Cnda * self.da + qc * t.S * t.b * t.Cndr * self.dr,
         )
+        if dx:
+            M[1] -= dx * F[2]
+            M[2] += dx * F[1]
         # efectos de la hélice (torque y factor P / estela helicoidal) y empuje asimétrico
         for en, yy in zip(s.engines, t.engines_y):
             M[0] += -t.torque_roll * en.torque
@@ -319,7 +342,7 @@ class Aircraft:
                 self.gear_contact[gr.name] = False
                 self.gear_load[gr.name] = 0.0
                 continue
-            rb = np.array(gr.pos)
+            rb = np.array(gr.pos) + (self._cg_dx, 0.0, 0.0)     # el tren, visto desde el CG cargado
             pw = self.pos + R @ rb
             d = pw[2] + self.terrain.surface_height(pw[0], pw[1])
             if d <= 0:
@@ -370,7 +393,7 @@ class Aircraft:
             Mg += cross(rb, R.T @ fw)
 
         for name, cp in t.contacts:
-            rb = np.array(cp)
+            rb = np.array(cp) + (self._cg_dx, 0.0, 0.0)
             pw = self.pos + R @ rb
             d = pw[2] + self.terrain.surface_height(pw[0], pw[1])
             if d > 0:
