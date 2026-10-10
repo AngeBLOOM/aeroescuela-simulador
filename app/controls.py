@@ -99,14 +99,14 @@ class Controls:
         if jy is not None and abs(jy) > 0.0:
             rud = clamp(expo(jy, k) + self.kb_rud, -1, 1)
         if hw is not None:
-            # cabina física: los ejes asignados mandan sobre el joystick genérico
+            # cabina física: los ejes asignados mandan sobre el joystick genérico (ya llevan su zona muerta y curva)
             hr, hp, hy = hw.flight_axes()
             if hr is not None:
-                roll = clamp(expo(hr, k) + self.kb_roll, -1, 1)
+                roll = clamp(hr + self.kb_roll, -1, 1)
             if hp is not None:
-                pitch = clamp(expo(hp, k) + self.kb_pitch, -1, 1)
+                pitch = clamp(hp + self.kb_pitch, -1, 1)
             if hy is not None:
-                rud = clamp(expo(hy, k) + self.kb_rud, -1, 1)
+                rud = clamp(hy + self.kb_rud, -1, 1)
         if jt is not None:
             thr = (jt + 1) / 2
             if self.joy_throttle_last is None or abs(thr - self.joy_throttle_last) > 0.01:

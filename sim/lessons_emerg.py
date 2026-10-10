@@ -292,6 +292,64 @@ class L_Electrica(_Emerg):
                 outcome(world, 15, "en tierra")]
 
 
+# ------------------------------------------------------------------ hielo en el carburador
+class L_HieloCarb(_Emerg):
+    id = "hielo_carb"
+    title = "Hielo en el carburador"
+    aircraft = "c152"
+    fail_key = "carb_ice"
+    start = "crucero"
+    brief = ("Crucero en un Cessna 152 con aire húmedo. Se formará hielo en el carburador: las rpm bajarán poco a poco sin "
+             "tocar el gas y el motor empezará a ir irregular. Reconózcalo y aplique la calefacción al carburador (F6 o el "
+             "interruptor CALEF CARB). Al fundirse el hielo el motor irá PEOR unos segundos: no la quite. Después las rpm "
+             "se recuperan.")
+    objectives = ["Detectar la bajada de rpm", "Calefacción al carburador a tiempo", "Mantenerla hasta que el motor se recupere",
+                  "Altitud ±200 ft"]
+
+    def make_steps(self, world):
+        A = world.cruise_alt_ft()
+        e = world.ac.sys.engine
+        self.rpm0 = None
+        self.rpm_min = None
+
+        def heat(w, L):
+            return w.ac.sys.carb_heat
+
+        def melted(w, L):
+            return e.carb_ice < 0.05 and L.step.t > 5
+        return [
+            self.fail_step(f"Crucero a {A:.0f} ft: vigile las rpm", f"Crucero a {A:.0f} pies. Vigile el tacómetro."),
+            Step("Bajan las rpm sin tocar el gas: ¡calefacción al carburador!", heat,
+                 voice="Vigile las revoluciones.", timeout=150,
+                 hint="Si las rpm bajan solas con aire húmedo es hielo: pulse F6 o el interruptor CALEF CARB.",
+                 monitors=[mon_alt(A, 200, 10)]),
+            Step("Mantenga la calefacción: el motor empeora y luego se recupera", melted,
+                 voice="Calefacción aplicada. El motor irá irregular mientras se funde el hielo: no la quite.", timeout=120,
+                 monitors=[mon_alt(A, 200, 10)]),
+            Step("Motor recuperado: crucero 30 s", lambda w, L: True, min_time=30,
+                 voice="Motor recuperado. Mantenga el crucero.", monitors=[mon_alt(A, 200, 10)]),
+        ]
+
+    def update(self, dt, world, events):
+        super().update(dt, world, events)
+        e = world.ac.sys.engine
+        if self.t_fail is None:
+            self.rpm0 = e.rpm
+        else:
+            self.rpm_min = e.rpm if self.rpm_min is None else min(self.rpm_min, e.rpm)
+            if world.ac.sys.carb_heat:
+                self.mark("calefaccion")
+            if self.idx >= 3:
+                self.mark("recuperado")
+
+    def extra_items(self, world):
+        e = world.ac.sys.engine
+        drop = (self.rpm0 or 0) - (self.rpm_min or self.rpm0 or 0)
+        return [self.timing("Calefacción aplicada", "calefaccion", 100, 150, 30),
+                ("Pérdida máxima de rpm", 10 if drop < 300 else (5 if drop < 600 else 0), 10, f"{drop:.0f} rpm"),
+                ("Motor en marcha al final", 20 if e.running else 0, 20, f"{e.rpm:.0f} rpm" if e.running else "parado")]
+
+
 # ------------------------------------------------------------------ entrada en nubes
 class L_IMC(Lesson):
     id = "imc"
@@ -495,4 +553,4 @@ class L_FueraCampo(_Emerg):
                 self.timing("Transpondedor 7700", "7700", 60, 120, 5)]
 
 
-EMERGENCY_LESSONS = [L_Fuego, L_Humo, L_Electrica, L_Radio, L_Tren, L_Compensador, L_IMC, L_Actitudes, L_FueraCampo]
+EMERGENCY_LESSONS = [L_Fuego, L_Humo, L_Electrica, L_HieloCarb, L_Radio, L_Tren, L_Compensador, L_IMC, L_Actitudes, L_FueraCampo]

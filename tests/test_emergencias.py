@@ -105,6 +105,12 @@ def react_alt(w, L, t):
         s.fuel_pump = False
 
 
+def react_carb(w, L, t):
+    """Como un piloto: si las rpm bajan 100 sin tocar el gas, calefacción al carburador."""
+    if L.t_fail is not None and L.rpm0 and w.ac.sys.engine.rpm < L.rpm0 - 100:
+        w.ac.sys.carb_heat = True
+
+
 def react_actitudes(w, L, t):
     e = w.ac.sys.engine
     if L.idx == 1 and L.step.t < 2:
@@ -121,6 +127,11 @@ run("radio_falla", react_radio, 50, to_end=True)
 run("compensador", react_trim, 80, to_end=True)
 run("tren", react_gear, 60, to_end=True)
 run("alternador", react_alt, 60, to_end=True)
+Lc = run("hielo_carb", react_carb, 320, to_end=True)
+if not w.ac.sys.engine.running or (Lc.rpm0 - Lc.rpm_min) < 100:
+    fallos.append(f"Hielo en el carburador: rpm {Lc.rpm0:.0f} → mín {Lc.rpm_min:.0f}, motor "
+                  f"{'en marcha' if w.ac.sys.engine.running else 'parado'}")
+print(f"   hielo: rpm {Lc.rpm0:.0f} → mínimo {Lc.rpm_min:.0f} → final {w.ac.sys.engine.rpm:.0f}; hielo {w.ac.sys.engine.carb_ice:.2f}")
 run("actitudes", react_actitudes, 60, to_end=True)
 run("imc", lambda w, L, t: None, 40)
 run("fuera_campo", lambda w, L, t: None, 30, glide_after_fail=True)
