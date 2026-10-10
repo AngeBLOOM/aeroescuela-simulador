@@ -159,6 +159,7 @@ class App(ScreensMixin):
         self.settings.setdefault("cabina_fisica", {})
         self.hardware = Hardware(self.settings["cabina_fisica"])
         self.controls.hw = self.hardware
+        self._joy_reload_t = None        # mando USB recién conectado: se vuelven a abrir los mandos en este instante
         self.remote = None
         self._remote_t = 0.0
         self.apply_remote()
@@ -313,6 +314,15 @@ class App(ScreensMixin):
     # ------------------------------------------------------------ utilidades
     def flash(self, text, secs=2.5):
         self.flash_msg = (text, time.time() + secs)
+
+    def reload_joysticks(self):
+        """Mando USB conectado o desconectado: se vuelven a abrir todos sin tener que pulsar «Buscar»."""
+        added, removed = self.hardware.refresh()
+        self.controls.refresh_joystick()
+        if removed:
+            self.flash("Mando desconectado: " + ", ".join(removed), 6)
+        elif added:
+            self.flash("Mando conectado: " + ", ".join(added), 4)
 
     def instructor(self, text, voice=True):
         self.messages.append((text, time.time()))
@@ -735,6 +745,7 @@ class App(ScreensMixin):
         self.world.traffic.reset()
         self.world.atc.reset()
         self.show_check = bool(getattr(L, "checklist", None))
+        self.hardware.request_sync()
 
     def lesson_scene_switch(self):
         """Misión de dos escenarios: carga en vuelo el siguiente aeropuerto real (crucero acelerado) y sigue la lección."""
@@ -1177,6 +1188,13 @@ class App(ScreensMixin):
                     self._mouse_t = time.time()
                 elif ev.type == pygame.MOUSEWHEEL and self.state in ("flight", "replay"):
                     pass
+                elif ev.type == pygame.JOYDEVICEREMOVED:
+                    self.reload_joysticks()      # en seguida: no seguir leyendo un mando que ya no está
+                elif ev.type == pygame.JOYDEVICEADDED:
+                    self._joy_reload_t = now + 0.4    # Windows avisa uno a uno: se esperan los demás
+            if self._joy_reload_t is not None and now >= self._joy_reload_t:
+                self._joy_reload_t = None
+                self.reload_joysticks()
             for ev in events:
                 if ev.type == pygame.WINDOWCLOSE and self.instr_win is not None and getattr(ev, "window", None) is self.instr_win:
                     self.settings["pantalla_instr"] = "no"

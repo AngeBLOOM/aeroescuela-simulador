@@ -1,0 +1,141 @@
+"""Prueba de la cabina física con mandos USB simulados (sin ventana ni mandos reales): calibración de ejes,
+sincronización de los interruptores al empezar el vuelo, conexión en caliente y que el joystick genérico no lea
+un mando que ya está asignado en «Cabina física»."""
+import os
+import sys
+import types
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import pygame
+
+from app.controls import Controls
+from app.hardware import Hardware
+from sim.world import World
+
+
+class FakeJoy:
+    def __init__(self, iid, name, naxes=6, nbtn=16):
+        self.iid, self.name = iid, name
+        self.axes = [0.0] * naxes
+        self.btns = [0] * nbtn
+
+    def init(self): pass
+    def get_guid(self): return f"guid-{self.name}"
+    def get_name(self): return self.name
+    def get_instance_id(self): return self.iid
+    def get_numaxes(self): return len(self.axes)
+    def get_numbuttons(self): return len(self.btns)
+    def get_numhats(self): return 0
+    def get_axis(self, i): return self.axes[i]
+    def get_button(self, i): return self.btns[i]
+
+
+plugged = []
+pygame.joystick.init = lambda: None
+pygame.joystick.get_count = lambda: len(plugged)
+pygame.joystick.Joystick = lambda i: plugged[i]
+
+
+class FakeApp:
+    def __init__(self):
+        self.flashes = []
+        self.panel = types.SimpleNamespace(starter_held=False)
+        self.show_radio = False
+        self.state = "flight"
+
+    def flash(self, txt, secs=2.0):
+        self.flashes.append(txt)
+
+
+yoke = FakeJoy(10, "Volante")
+panel = FakeJoy(11, "Panel interruptores")
+plugged[:] = [yoke, panel]
+hw = Hardware({})
+dev = {j.name: g for g, j in hw.devices.items()}
+B = hw.bindings
+B["eje_alabeo"] = dict(dev=dev["Volante"], eje=0, inv=False)
+B["eje_gases"] = dict(dev=dev["Volante"], eje=2, inv=False)
+B["sw_bat"] = dict(dev=dev["Panel interruptores"], btn=0)
+B["sw_tren"] = dict(dev=dev["Panel interruptores"], btn=1)
+B["mag_off"] = dict(dev=dev["Panel interruptores"], btn=2)
+B["mag_ambos"] = dict(dev=dev["Panel interruptores"], btn=3)
+
+# ---------------------------------------------------------------- 1. calibración
+hw.start_calibration()
+for roll, thr in ((-0.6, -0.9), (0.8, 0.7), (0.1, 0.0)):     # tope a tope y se suelta el volante en 0.1
+    yoke.axes[0], yoke.axes[2] = roll, thr
+    hw.poll_calibration()
+assert hw.finish_calibration() == 2
+assert B["eje_alabeo"]["cal"]["cen"] == 0.1
+for raw, want in ((-0.6, -1.0), (0.8, 1.0), (0.1, 0.0), (0.45, 0.5)):
+    yoke.axes[0] = raw
+    assert abs(hw.axis("eje_alabeo") - want) < 1e-6, (raw, hw.axis("eje_alabeo"))
+for raw, want in ((-0.9, -1.0), (0.7, 1.0)):
+    yoke.axes[2] = raw
+    assert abs(hw.axis("eje_gases", 0.0) - want) < 1e-6
+hw.start_calibration()                       # un eje que no se mueve conserva la calibración anterior
+hw.poll_calibration()
+assert hw.finish_calibration() == 0 and "cal" in B["eje_alabeo"]
+assert "cal." in hw.describe("eje_alabeo")
+print("calibración OK")
+
+# ---------------------------------------------------------------- 2. sincronización al empezar el vuelo
+world = World("c172")
+world.reposition("plataforma")
+s = world.ac.sys
+app = FakeApp()
+
+# avión frío en tierra: se copian los interruptores reales, salvo subir el tren
+s.cold_and_dark()
+panel.btns[0], panel.btns[1], panel.btns[3] = 1, 0, 1        # batería ON, tren ARRIBA, magnetos AMBOS
+hw.request_sync()
+hw.update(0.016, world, app)
+assert s.master is True and s.engines[0].magnetos == 3
+assert s.gear_down is True and hw.mismatch == {"sw_tren"}, hw.mismatch
+panel.btns[1] = 1                                            # se baja la palanca del tren: ya coincide
+hw.update(0.016, world, app)
+assert not hw.mismatch
+
+# lección con el avión preparado: no se cambia nada, solo se avisa
+s.ready_to_fly()
+panel.btns[0] = 0                                            # batería real en OFF
+app.flashes.clear()
+hw.request_sync()
+hw.update(0.016, world, app)
+assert s.master is True and hw.mismatch == {"sw_bat"}
+assert app.flashes and "BATERÍA" in app.flashes[-1]
+panel.btns[0] = 1                                            # al mover el interruptor toma el mando
+hw.update(0.016, world, app)
+assert s.master is True and not hw.mismatch
+panel.btns[0] = 0
+hw.update(0.016, world, app)
+assert s.master is False
+print("sincronización de interruptores OK")
+
+# ---------------------------------------------------------------- 3. joystick genérico y cabina física
+ctl = Controls({})
+ctl.hw = hw
+assert ctl.joy is yoke and hw.uses_device(yoke)
+s.ready_to_fly()
+for en in s.engines:
+    en.throttle = 0.3
+B.pop("eje_gases")                           # gases sin asignar en la cabina: el eje 2 genérico no debe moverlos
+yoke.axes[2] = 1.0
+yoke.btns[4] = 1                             # botón 4 del volante = «flaps arriba» del joystick genérico
+flaps = s.flaps_cmd = 1
+ctl.update(0.016, world, None, 0)
+assert ctl.joy_shared and s.engines[0].throttle == 0.3 and s.flaps_cmd == flaps
+print("sin choque con el joystick genérico OK")
+
+# ---------------------------------------------------------------- 4. conexión en caliente
+pedals = FakeJoy(12, "Pedales")
+plugged.append(pedals)
+hw.sync_pending = False
+added, removed = hw.refresh()
+assert added == ["Pedales"] and not removed and hw.sync_pending
+plugged.remove(pedals)
+added, removed = hw.refresh()
+assert removed == ["Pedales"] and not added
+assert hw.refresh() == ([], [])
+print("conexión en caliente OK")
+print("TODO OK")

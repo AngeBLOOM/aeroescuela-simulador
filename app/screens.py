@@ -717,6 +717,20 @@ class ScreensMixin:
             n = hw.import_profile()
             self.flash(f"Importadas {n} asignaciones" if n else "No hay archivo cabina_fisica.json en la carpeta de datos", 5)
             self.save_settings()
+        calibrating = hw.calib is not None
+        if ui.button(s, (box.right - 470, box.y + 50, 160, 28), "Terminar calibración" if calibrating else "Calibrar ejes",
+                     active=calibrating, size=12,
+                     tip="Mide el recorrido real de cada eje asignado (tope a tope) y su centro"):
+            if calibrating:
+                n = hw.finish_calibration()
+                self.flash(f"Calibrados {n} ejes" if n else "Ningún eje se movió lo suficiente: no se cambió nada", 5)
+                self.save_settings()
+            else:
+                hw.start_calibration()
+        if hw.calib is not None:
+            hw.poll_calibration()
+            f.blit(s, "Calibrando: mueva cada eje asignado de tope a tope; suelte volante, pedales y compensador en el "
+                      "centro y pulse «Terminar calibración».", (x0, box.y + 76), 15, COL["yellow"], bold=True)
         if hw.capture:
             msg = f"Asignando «{dict((k, n) for k, n, _ in FUNCTIONS)[hw.capture]}»: " + (
                 "MUEVA el eje a fondo" if KIND[hw.capture] == "eje" else "ACCIONE el interruptor o botón")
@@ -891,6 +905,8 @@ class ScreensMixin:
             ("Botón de hablar por micrófono (PTT) asignado", bool(hw.bindings.get("btn_ptt_voz"))),
             ("Micrófono probado", getattr(self, "_mic_res", "").startswith("✓")),
             ("Pantalla en «Paisaje + instr.» o «2.º monitor»", st.get("pantalla_instr") in ("ambiente", "segunda", "unica")),
+            ("Ejes calibrados", any(b.get("cal") for b in hw.bindings.values())),
+            ("Interruptores reales iguales que en el avión", not hw.mismatch),
         ]
         for i, (lab, ok) in enumerate(checks):
             cx = x0 + (i % 2) * 480
@@ -1026,6 +1042,10 @@ class ScreensMixin:
         if self.ui.button(s, (box.right - 170, y - 6, 140, 32), "Buscar", size=14):
             c.refresh_joystick()
         y += 32
+        if c.joy is not None and self.hardware.uses_device(c.joy):
+            f.blit(s, "Este mando está asignado en «Cabina física»: se configura allí y aquí se ignora.", (x0, y), 14,
+                   COL["amber"])
+            y += 28
         if c.joy is not None:
             for key, lab in (("eje_alabeo", "Eje alabeo"), ("eje_cabeceo", "Eje cabeceo"), ("eje_timon", "Eje timón"),
                              ("eje_potencia", "Eje gases")):
