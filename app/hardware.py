@@ -135,7 +135,8 @@ class Hardware:
         self.sync_pending = True     # copiar la posición de los interruptores reales en la próxima lectura
         self.mismatch = set()        # interruptores reales que no coinciden con el avión
         self.radio_sel = 0
-        self.brake_cmd = 0.0
+        self.brake_cmd = 0.0         # botón de frenos (los dos lados)
+        self.brake_l = self.brake_r = 0.0   # frenos de pie, cada uno en su rueda
         self.refresh()
 
     # ------------------------------------------------------------ dispositivos
@@ -375,6 +376,7 @@ class Hardware:
 
     # ------------------------------------------------------------ aplicar al avión
     def update(self, dt, world, app):
+        self.brake_cmd = self.brake_l = self.brake_r = 0.0   # sin lectura (mando quitado) no queda frenado
         if self.capture:
             self._poll_capture()
             return
@@ -459,7 +461,11 @@ class Hardware:
         st, _, _ = self.button("btn_frenos")
         fl = lever01("eje_freno_izq")
         fr = lever01("eje_freno_der")
-        self.brake_cmd = max(fl or 0.0, fr or 0.0, 1.0 if st else 0.0)
+        if (fl is None) != (fr is None):             # un solo eje de freno asignado: frena las dos ruedas
+            fl = fr = fl if fr is None else fr
+        self.brake_l = fl if fl and fl > 0.02 else 0.0
+        self.brake_r = fr if fr and fr > 0.02 else 0.0
+        self.brake_cmd = 1.0 if st else 0.0          # botón de frenos: los dos lados
         for k, d in (("btn_trim_arriba", 1), ("btn_trim_abajo", -1)):
             st, _, _ = self.button(k)
             if st:

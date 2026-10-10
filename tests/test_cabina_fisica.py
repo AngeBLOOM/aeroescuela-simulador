@@ -129,6 +129,23 @@ ctl.update(0.016, world, None, 0)
 assert ctl.joy_shared and s.engines[0].throttle == 0.3 and s.flaps_cmd == flaps
 print("sin choque con el joystick genérico OK")
 
+# ---------------------------------------------------------------- 3b. frenos de pie: cada uno en su rueda
+B["eje_freno_izq"] = dict(dev=dev["Volante"], eje=4, inv=False)
+yoke.axes[4] = 1.0                           # solo el pedal izquierdo asignado y pisado a fondo: frena las dos
+hw.update(0.016, world, app)
+assert hw.brake_l == hw.brake_r == 1.0
+B["eje_freno_der"] = dict(dev=dev["Volante"], eje=5, inv=False)
+yoke.axes[5] = -1.0                          # con los dos asignados, cada uno en su lado
+hw.update(0.016, world, app)
+assert hw.brake_l == 1.0 and hw.brake_r == 0.0 and hw.brake_cmd == 0.0
+plugged.remove(yoke)                         # se desconecta pisando el freno: no queda frenado
+hw.refresh()
+hw.update(0.016, world, app)
+assert hw.brake_l == hw.brake_r == 0.0
+plugged.insert(0, yoke)
+hw.refresh()
+print("frenos de pie OK")
+
 # ---------------------------------------------------------------- 4. conexión en caliente
 pedals = FakeJoy(12, "Pedales")
 plugged.append(pedals)

@@ -23,6 +23,8 @@ anote qué barra o punto cambia. Así sabrá, por ejemplo, que el timón es el �
 3. Asigne como mínimo: volante (alabeo y cabeceo), pedales, gases, frenos, batería, alternador, aviónica, llave de
    magnetos y el **botón para hablar por micrófono (PTT)**. Los mandos de emergencia (puerta, extintor, tren de
    emergencia, cortacircuito del compensador, CAPS, transpondedor 7700/7600) están al final de la lista.
+   Asigne los **dos** frenos de pie: cada uno frena su rueda, así se puede girar en rodaje frenando un solo lado.
+   Si sus pedales tienen un único eje de freno, asígnelo como «izquierdo» y frenará las dos ruedas.
 4. Un mando asignado aquí deja de leerse como «Joystick / volante» de Ajustes, para que sus botones no hagan dos
    cosas a la vez.
 

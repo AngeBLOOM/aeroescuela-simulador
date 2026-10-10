@@ -1096,8 +1096,8 @@ class App(ScreensMixin):
                 en.starter = crank and en.magnetos > 0 and not en.running
         # mandos a la frecuencia de fotograma; la física avanza a 240 Hz
         self.controls.update(dt, w, keys, mods)
-        if self.hardware.brake_cmd > 0.02:
-            ac.brake = max(ac.brake, self.hardware.brake_cmd)
+        ac.brake = max(ac.brake, self.hardware.brake_cmd)
+        ac.brake_l, ac.brake_r = self.hardware.brake_l, self.hardware.brake_r   # frenos de pie: cada rueda
         w.step(dt)
         evs = list(w.events)
         w.events.clear()

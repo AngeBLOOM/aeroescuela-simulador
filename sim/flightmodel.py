@@ -43,7 +43,8 @@ class Aircraft:
         self.ctl_ail = 0.0
         self.ctl_rud = 0.0
         self.trim = 0.0
-        self.brake = 0.0
+        self.brake = 0.0                 # ambos frenos (teclado, botón)
+        self.brake_l = self.brake_r = 0.0  # frenos de pie por separado (pedales): se suman a brake en su lado
         # superficies (rad)
         self.de = self.da = self.dr = 0.0
         self.time = 0.0
@@ -68,6 +69,7 @@ class Aircraft:
         self.ctl_elev = self.ctl_ail = self.ctl_rud = 0.0
         self.de = self.da = self.dr = 0.0
         self.brake = 0.0
+        self.brake_l = self.brake_r = 0.0
         self.max_g = self.min_g = 1.0
         self.overstress = False
         self._contact_prev = {}
@@ -353,7 +355,8 @@ class Aircraft:
             v_lat = vpt[0] * wr[0] + vpt[1] * wr[1]
             brk = 0.0
             if gr.brake:
-                brk = 1.0 if s.parking_brake else clamp(self.brake, 0.0, 1.0)
+                side = self.brake_r if gr.pos[1] > 0 else self.brake_l
+                brk = 1.0 if s.parking_brake else clamp(max(self.brake, side), 0.0, 1.0)
             # pista mojada: los frenos agarran menos y la rueda derrapa antes
             wet = getattr(self.atmo, "wet", 0.0) if gsurf != "agua" else 0.0
             mu_l = sfc["roll"] + brk * sfc["brake"] * (1.0 - 0.45 * wet)
