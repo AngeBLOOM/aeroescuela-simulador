@@ -275,7 +275,7 @@ class InstrumentDisplay:
         elif name == "vsi":
             g.vsi(s, p, r, ind.vs_fpm)
         elif name == "cdi1":
-            g.cdi(s, p, r, world.nav1, "NAV 1")
+            g.cdi(s, p, r, world.nav_source(), "GPS" if world.cdi_src == "GPS" else "NAV 1")
         elif name == "cdi2":
             if world.show_adf:
                 g.adf(s, p, r, world.adf)

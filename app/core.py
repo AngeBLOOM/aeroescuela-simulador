@@ -965,6 +965,9 @@ class App(ScreensMixin):
             self.screenshot()
         elif k == pygame.K_F9:
             self.settings["mostrar_fps"] = not self.settings["mostrar_fps"]
+        elif k == pygame.K_F7:
+            w.cdi_src = "GPS" if w.cdi_src == "VLOC" else "VLOC"
+            self.flash(f"CDI: {w.cdi_src}" + (" (GPS: plan de vuelo en el mapa del G1000)" if w.cdi_src == "GPS" else ""), 1.8)
         elif k == pygame.K_F6:
             if ac.t.carburetor:
                 ac.sys.carb_heat = not ac.sys.carb_heat

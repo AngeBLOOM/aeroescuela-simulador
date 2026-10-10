@@ -167,7 +167,8 @@ class CockpitPanel:
         # CDI de NAV1 y NAV2
         cr = int(52 * s)
         cx = cx0 + 2 * sp + r + 14 * s + cr
-        for nav, yy, title in ((world.nav1, y1, "NAV 1"), (world.nav2, y2, "NAV 2")):
+        src1 = world.nav_source()
+        for nav, yy, title in ((src1, y1, "GPS" if src1 is world.gps else "NAV 1"), (world.nav2, y2, "NAV 2")):
             rr = (cx - cr, yy - cr, 2 * cr, 2 * cr)
             if nav is world.nav2 and world.show_adf:
                 g.adf(surf, (cx, yy), cr, world.adf)
@@ -176,6 +177,14 @@ class CockpitPanel:
                     world.adf.tune(d * (10 if pygame.key.get_mods() & pygame.KMOD_SHIFT else 1))
                 if ui.hover(rr):
                     ui.tooltip = "Rueda: sintonizar el ADF (kHz; Mayús: de 10 en 10) · Clic derecho: volver a NAV 2"
+            elif nav is world.gps:
+                g.cdi(surf, (cx, yy), cr, nav, title)
+                d = ui.scroll(rr)
+                if d and nav.obs_mode:
+                    nav.set_obs(True, nav.obs_course + d * 2)
+                if ui.hover(rr):
+                    ui.tooltip = ("Rueda: curso del modo OBS del GPS" if nav.obs_mode else
+                                  "CDI en GPS: sigue el plan de vuelo (F7: volver a VLOC)")
             else:
                 g.cdi(surf, (cx, yy), cr, nav, title)
                 d = ui.scroll(rr)

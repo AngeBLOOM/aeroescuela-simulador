@@ -20,6 +20,35 @@ python main.py
 Requisitos: Windows 10/11, Python 3.10+ y una GPU con OpenGL 3.3 (sirve la gráfica integrada).
 Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requirements.txt`.
 
+## Novedades (octubre de 2026)
+
+- **Cabina física:**
+  - calibración de ejes y sensibilidad por eje (zona muerta y curva, con la curva dibujada);
+  - setas asignables y frenos de pie diferenciales;
+  - interruptores sincronizados al empezar el vuelo;
+  - mandos conectados en caliente y mandos iguales distinguidos por número de serie o puerto;
+  - el joystick genérico ya no pisa a los mandos asignados.
+  Ver `docs/GUIA_CABINA_FISICA.md`.
+- **Física:**
+  - el centro de gravedad de la hoja de peso y balance cambia la estabilidad y la fuerza de profundidad;
+  - amortiguación `Cmadot`;
+  - turbulencia que hace girar el avión (Dryden);
+  - barrena con recuperación PARE;
+  - hielo en el carburador (C152 y PA-28 Warrior; **F6** = calefacción).
+- **Navegación:**
+  - radiofaros NDB y ADF (clic derecho en el NAV 2);
+  - declinación magnética real: la brújula, el direccional, el HSI, el VOR, el viento de la torre y los rumbos dictados son magnéticos;
+  - **GPS** con plan de vuelo, D→ y OBS en el mapa del G1000 (**F7** = CDI GPS/VLOC).
+- **Instructor:**
+  - congelar altitud, posición o combustible;
+  - tiempo ×2/×4;
+  - mover el avión;
+  - humedad;
+  - fallas nuevas.
+- **Lecciones nuevas:** hielo en el carburador y barrena.
+- **Salida de datos por UDP** para instrumentos, paneles y movimiento: `docs/PROTOCOLO_UDP.md`.
+- **Pruebas:** `python tools/pruebas.py` ejecuta 17 pruebas sin ventana; GitHub las ejecuta en cada pull request.
+
 ## Qué incluye
 
 **Modelo de vuelo**
@@ -350,9 +379,10 @@ monitores delante y un 4.º detrás del tablero para los instrumentos).
 main.py              punto de entrada
 sim/                 física y lógica (sin gráficos)
   flightmodel.py     modelo 6DOF         systems.py   motor, eléctrico, vacío, flaps, tren
-  aircraft_data.py   C172S y PA-28R       atmosphere.py ISA, viento, turbulencia
+  aircraft_data.py   los 7 aviones        atmosphere.py ISA, viento, turbulencia, humedad
   terrain.py         terreno              airports.py   aeródromos del escenario escuela
-  nav.py             VOR/ILS/DME          autopilot.py  piloto automático
+  nav.py             VOR/ILS/DME/ADF      autopilot.py  piloto automático
+  gps.py             GPS y plan de vuelo  weight.py     peso, centrado y rendimiento
   world.py           integra todo         lessons.py    programa ACS y evaluación
   geo.py             datos reales         recorder.py   caja negra
   traffic.py         tráfico IA           atc.py        torre, rodadura, ATIS y fraseología
@@ -364,8 +394,8 @@ app/                 aplicación, menús, sonido sintetizado, voz, radio VHF (ra
 tests/               pruebas: física, piloto automático, lecciones con "alumno robot", geodatos
 ```
 
-Pruebas sin ventana: `python tests/test_physics.py`, `python tests/test_ap.py`,
-`python tests/test_lessons.py` (con `LOC=LEMD` para probar en un aeropuerto real).
+Pruebas sin ventana: `python tools/pruebas.py` (todas las que no necesitan internet, las mismas que GitHub en cada
+pull request) o una sola, p. ej. `python tests/test_lessons.py` (con `LOC=LEMD` para probar en un aeropuerto real).
 
 ## Licencias de los datos
 

@@ -242,6 +242,17 @@ def step(app, frame):
             app.state = "instructor"; app.instr_tab = "control"
         elif name == "congelado":
             app.state = "flight"
+        elif name in ("gps", "gps_fpl", "gps_dto"):
+            if name == "gps":
+                app.cockpit_style = "2d"; app.panel.mode = "glass"; app.settings["pantalla_instr"] = "no"
+                app.start_lesson(FreeFlight("crucero"))
+                g = app.world.gps
+                for ident, kind in (("ESC", "VOR"), ("VN", "NDB"), ("VNT", "APT")):
+                    p = g.find(ident, kind)
+                    if p is not None:
+                        g.add(p)
+                app.world.cdi_src = "GPS"
+            app.panel.glass.gps_page = {"gps": None, "gps_fpl": "fpl", "gps_dto": "dto"}[name]
         elif name == "c152":
             app.cockpit_style = "2d"; app.panel.mode = "analog"; app.settings["pantalla_instr"] = "no"
             app.world.set_aircraft("c152")

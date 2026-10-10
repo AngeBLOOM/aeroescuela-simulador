@@ -10,6 +10,7 @@ from .atmosphere import Atmosphere, Weather
 from .autopilot import Autopilot
 from .flightmodel import Aircraft
 from .mathx import FT, KT, NM, clamp, quat_from_euler, quat_to_euler, wrap360
+from .gps import Gps
 from .nav import AdfRadio, NavRadio
 from .terrain import Terrain
 from .traffic import Traffic
@@ -169,6 +170,8 @@ class World:
             self.adf.freq = ndbs[0].freq
             self.adf.standby = ndbs[1].freq if len(ndbs) > 1 else ndbs[0].freq
         self.show_adf = False          # el segundo instrumento de navegación muestra el ADF en vez del NAV 2
+        self.gps = Gps(self)
+        self.cdi_src = "VLOC"          # selector CDI: "VLOC" (NAV 1) o "GPS" para el HSI/CDI y el piloto automático
         fq = dict(TWR=118.300, GND=121.900, ATIS=127.800)
         if location is not None:
             fq.update(location.get("freqs") or {})
@@ -469,6 +472,7 @@ class World:
         self.nav1.update(ac, pw)
         self.nav2.update(ac, pw)
         self.adf.update(ac, pw)
+        self.gps.update(ac, pw)
         # eventos de la física
         for ev in ac.events:
             self.events.append(ev)
@@ -479,8 +483,12 @@ class World:
         if not ac.on_ground and ac.agl > 3:
             self.stats["airborne"] = True
 
+    def nav_source(self):
+        """Lo que siguen el HSI/CDI de NAV 1 y el piloto automático en NAV: el GPS o la radio NAV 1 (selector CDI)."""
+        return self.gps if self.cdi_src == "GPS" else self.nav1
+
     def apply_autopilot(self, dt):
-        cmd = self.ap.update(dt, self.ac, self.nav1, self.ind.alt_ft)
+        cmd = self.ap.update(dt, self.ac, self.nav_source(), self.ind.alt_ft)
         return cmd
 
 
@@ -503,6 +511,19 @@ def transfer_to_scene(old, loc):
         b.freq, b.standby, b.obs = a.freq, a.standby, a.obs
     w.adf.freq, w.adf.standby, w.show_adf = old.adf.freq, old.adf.standby, old.show_adf
     w.ind.magvar = w.ap.magvar = w.magvar        # el direccional se queda donde estaba; la brújula sigue al lugar
+    # el plan del GPS pasa al escenario nuevo con sus coordenadas convertidas (mismo punto geográfico)
+    g, og = w.gps, old.gps
+
+    def conv(pos):
+        la_, lo_ = old.location["proj"].to_geo(pos[0], pos[1])
+        n_, e_ = loc["proj"].to_local(la_, lo_)
+        return np.array([float(n_), float(e_)])
+    for wp in og.plan + ([og.direct] if og.direct is not None else []):
+        wp.pos = conv(wp.pos)
+    g.plan, g.active, g.direct, g.obs_mode, g.obs_course = og.plan, og.active, og.direct, og.obs_mode, og.obs_course
+    g._from_here = og._from_here
+    g.origin = conv(og.origin) if og.origin is not None else None
+    w.cdi_src = old.cdi_src
     w.frozen, w.sim_rate = old.frozen, old.sim_rate
     w.select_runway()
     w.traffic.reset()

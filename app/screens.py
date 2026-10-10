@@ -66,6 +66,7 @@ KEYS = [
         ("Ctrl+E", "Arranque automático del motor"),
         ("Insert", "Motor de arranque (mantener)"),
         ("F6", "Calefacción al carburador (C152, PA-28 Warrior)"),
+        ("F7", "CDI: GPS o VLOC (lo que sigue el HSI y el piloto automático)"),
     ]),
     ("Piloto automático y cabina", [
         ("Z", "Conectar / desconectar PA"),
