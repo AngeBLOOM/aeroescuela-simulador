@@ -94,6 +94,9 @@ class ControlsScreen:
         f.blit(surf, f"MANDOS · {world.ac.t.short}", (board.right - 16, board.y + 26), 14, COL["accent"], bold=True,
                anchor="midright")
         area = pygame.Rect(board.x + 20, board.y + 56, board.w - 40, board.h - 70)
+        if area.w > 1060:                 # en pantallas anchas los mandos se agrupan al centro, no dispersos
+            area = pygame.Rect(board.centerx - 530, area.y, 1060, area.h)
+        pygame.draw.line(surf, (70, 76, 86), (board.x + 12, board.y + 50), (board.right - 12, board.y + 50))
         page = tabs[self.tab]
         getattr(self, {"MOTOR": "_engine", "COMBUSTIBLE": "_fuel", "ELÉCTRICO": "_elec", "LUCES": "_lights",
                        "FLAPS Y COMPENSADOR": "_flaps", "TREN Y FRENOS": "_gear", "FRENOS": "_gear",

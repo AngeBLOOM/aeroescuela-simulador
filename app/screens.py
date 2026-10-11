@@ -1171,27 +1171,50 @@ class ScreensMixin:
         panel_box(s, box, 14, (10, 16, 26, 220))
         self._keys_columns(box)
 
+    def _keys_layout(self, w, size):
+        """Columnas de teclas a un tamaño de letra: la descripción se parte en líneas si no cabe junto a la tecla.
+        Devuelve (columnas, alto necesario)."""
+        f = self.fonts
+        colw = (w - 60) / 2
+        cols = []
+        for title, rows in KEYS:
+            kw = max(f.get(size, True, True).size(k)[0] for k, _ in rows) + 18
+            lines = [(k, f.wrap(d, size, colw - kw - 6) or [""]) for k, d in rows]
+            h = 40 + sum(len(ls) * (size + 6) + 4 for _, ls in lines)
+            cols.append((title, kw, lines, h))
+        return cols, max(c[3] for c in cols) + 22 + 44
+
     def _keys_columns(self, box):
         s = self.overlay
         f = self.fonts
+        from ui import theme
+        for size in (15, 14, 13, 12, 11):
+            cols, need = self._keys_layout(box.w, size)
+            if need <= box.h:
+                break
         colw = (box.w - 60) / 2
-        for ci, (title, rows) in enumerate(KEYS):
+        for ci, (title, kw, lines, _h) in enumerate(cols):
             x = box.x + 26 + ci * (colw + 10)
-            y = box.y + 22
-            f.blit(s, title, (x, y), 19, COL["accent"], bold=True)
-            y += 34
-            for k, d in rows:
-                kr = f.blit(s, k, (x, y), 15, COL["yellow"], bold=True, mono=True)
-                f.blit(s, d, (x + 150, y), 15, COL["white"])
-                y += 25
-        f.blit(s, "Joystick: ejes de alabeo/cabeceo/timón/gases, botón 1 frenos, botón 2 desconecta el PA, seta = compensador.",
-               (box.x + 26, box.bottom - 30), 13, COL["grey"])
+            y = box.y + 20
+            theme.spaced(f, s, title.upper(), (x, y), 13, theme.CYAN)
+            y += 30
+            for k, ls in lines:
+                f.blit(s, k, (x, y), size, theme.AMBER, bold=True, mono=True)
+                for i, ln in enumerate(ls):
+                    f.blit(s, ln, (x + kw, y + i * (size + 6)), size, theme.TEXT)
+                y += len(ls) * (size + 6) + 4
+        foot = ("Joystick: ejes de alabeo/cabeceo/timón/gases, botón 1 frenos, botón 2 desconecta el PA, "
+                "seta = compensador.")
+        pygame.draw.line(s, (30, 56, 74), (box.x + 20, box.bottom - 40), (box.right - 20, box.bottom - 40))
+        f.blit(s, f.wrap(foot, 12, box.w - 52)[0], (box.x + 26, box.bottom - 30), 12, theme.TEXT_DIM)
 
     # ================================================================ superposiciones de vuelo
     def draw_help_overlay(self):
-        box = pygame.Rect(0, 0, min(self.W - 60, 1000), min(self.H - 80, 520))
-        box.center = (self.W / 2, self.H / 2 - 40)
-        panel_box(self.overlay, box, 14, (8, 12, 20, 235))
+        w = min(self.W - 60, 1060)
+        need = self._keys_layout(w, 15)[1]
+        box = pygame.Rect(0, 0, w, min(self.H - 70, need))
+        box.center = (self.W / 2, self.H / 2)
+        panel_box(self.overlay, box, 14, (8, 12, 20, 240))
         self._keys_columns(box)
 
     def draw_radio_subtitle(self):
@@ -1691,11 +1714,20 @@ class ScreensMixin:
         dim = pygame.Surface((self.W, self.H), pygame.SRCALPHA)
         dim.fill((0, 0, 0, 120))
         s.blit(dim, (0, 0))
-        box = pygame.Rect(0, 0, 380, 470)
+        from ui import theme
+        box = pygame.Rect(0, 0, 400, 462)
         box.center = (self.W / 2, self.H / 2)
         panel_box(s, box, 16, (10, 16, 26, 235))
-        f.blit(s, "PAUSA", (box.centerx, box.y + 18), 28, COL["white"], bold=True, anchor="midtop")
-        y = box.y + 70
+        theme.spaced(f, s, "PAUSA", (box.centerx, box.y + 18), 13, theme.CYAN, anchor="midtop")
+        L = self.lesson
+        title = L.title if L is not None else "Vuelo libre"
+        while f.get(20, True).size(title)[0] > box.w - 40 and len(title) > 4:
+            title = title.rstrip("…")[:-1].rstrip() + "…"
+        f.blit(s, title, (box.centerx, box.y + 38), 20, theme.TEXT, bold=True, anchor="midtop")
+        mins = self.world.stats.get("flight_time", 0) / 60 if hasattr(self.world, "stats") else 0
+        f.blit(s, f"{self.world.ac.t.short}  ·  {mins:.0f} min de vuelo", (box.centerx, box.y + 66), 12, theme.TEXT_DIM,
+               anchor="midtop")
+        y = box.y + 98
         bw = box.w - 60
         acts = [("Continuar", lambda: setattr(self, "state", "flight")),
                 ("Reiniciar", self.restart_lesson),
@@ -2139,10 +2171,36 @@ class ScreensMixin:
                 f.blit(s, com, (box.x + 28, y + 18), 12, COL["grey"])
                 y += 38
         else:
-            f.blit(s, "Vuelo libre registrado en la bitácora.", (box.x + 28, y), 18, COL["white"])
-            y += 30
-        f.blit(s, f"Tiempo de vuelo: {getattr(self, 'debrief_flight_s', 0) / 60:.1f} min   ·   Aterrizajes: {getattr(self, 'debrief_landings', 0)}"
-                  f"   ·   G máx: {self.world.ac.max_g:.1f}", (box.x + 28, foot_y), 14, COL["grey"])
+            # vuelo libre: sin nota, un resumen en tarjetas
+            from ui import theme
+            f.blit(s, "Vuelo libre registrado en la bitácora.", (box.x + 28, y), 16, theme.TEXT_DIM)
+            y += 34
+            a_ = self.recorder.array()
+            tiles = [("TIEMPO DE VUELO", f"{getattr(self, 'debrief_flight_s', 0) / 60:.1f}", "min"),
+                     ("ATERRIZAJES", f"{getattr(self, 'debrief_landings', 0)}", ""),
+                     ("G MÁXIMA", f"{self.world.ac.max_g:.1f}", "g")]
+            if a_ is not None and len(a_) > 1:
+                F_ = self.recorder.FIELDS
+                xy = a_[:, [F_.index("x"), F_.index("y")]]
+                dist = float(np.sum(np.hypot(*np.diff(xy, axis=0).T))) / NM
+                tiles = [("DISTANCIA", f"{dist:.1f}", "NM"), ("ALTITUD MÁXIMA", f"{np.max(a_[:, F_.index('alt')]):.0f}", "ft"),
+                         ("VELOCIDAD MÁXIMA", f"{np.max(a_[:, F_.index('ias')]):.0f}", "kt")] + tiles
+            tw = (lw - 20) / 3
+            for k, (lab, val, unit) in enumerate(tiles):
+                r_ = pygame.Rect(box.x + 28 + (k % 3) * (tw + 10), y + (k // 3) * 96, tw, 86)
+                if r_.bottom > foot_y - 10:
+                    break
+                pygame.draw.rect(s, (14, 24, 36), r_, border_radius=10)
+                pygame.draw.rect(s, (32, 60, 80), r_, 1, border_radius=10)
+                f.blit(s, lab, (r_.x + 14, r_.y + 12), 11, theme.TEXT_DIM, bold=True)
+                vr = f.blit(s, val, (r_.x + 14, r_.y + 32), 30, theme.TEXT, bold=True)
+                if unit:
+                    f.blit(s, unit, (vr.right + 6, vr.bottom - 20), 13, theme.CYAN, bold=True)
+            y += 200
+        if R is not None:                      # en vuelo libre ya están en las tarjetas
+            f.blit(s, f"Tiempo de vuelo: {getattr(self, 'debrief_flight_s', 0) / 60:.1f} min   ·   Aterrizajes: "
+                      f"{getattr(self, 'debrief_landings', 0)}   ·   G máx: {self.world.ac.max_g:.1f}", (box.x + 28, foot_y), 14,
+                   COL["grey"])
         for i, (txt, c) in enumerate(notes):
             f.blit(s, txt, (box.x + 28, foot_y + 24 + 20 * i), 13, c)
         # gráficas
@@ -2193,8 +2251,7 @@ class ScreensMixin:
         lo, hi = float(np.min(v)), float(np.max(v))
         if hi - lo < 1:
             hi, lo = hi + 1, lo - 1
-        f.blit(s, f"{hi:.0f}", (r.right - 8, r.y + 6), 11, COL["grey"], anchor="topright")
-        f.blit(s, f"{lo:.0f}", (r.right - 8, r.bottom - 16), 11, COL["grey"], anchor="topright")
+        f.blit(s, f"mín {lo:.0f}  ·  máx {hi:.0f}", (r.right - 8, r.y + 6), 11, COL["grey"], anchor="topright")
         n = len(t)
         step = max(1, n // 400)
         T = t[::step]

@@ -241,6 +241,13 @@ def step(app, frame):
             app.state = "flight"
         elif name == "aviso":
             app.flash("Transpondedor 1200 (VFR)", 6)
+        elif name == "ayuda":
+            app.show_check = False
+            app.show_help = True
+        elif name == "sin_ayuda":
+            app.show_help = False
+        elif name == "repeticion":
+            app.enter_replay()
         elif name in ("gps", "gps_fpl", "gps_dto"):
             if name == "gps":
                 app.cockpit_mode = "2d"; app.panel.mode = "glass"; app.settings["pantalla_instr"] = "no"

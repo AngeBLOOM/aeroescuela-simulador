@@ -1438,7 +1438,8 @@ class App(ScreensMixin):
                            else self._bar_rect.bottom + 6)
             panel_box(self.overlay, chip, 8, (40, 30, 6, 225), border=(255, 200, 60))
             self.fonts.blit(self.overlay, txt, chip.center, 14, COL["yellow"], bold=True, anchor="center")
-        if self.settings.get("mostrar_fps"):
+        covered = self.show_help or self.show_controls or self.state == "debrief"   # paneles grandes encima
+        if self.settings.get("mostrar_fps") and not covered:
             st = self.latency.stats()
             txt = f"{self.fps:4.0f} FPS" + (f"  ·  retardo interno {st[0]:.0f} ms (95 %: {st[1]:.0f}) · peor caso "
                                              f"{self.latency.worst_case(st[1], self.fps):.0f} ms" if st else "")
@@ -1930,8 +1931,9 @@ class App(ScreensMixin):
             col, blink = lt
             on = not blink or int(t * 2) % 2 == 0
             c = (60, 255, 90) if col == "verde" else (255, 50, 40)
-            r = pygame.Rect(self.W - 250, self.H * 0.30, 230, 64)
-            pygame.draw.rect(s, (10, 12, 16, 220), r, border_radius=10)
+            r = pygame.Rect(0, self.H * 0.30, 250, 64)
+            r.right = self.free_span(lesson_box=False)[1]          # a la izquierda de la tableta si está abierta
+            panel_box(s, r, 10, (6, 16, 28, 230), border=c if on else (70, 76, 86))
             if on:
                 pygame.draw.circle(s, c, (r.x + 34, r.centery), 18)
                 pygame.draw.circle(s, (255, 255, 255), (r.x + 34, r.centery), 7)
@@ -1951,20 +1953,37 @@ class App(ScreensMixin):
         self.renderer.render(self.camera, (0, 0, self.W, self.H), pose=(p, q), dt=dt)
         s = self.overlay
         f = self.fonts
-        box = pygame.Rect(0, 0, 720, 70)
+        from ui import theme
+        box = pygame.Rect(0, 0, min(self.W - 40, 820), 104)
         box.midbottom = (self.W / 2, self.H - 16)
-        panel_box(s, box, 12, (10, 14, 20, 210))
-        f.blit(s, f"REPETICIÓN  x{r['speed']:g}" + ("  (pausa)" if r["paused"] else ""), (box.x + 14, box.y + 8), 16,
-               COL["accent"], bold=True)
+        panel_box(s, box, 12, (8, 16, 28, 228))
+        theme.spaced(f, s, "REPETICIÓN", (box.x + 16, box.y + 12), 12, theme.CYAN)
+        state = "PAUSA" if r["paused"] else f"×{r['speed']:g}"
+        chip = pygame.Rect(box.x + 132, box.y + 8, f.get(12, True).size(state)[0] + 18, 20)
+        pygame.draw.rect(s, theme.AMBER if r["paused"] else (16, 44, 62), chip, border_radius=10)
+        f.blit(s, state, chip.center, 12, theme.DEEP if r["paused"] else theme.TEXT, bold=True, anchor="center")
         i = Recorder.FIELDS
-        f.blit(s, f"VEL {row[i.index('ias')]:3.0f} kt   ALT {row[i.index('alt')]:5.0f} ft   V/S {row[i.index('vs')]:+5.0f}   "
-                  f"RUMBO {row[i.index('hdg')]:03.0f}", (box.x + 14, box.y + 32), 15, COL["white"], mono=True)
-        bar = pygame.Rect(box.x + 14, box.bottom - 12, box.w - 28, 4)
-        pygame.draw.rect(s, (60, 66, 76), bar)
+        vals = [("VEL", f"{row[i.index('ias')]:.0f}", "kt"), ("ALT", f"{row[i.index('alt')]:.0f}", "ft"),
+                ("V/S", f"{row[i.index('vs')]:+.0f}", "ft/min"), ("RUMBO", f"{row[i.index('hdg')]:03.0f}", "°")]
+        cw = (box.w - 32) / len(vals)
+        for k, (lab, v, u) in enumerate(vals):
+            x = box.x + 16 + k * cw
+            f.blit(s, lab, (x, box.y + 34), 11, theme.TEXT_DIM, bold=True)
+            r_ = f.blit(s, v, (x, box.y + 48), 20, theme.TEXT, bold=True, mono=True)
+            f.blit(s, u, (r_.right + 4, box.y + 55), 11, theme.TEXT_DIM)
+        # línea de tiempo con el tiempo transcurrido y el total
+        bar = pygame.Rect(box.x + 64, box.bottom - 20, box.w - 128, 6)
+        pygame.draw.rect(s, (24, 44, 60), bar, border_radius=3)
         fr = (r["t"] - r["t0"]) / max(r["t1"] - r["t0"], 1e-3)
-        pygame.draw.rect(s, COL["accent"], (bar.x, bar.y, bar.w * fr, bar.h))
-        f.blit(s, "Espacio pausa · ←/→ ±10 s · ↑/↓ velocidad · 2/3/4 cámaras · Esc salir", (self.W / 2, box.y - 22), 13,
-               COL["grey"], anchor="center")
+        pygame.draw.rect(s, theme.CYAN, (bar.x, bar.y, bar.w * fr, bar.h), border_radius=3)
+        pygame.draw.circle(s, theme.TEXT, (int(bar.x + bar.w * fr), bar.centery), 7)
+
+        def mmss(t):
+            return f"{int(t // 60)}:{int(t % 60):02d}"
+        f.blit(s, mmss(r["t"] - r["t0"]), (bar.x - 10, bar.centery), 12, theme.TEXT, mono=True, anchor="midright")
+        f.blit(s, mmss(r["t1"] - r["t0"]), (bar.right + 10, bar.centery), 12, theme.TEXT_DIM, mono=True, anchor="midleft")
+        f.blit(s, "Espacio pausa · ←/→ ±10 s · ↑/↓ velocidad · 2/3/4 cámaras · Esc salir",
+               (box.right - 16, box.y + 14), 11, theme.TEXT_DIM, anchor="topright")
         if self.ui.hit(bar.inflate(0, 16)):
             r["t"] = r["t0"] + (self.ui.mouse[0] - bar.x) / bar.w * (r["t1"] - r["t0"])
 
