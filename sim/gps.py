@@ -62,6 +62,19 @@ class Gps:
         out.sort(key=lambda t: t[1])
         return out[:n]
 
+    def search(self, text, n=12):
+        """Primero los puntos cuyo identificador es exactamente 'text' (como en el G1000: «ES» es el NDB ES aunque el
+        aeródromo ESC esté más cerca), después los que empiezan por él y detrás los que lo llevan en el nombre; cada
+        grupo del más cercano al más lejano. Mismo formato que nearest(): [(Waypoint, distancia NM, rumbo magnético)]."""
+        q = text.strip().upper()
+        if not q:
+            return self.nearest(n)
+        allp = self.nearest(10 ** 6)
+        exact = [r for r in allp if r[0].ident.upper() == q]
+        prefix = [r for r in allp if r not in exact and r[0].ident.upper().startswith(q)]
+        by_name = [r for r in allp if r not in exact and r not in prefix and q in (r[0].name or "").upper()]
+        return (exact + prefix + by_name)[:n]
+
     # ------------------------------------------------------------ plan y órdenes
     def add(self, wp, index=None):
         if index is None:
