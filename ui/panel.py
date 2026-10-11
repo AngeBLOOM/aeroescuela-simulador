@@ -11,6 +11,16 @@ from .glass import GlassCockpit
 from .ui import COL, panel_box
 
 
+LABEL = (178, 190, 204)          # rótulos del tablero: claros y legibles sobre el gris
+
+
+def fit(f, text, size, maxw, bold=True, low=8):
+    """Tamaño de letra para que un rótulo quepa en maxw (en pantallas chicas el tablero se reduce, la letra también)."""
+    while size > low and f.get(size, bold).size(text)[0] > maxw:
+        size -= 1
+    return size
+
+
 def lcd(f, surf, rect, text, size=20, color=(120, 235, 255), sub=None):
     rect = pygame.Rect(rect)
     pygame.draw.rect(surf, (6, 10, 14), rect, border_radius=4)
@@ -241,11 +251,12 @@ class CockpitPanel:
         av = sysm.avionics_ok
         w = 300 * s
         y = top + 4 * s
-        rh = 34 * s
+        rh = 30 * s
+        gap = 5 * s
         # COM
         def radio(label, act, stby, fmt, tune_fn, swap_fn, yy, ident=None):
             lab_r = pygame.Rect(x, yy, 46 * s, rh)
-            f.blit(surf, label, (lab_r.x, lab_r.centery), int(13), COL["grey"], bold=True, anchor="midleft")
+            f.blit(surf, label, (lab_r.x, lab_r.centery), int(13), LABEL, bold=True, anchor="midleft")
             a = pygame.Rect(x + 50 * s, yy, 100 * s, rh)
             b = pygame.Rect(x + 186 * s, yy, 100 * s, rh)
             if av:
@@ -276,8 +287,8 @@ class CockpitPanel:
             return fn
         radio("COM 1", world.com_freq, world.com_standby, "{:.3f}", com_tune, com_swap, y)
         radio("NAV 1", world.nav1.freq, world.nav1.standby, "{:.2f}", nav_tune(world.nav1), world.nav1.swap,
-              y + rh + 6 * s, world.nav1.ident if world.nav1.station else None)
-        y2 = y + 2 * (rh + 6 * s)
+              y + rh + gap, world.nav1.ident if world.nav1.station else None)
+        y2 = y + 2 * (rh + gap)
         if world.show_adf:
             adf = world.adf
 
@@ -295,16 +306,16 @@ class CockpitPanel:
         if ui.hover(lab2):
             ui.tooltip = "Clic: cambiar entre NAV 2 y ADF (radiofaro NDB, en kHz)"
         # transpondedor
-        yy = y + 3 * (rh + 6 * s)
-        f.blit(surf, "XPDR", (x, yy + rh / 2), 13, COL["grey"], bold=True, anchor="midleft")
+        yy = y + 3 * (rh + gap)
+        f.blit(surf, "XPDR", (x, yy + rh / 2), 13, LABEL, bold=True, anchor="midleft")
         xr = pygame.Rect(x + 50 * s, yy, 100 * s, rh)
         lcd(f, surf, xr, f"{world.xpdr:04d}" if av else "", int(19 * s + 4), (90, 240, 140), sub="ALT" if av else None)
         if ui.cockpit_button(surf, (x + 154 * s, yy + 5 * s, 132 * s, rh - 10 * s), "IDENT", size=13, tip="Identificación del transpondedor"):
             app.flash("IDENT enviado")
         # piloto automático
-        yy += rh + 10 * s
+        yy += rh + 8 * s
         ap = world.ap
-        apr = pygame.Rect(x, yy, w - 14 * s, 40 * s)
+        apr = pygame.Rect(x, yy, w - 14 * s, 36 * s)
         pygame.draw.rect(surf, (10, 12, 14), apr, border_radius=5)
         pygame.draw.rect(surf, (70, 76, 86), apr, 1, border_radius=5)
         if av:
@@ -313,23 +324,23 @@ class CockpitPanel:
             vert = ap.vert if ap.engaged else ""
             f.blit(surf, ("AP " if ap.engaged else "   ") + lat, (apr.x + 8, apr.y + 4), 15, COL["green"], mono=True, bold=True)
             if armed:
-                f.blit(surf, armed, (apr.x + 8, apr.y + 21), 12, COL["white"], mono=True)
+                f.blit(surf, armed, (apr.x + 8, apr.y + 19), 12, COL["white"], mono=True)
             txt = vert
             if vert == "VS":
                 txt += f" {ap.vs_sel:+.0f}"
             f.blit(surf, txt, (apr.centerx - 10, apr.y + 4), 15, COL["green"], mono=True, bold=True)
             if ap.alt_armed or ap.gs_armed:
-                f.blit(surf, "ALTS" if ap.alt_armed else "GS", (apr.centerx - 10, apr.y + 21), 12, COL["white"], mono=True)
+                f.blit(surf, "ALTS" if ap.alt_armed else "GS", (apr.centerx - 10, apr.y + 19), 12, COL["white"], mono=True)
             f.blit(surf, f"{ap.alt_sel:5.0f} FT", (apr.right - 8, apr.y + 4), 15, (120, 200, 255), mono=True, bold=True,
                    anchor="topright")
-            f.blit(surf, f"RUMBO {ap.hdg_bug:03.0f}", (apr.right - 8, apr.y + 21), 12, (255, 170, 60), mono=True,
+            f.blit(surf, f"RUMBO {ap.hdg_bug:03.0f}", (apr.right - 8, apr.y + 19), 12, (255, 170, 60), mono=True,
                    anchor="topright")
         d = ui.scroll(apr)
         if d:
             ap.alt_sel = clamp(ap.alt_sel + d * 100, 0, 17500)
         if ui.hover(apr):
             ui.tooltip = "Rueda: altitud seleccionada"
-        yy += 44 * s
+        yy += 40 * s
         bw = (w - 14 * s - 6 * 6 * s) / 7
         btns = [("AP", ap.engaged, lambda: ap.toggle(ac), "Conectar/desconectar piloto automático (Z)"),
                 ("HDG", ap.lat == "HDG", lambda: ap.set_hdg(ac), "Mantener rumbo del marcador (X)"),
@@ -339,15 +350,16 @@ class CockpitPanel:
                 ("VS", ap.vert == "VS", lambda: ap.set_vs(ac), "Velocidad vertical"),
                 ("▲▼", False, None, "Rueda: ajustar VS / cabeceo")]
         for i, (lab, act, fn, tip) in enumerate(btns):
-            r_ = pygame.Rect(x + i * (bw + 6 * s), yy, bw, 28 * s)
-            if ui.cockpit_button(surf, r_, lab, active=act and av, size=13, enabled=av, tip=tip) and fn:
+            r_ = pygame.Rect(x + i * (bw + 6 * s), yy, bw, 26 * s)
+            if ui.cockpit_button(surf, r_, lab, active=act and av, size=fit(self.f, lab, 13, bw - 4), enabled=av,
+                                 tip=tip) and fn:
                 fn()
             if lab == "▲▼":
                 d = ui.scroll(r_)
                 if d:
                     ap.adjust_vs(d * 100)
         # anunciadores
-        yy += 36 * s
+        yy += 32 * s
         ann = [
             ("VOLT", sysm.master and sysm.bus_volts < 24.5, COL["red"]),
             ("ACEITE", sysm.engine.oil_press < 20 and sysm.master, COL["red"]),
@@ -358,16 +370,23 @@ class CockpitPanel:
         ]
         aw = (w - 14 * s - 5 * 4 * s) / 6
         for i, (lab, on, col) in enumerate(ann):
-            r_ = pygame.Rect(x + i * (aw + 4 * s), yy, aw, 20 * s)
-            pygame.draw.rect(surf, col if on else (30, 30, 32), r_, border_radius=3)
-            f.blit(surf, lab, r_.center, 10, (10, 10, 10) if on else (90, 90, 90), bold=True, anchor="center")
+            r_ = pygame.Rect(x + i * (aw + 4 * s), yy, aw, 18 * s)
+            if on:
+                glow = pygame.Surface((r_.w + 12, r_.h + 12), pygame.SRCALPHA)
+                pygame.draw.rect(glow, (*col[:3], 70), glow.get_rect(), border_radius=8)
+                surf.blit(glow, (r_.x - 6, r_.y - 6))
+            pygame.draw.rect(surf, col if on else (20, 22, 25), r_, border_radius=4)
+            pygame.draw.rect(surf, (255, 255, 255) if on else (58, 62, 70), r_, 1, border_radius=4)
+            f.blit(surf, lab, r_.center, fit(f, lab, 10, aw - 4), (10, 10, 10) if on else (128, 136, 148), bold=True,
+                   anchor="center")
         mk = world.nav1.marker if av else None
-        yy += 26 * s
+        yy += 24 * s
         for i, (m, col) in enumerate((("O", (60, 120, 255)), ("M", (255, 190, 40)), ("I", (240, 240, 240)))):
             r_ = pygame.Rect(x + i * 30 * s, yy, 26 * s, 18 * s)
             on = mk == m and (time.time() * 3) % 1 < 0.6
-            pygame.draw.rect(surf, col if on else (30, 30, 32), r_, border_radius=3)
-            f.blit(surf, m, r_.center, 11, (10, 10, 10) if on else (80, 80, 80), bold=True, anchor="center")
+            pygame.draw.rect(surf, col if on else (20, 22, 25), r_, border_radius=4)
+            pygame.draw.rect(surf, (58, 62, 70), r_, 1, border_radius=4)
+            f.blit(surf, m, r_.center, 11, (10, 10, 10) if on else (128, 136, 148), bold=True, anchor="center")
         # cronómetro
         tr = pygame.Rect(x + 100 * s, yy, 90 * s, 18 * s)
         el = self.timer_acc + (time.time() - self.timer_start if self.timer_start else 0.0)
@@ -384,7 +403,7 @@ class CockpitPanel:
         if ui.hover(tr):
             ui.tooltip = "Cronómetro: clic iniciar/parar, clic derecho reiniciar"
         oat = ac.temp_k - 273.15 if hasattr(ac, "temp_k") else 15.0
-        f.blit(surf, f"OAT {oat:+.0f}°C", (x + 200 * s, yy + 9 * s), 12, COL["grey"], anchor="midleft")
+        f.blit(surf, f"OAT {oat:+.0f}°C", (x + 200 * s, yy + 9 * s), 12, LABEL, anchor="midleft")
 
         # palancas
         lx = x + w + 6 * s
@@ -409,15 +428,26 @@ class CockpitPanel:
             levers.append(("MEZCLA", e.mixture, (200, 30, 30), "mixture", e))
         for i, (lab, val, col, key, e) in enumerate(levers):
             tx = lx + 16 * s + i * 52 * s
-            track = pygame.Rect(tx, top + 34 * s, 14 * s, h - 52 * s)
-            pygame.draw.rect(surf, (12, 12, 14), track, border_radius=6)
+            track = pygame.Rect(tx, top + 34 * s, 12 * s, h - 66 * s)
+            pygame.draw.rect(surf, (8, 9, 11), track.inflate(4, 4), border_radius=7)
+            pygame.draw.rect(surf, (52, 56, 62), track.inflate(4, 4), 1, border_radius=7)
+            for k in range(5):                        # marcas cada 25 %
+                yk = track.bottom - k * track.h / 4
+                pygame.draw.line(surf, (96, 102, 112), (track.right + 5 * s, yk), (track.right + (12 if k % 2 == 0 else 8) * s, yk), 1)
             ky = track.bottom - val * track.h
-            knob = pygame.Rect(0, 0, 38 * s, 20 * s)
+            knob = pygame.Rect(0, 0, 40 * s, 18 * s)
             knob.center = (track.centerx, ky)
-            pygame.draw.rect(surf, col, knob, border_radius=8)
-            pygame.draw.rect(surf, (200, 200, 200), knob, 1, border_radius=8)
-            f.blit(surf, lab, (track.centerx, top + 4 * s), 11, COL["grey"], bold=True, anchor="midtop")
-            f.blit(surf, f"{val * 100:.0f}%", (track.centerx, track.bottom + 4 * s), 11, COL["white"], anchor="midtop")
+            pygame.draw.rect(surf, (0, 0, 0), knob.move(0, 3), border_radius=7)
+            pygame.draw.rect(surf, col if col != (20, 20, 22) else (34, 36, 40), knob, border_radius=7)
+            pygame.draw.line(surf, (255, 255, 255), (knob.x + 6, knob.y + 3), (knob.right - 6, knob.y + 3), 1)
+            pygame.draw.rect(surf, (210, 214, 220), knob, 1, border_radius=7)
+            f.blit(surf, lab, (track.centerx, top + 4 * s), fit(f, lab, 12, 48 * s), LABEL, bold=True, anchor="midtop")
+            pill = pygame.Rect(0, 0, 44 * s, 18 * s)
+            pill.midtop = (track.centerx, track.bottom + 14 * s)
+            pygame.draw.rect(surf, (10, 12, 15), pill, border_radius=9)
+            pygame.draw.rect(surf, (60, 66, 74), pill, 1, border_radius=9)
+            f.blit(surf, f"{val * 100:.0f}%", pill.center, fit(f, "100%", 12, pill.w - 6), COL["white"], bold=True,
+                   anchor="center")
             area = track.inflate(36 * s, 20 * s)
             if pygame.mouse.get_pressed()[0] and area.collidepoint(ui.mouse):
                 v = clamp((track.bottom - ui.mouse[1]) / track.h, 0.0, 1.0)
@@ -429,7 +459,7 @@ class CockpitPanel:
                 setattr(e, attr, clamp(getattr(e, attr) + d * 0.02, 0.0, 1.0))
         # flaps
         fx = lx + 16 * s + len(levers) * 52 * s + 6 * s
-        f.blit(surf, "FLAPS", (fx + 26 * s, top + 4 * s), 11, COL["grey"], bold=True, anchor="midtop")
+        f.blit(surf, "FLAPS", (fx + 26 * s, top + 4 * s), 12, LABEL, bold=True, anchor="midtop")
         settings = ac.t.flap_settings
         for i, st in enumerate(settings):
             r_ = pygame.Rect(fx, top + 22 * s + i * 30 * s, 52 * s, 24 * s)
@@ -437,19 +467,21 @@ class CockpitPanel:
             if ui.cockpit_button(surf, r_, f"{st}°" if st else "ARR", active=act, size=12):
                 sysm.flaps_cmd = i
         fy = top + 22 * s + len(settings) * 30 * s + 2 * s
-        f.blit(surf, f"pos {sysm.flaps:.0f}°", (fx + 26 * s, fy), 11, COL["white"], anchor="midtop")
+        f.blit(surf, f"pos {sysm.flaps:.0f}°", (fx + 26 * s, fy), 12, COL["white"], anchor="midtop")
         # compensador
         ty = fy + 22 * s
-        f.blit(surf, "TRIM", (fx + 26 * s, ty), 11, COL["grey"], bold=True, anchor="midtop")
-        tr = pygame.Rect(fx + 18 * s, ty + 16 * s, 16 * s, 64 * s)
-        pygame.draw.rect(surf, (12, 12, 14), tr, border_radius=4)
-        for k in range(9):
-            yk = tr.y + 4 + k * (tr.h - 8) / 8
-            pygame.draw.line(surf, (60, 60, 64), (tr.x + 2, yk), (tr.right - 2, yk), 1)
-        ty0 = tr.centery - ac.trim * (tr.h / 2 - 4)
-        pygame.draw.polygon(surf, COL["white"], [(tr.right + 2, ty0), (tr.right + 10 * s, ty0 - 5 * s), (tr.right + 10 * s, ty0 + 5 * s)])
-        f.blit(surf, "ARR", (tr.x - 3, tr.y), 9, COL["dim"], anchor="topright")
-        f.blit(surf, "ABJ", (tr.x - 3, tr.bottom), 9, COL["dim"], anchor="bottomright")
+        f.blit(surf, "TRIM", (fx + 26 * s, ty), 12, LABEL, bold=True, anchor="midtop")
+        tr = pygame.Rect(fx + 18 * s, ty + 18 * s, 18 * s, 84 * s)
+        pygame.draw.rect(surf, (8, 9, 11), tr, border_radius=5)
+        pygame.draw.rect(surf, (52, 56, 62), tr, 1, border_radius=5)
+        for k in range(11):                           # ruedecilla estriada
+            yk = tr.y + 5 + k * (tr.h - 10) / 10
+            pygame.draw.line(surf, (70, 74, 80) if k != 5 else (120, 200, 140), (tr.x + 3, yk), (tr.right - 3, yk), 1)
+        ty0 = tr.centery - ac.trim * (tr.h / 2 - 5)
+        pygame.draw.polygon(surf, COL["white"], [(tr.right + 2, ty0), (tr.right + 11 * s, ty0 - 6 * s), (tr.right + 11 * s, ty0 + 6 * s)])
+        f.blit(surf, "ARR", (tr.x - 4, tr.y), 10, LABEL, anchor="topright")
+        f.blit(surf, "ABJ", (tr.x - 4, tr.bottom), 10, LABEL, anchor="bottomright")
+        f.blit(surf, f"{ac.trim * 100:+.0f}", (tr.right + 14 * s, ty0), 10, COL["white"], anchor="midleft")
         d = ui.scroll(tr.inflate(30 * s, 10 * s))
         if d:
             ac.trim = clamp(ac.trim - d * 0.04, -1, 1)
@@ -472,13 +504,19 @@ class CockpitPanel:
         # carga de combustible y tiempo
         ff = sum(en.fuel_flow for en in sysm.engines)
         mins = sysm.fuel_l / max(ff, 1.0) * 60 if ff > 1 else 0
-        f.blit(surf, f"Comb. {sysm.fuel_l:.0f} L", (px, top + 160 * s), 12, COL["white"])
-        f.blit(surf, f"Flujo {ff:.1f} L/h", (px, top + 176 * s), 12, COL["grey"])
-        if ac.t.fadec:
-            loads = " / ".join(f"{en.load:.0f}%" for en in sysm.engines)
-            f.blit(surf, f"Carga {loads}", (px, top + 208 * s), 12, COL["green"])
+        lines = [(f"{sysm.fuel_l:.0f} L", COL["white"], 15), (f"{ff:.1f} L/h", LABEL, 12)]
         if mins:
-            f.blit(surf, f"Autonomía {int(mins // 60)}h{int(mins % 60):02d}", (px, top + 192 * s), 12, COL["grey"])
+            lines.append((f"{int(mins // 60)} h {int(mins % 60):02d} min", (255, 90, 80) if mins < 45 else LABEL, 12))
+        if ac.t.fadec:
+            lines.append(("Carga " + " / ".join(f"{en.load:.0f}%" for en in sysm.engines), COL["green"], 12))
+        card = pygame.Rect(px, top + 150 * s, 86 * s, 26 * s + 17 * len(lines))
+        pygame.draw.rect(surf, (12, 14, 17), card, border_radius=6)
+        pygame.draw.rect(surf, (56, 62, 70), card, 1, border_radius=6)
+        f.blit(surf, "COMBUSTIBLE", (card.x + 8, card.y + 5), 10, LABEL, bold=True)
+        yy = card.y + 20
+        for txt, c, sz in lines:
+            f.blit(surf, txt, (card.x + 8, yy), sz, c, bold=sz > 12)
+            yy += 17 if sz <= 12 else 19
 
     # ------------------------------------------------------------ interruptores
     def _switch_row(self, surf, rect, s, world, ui):
@@ -503,10 +541,11 @@ class CockpitPanel:
         else:
             mags = ["OFF", "DER", "IZQ", "AMBOS"]
             r_ = pygame.Rect(x, y, 96 * s, h)
-            pygame.draw.rect(surf, (26, 27, 30), r_, border_radius=6)
-            pygame.draw.rect(surf, (90, 90, 96), r_, 1, border_radius=6)
-            self.f.blit(surf, "MAGNETOS", (r_.centerx, r_.y + 3), 10, COL["grey"], bold=True, anchor="midtop")
-            self.f.blit(surf, mags[e.magnetos], (r_.centerx, r_.bottom - 4), 15, COL["white"], bold=True, anchor="midbottom")
+            pygame.draw.rect(surf, (14, 15, 18), r_, border_radius=8)
+            pygame.draw.rect(surf, (70, 76, 86), r_, 1, border_radius=8)
+            self.f.blit(surf, "MAGNETOS", (r_.centerx, r_.y + 3), 10, LABEL, bold=True, anchor="midtop")
+            self.f.blit(surf, mags[e.magnetos], (r_.centerx, r_.bottom - 4), fit(self.f, "AMBOS", 15, r_.w - 10), COL["white"],
+                        bold=True, anchor="midbottom")
             if ui.hit(r_):
                 e.magnetos = (e.magnetos + 1) % 4
             if ui.hit(r_, right=True):
@@ -516,8 +555,10 @@ class CockpitPanel:
             x += 100 * s
         st = pygame.Rect(x, y, 82 * s, h)
         held = pygame.mouse.get_pressed()[0] and st.collidepoint(ui.mouse)
-        pygame.draw.rect(surf, (140, 40, 30) if held else (70, 30, 28), st, border_radius=6)
-        self.f.blit(surf, "ARRANQUE", st.center, 13, COL["white"], bold=True, anchor="center")
+        pygame.draw.rect(surf, (190, 50, 36) if held else (96, 30, 26), st, border_radius=8)
+        pygame.draw.rect(surf, (255, 140, 120) if held else (150, 64, 56), st, 1, border_radius=8)
+        self.f.blit(surf, "ARRANQUE", st.center, fit(self.f, "ARRANQUE", 13, st.w - 8), COL["white"], bold=True,
+                    anchor="center")
         if held:
             self.starter_held = True
             ui.consumed = True

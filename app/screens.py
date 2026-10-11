@@ -1204,11 +1204,12 @@ class ScreensMixin:
         f = self.fonts
         who = {"yo": "Usted", "atc": {"GND": "Rodadura", "ATIS": "ATIS"}.get(msg.station, "Torre"), "ia": "Tráfico", "atis": "ATIS"}[msg.who]
         col = {"yo": (140, 220, 255), "atc": (255, 220, 120), "ia": (200, 200, 200), "atis": (180, 230, 180)}[msg.who]
-        maxw = int(self.W * 0.5)
+        x0, x1 = self.free_span(lesson_box=False)
+        maxw = int(min(self.W * 0.5, x1 - x0 - 30))
         lines = f.wrap(msg.disp, 16, maxw)[:3]
         bw = max(f.get(16).size(t)[0] for t in lines) + 30
         box = pygame.Rect(0, 0, max(bw, 200), 30 + 22 * len(lines))
-        box.midtop = (self.W / 2, int(self.H * 0.2))
+        box.midtop = ((x0 + x1) / 2, int(self.H * 0.2))
         panel_box(s, box, 8, (4, 14, 24, 205), border=col)
         r_lab = f.blit(s, "RADIO · " + who.upper(), (box.x + 14, box.y + 6), 12, col, bold=True)
         # ecualizador mientras suena la transmisión
@@ -1339,6 +1340,37 @@ class ScreensMixin:
                  "EMERGENCIA: falla de motor": "EMERGENCIA", "PESO Y RENDIMIENTO": "Peso y rendimiento",
                  "EMERGENCIAS": "Emergencias", "PLAN": "Plan"}
 
+    def efb_width(self):
+        return int(min(460, max(340, self.W * 0.30)))
+
+    def free_span(self, lesson_box=True):
+        """Franja horizontal libre para los avisos de arriba: a la derecha de la caja de la lección (si se pide) y a
+        la izquierda de la tableta abierta."""
+        x0 = 14 + (min(580, self.W * 0.40) + 12 if lesson_box else 0)
+        x1 = self.W - 14 - ((self.efb_width() + 14) if getattr(self, "show_check", False) else 0)
+        if x1 - x0 < 260:                    # pantalla estrecha: se usa el ancho entero
+            x0, x1 = 14, self.W - 14
+        return x0, x1
+
+    def draw_toast(self, text, left):
+        """Aviso breve (flash): una pastilla de la interfaz centrada en el hueco libre, que se desvanece al final."""
+        from ui import theme
+        f = self.fonts
+        s = self.overlay
+        x0, x1 = self.free_span(lesson_box=False)
+        lines = f.wrap(text, 18, int(min(self.W * 0.5, x1 - x0 - 40)), bold=True)[:2]
+        tw = max(f.get(18, True).size(t)[0] for t in lines)
+        box = pygame.Rect(0, 0, tw + 40, 20 + 24 * len(lines))
+        scene = getattr(self, "_scene_rect", None) if self.state == "flight" else None
+        scene = scene or pygame.Rect(0, 0, self.W, self.H)
+        box.midbottom = ((x0 + x1) / 2, scene.bottom - 46)      # abajo del paisaje: no pisa la lección ni los mensajes
+        a = int(235 * clamp(left / 0.4, 0, 1))
+        panel_box(s, box, 10, (6, 18, 30, a), border=(70, 76, 86))
+        for i, t in enumerate(lines):
+            img = f.render(t, 18, theme.TEXT, bold=True)
+            img.set_alpha(int(255 * clamp(left / 0.4, 0, 1)))
+            s.blit(img, img.get_rect(midtop=(box.centerx, box.y + 10 + 24 * i)))
+
     def _efb_draw(self, s, lists, name, items):
         """Dibuja la tableta con el estilo de la interfaz (cristal oscuro y cian), siempre dentro del paisaje: nunca
         tapa el tablero 2D ni la franja de instrumentos. Pestañas en una fila que se desplaza, lista con rueda del
@@ -1349,8 +1381,8 @@ class ScreensMixin:
         w = self.world
         scene = getattr(self, "_scene_rect", None) or pygame.Rect(0, 0, self.W, self.H)
         top = (self._bar_rect.bottom + 8) if (self._bar_rect is not None and self._bar_visible()) else 14
-        bottom = scene.bottom - 12
-        bw = int(min(460, max(340, self.W * 0.30)))
+        bottom = scene.bottom - (44 if self.settings.get("mostrar_fps") else 12)   # deja ver la pastilla de FPS (F9)
+        bw = self.efb_width()
         HEAD, TABS, FOOT = 64, 38, 52
         emerg = name == "EMERGENCIAS"
         weight = name == "PESO Y RENDIMIENTO"
@@ -1451,6 +1483,7 @@ class ScreensMixin:
                 s.blit(g, (edge if edge == area_t.x else edge - 18, strip.y))
         s.set_clip(clip)
         # ---- contenido
+        more_note = None
         area = pygame.Rect(box.x + 8, strip.bottom + 10, box.w - 16, box.bottom - FOOT - strip.bottom - 12)
         if weight:
             self._efb_weight(s, area, area.y)
@@ -1535,12 +1568,9 @@ class ScreensMixin:
                         pygame.draw.line(g, (6, 16, 28, int(235 * (i / 26 if low else 1 - i / 26))), (0, i), (area.w, i))
                     s.blit(g, (area.x, edge - 26 if low else edge))
                 if n:
-                    lab = f"{'▼' if low else '▲'} {n} más"
-                    pill = pygame.Rect(0, 0, f.get(11, True).size(lab)[0] + 16, 18)
-                    pill.center = (area.centerx, edge - 10 if low else edge + 10)
-                    pygame.draw.rect(s, (16, 44, 62), pill, border_radius=9)
-                    pygame.draw.rect(s, (40, 90, 116), pill, 1, border_radius=9)
-                    f.blit(s, lab, pill.center, 11, theme.TEXT, bold=True, anchor="center")
+                    more_txt = f"{'▼' if low else '▲'} {n} más {'abajo' if low else 'arriba'}"
+                    if low or more_note is None:          # se avisa en el pie; abajo tiene prioridad
+                        more_note = more_txt
         # ---- pie: progreso y navegación
         foot = pygame.Rect(box.x + 14, box.bottom - FOOT + 10, box.w - 28, 32)
         pygame.draw.rect(s, (24, 44, 60), (box.x + 10, foot.y - 9, box.w - 20, 3), border_radius=2)
@@ -1548,7 +1578,10 @@ class ScreensMixin:
             frac = n_done / n_items
             pygame.draw.rect(s, theme.GREEN if frac >= 1 else accent, (box.x + 10, foot.y - 9, (box.w - 20) * frac, 3),
                              border_radius=2)
-            f.blit(s, f"{n_done} de {n_items} hechos", (foot.x, foot.centery), 12, theme.TEXT_DIM, anchor="midleft")
+            f.blit(s, f"{n_done} de {n_items} hechos", (foot.x, foot.centery - (7 if more_note else 0)),
+                        12, theme.TEXT_DIM, anchor="midleft")
+        if more_note:
+            f.blit(s, more_note, (foot.x, foot.centery + (8 if n_items else 0)), 11, theme.CYAN, bold=True, anchor="midleft")
         if ui.button(s, (foot.right - 118, foot.y, 118, 32), "Siguiente ▶", size=12):
             self.efb_tab = (self.efb_tab + 1) % len(lists)
             self.efb_auto = False
