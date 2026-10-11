@@ -1549,6 +1549,7 @@ class App(ScreensMixin):
                 cam.fov = 80.0
         cam.update(dt if dt else 0.0, w)
         viewport = (0, ph, self.W, self.H - ph)
+        self._scene_rect = pygame.Rect(0, 0, self.W, self.H - ph)     # zona del paisaje en pantalla
         rings = self.lesson.rings if self.lesson is not None else []
         over_panel = False
         if cockpit3d:

@@ -1332,111 +1332,227 @@ class ScreensMixin:
                 self.efb_tab = len(lists) - 1
         self.efb_tab = max(0, min(self.efb_tab, len(lists) - 1))
         name, items = lists[self.efb_tab]
-        bw = min(500, self.W * 0.36)
+        self._efb_draw(s, lists, name, items)
 
-        def row_h(txt, val):
-            wide = f.get(14).size(txt)[0] + f.get(12, True).size(val or "")[0] + 70
-            return 48 if wide > bw - 16 else 32
-        short_names = {"Antes de arrancar": "Pre-arranque", "Antes del despegue": "Pre-despegue", "Despegue y ascenso": "Despegue",
-                       "Antes del aterrizaje": "Aterrizaje", "Después del aterrizaje": "Post-aterrizaje"}
-        tab_rows, tx_ = 1, 0
-        for nm, _ in lists:
-            tw_ = f.get(12, True).size(short_names.get(nm, nm))[0] + 24
-            if tx_ + tw_ > bw - 20:
-                tab_rows += 1
-                tx_ = 0
-            tx_ += tw_
-        bh = min(self.H - 80, 116 + 30 * tab_rows + sum(row_h(t, v) for t, v, _ in items) + 60)
-        box = pygame.Rect(self.W - bw - 14, 64, bw, bh)
-        # marco de la tableta
-        pygame.draw.rect(s, (18, 20, 24, 245), box.inflate(16, 16), border_radius=22)
-        pygame.draw.rect(s, (70, 74, 82), box.inflate(16, 16), 2, border_radius=22)
-        pygame.draw.rect(s, (236, 238, 240, 250), box, border_radius=12)
-        hdr = pygame.Rect(box.x, box.y, box.w, 42)
-        pygame.draw.rect(s, (28, 92, 168), hdr, border_top_left_radius=12, border_top_right_radius=12)
-        f.blit(s, "LISTA DE VERIFICACIÓN", (hdr.x + 14, hdr.centery), 14, (255, 255, 255), bold=True, anchor="midleft")
-        f.blit(s, w.ac.t.short, (hdr.right - 14, hdr.centery), 13, (210, 225, 245), bold=True, anchor="midright")
-        # pestañas
-        tx, ty = box.x + 10, hdr.bottom + 8
-        for k, (nm, _) in enumerate(lists):
-            short = {"Antes de arrancar": "Pre-arranque", "Antes del despegue": "Pre-despegue", "Despegue y ascenso": "Despegue",
-                     "Antes del aterrizaje": "Aterrizaje", "Después del aterrizaje": "Post-aterrizaje",
-                     "EMERGENCIA: falla de motor": "EMERGENCIA"}.get(nm, nm)
-            tw = f.get(12, True).size(short)[0] + 18 + 18
-            if tx + tw > box.right - 10:
-                tx = box.x + 10
-                ty += 30
-            r = pygame.Rect(tx, ty, tw, 26)
+    EFB_SHORT = {"Antes de arrancar": "Pre-arranque", "Antes del despegue": "Pre-despegue", "Despegue y ascenso": "Despegue",
+                 "Antes del aterrizaje": "Aterrizaje", "Después del aterrizaje": "Post-aterrizaje",
+                 "EMERGENCIA: falla de motor": "EMERGENCIA", "PESO Y RENDIMIENTO": "Peso y rendimiento",
+                 "EMERGENCIAS": "Emergencias", "PLAN": "Plan"}
+
+    def _efb_draw(self, s, lists, name, items):
+        """Dibuja la tableta con el estilo de la interfaz (cristal oscuro y cian), siempre dentro del paisaje: nunca
+        tapa el tablero 2D ni la franja de instrumentos. Pestañas en una fila que se desplaza, lista con rueda del
+        ratón y el siguiente paso pendiente resaltado."""
+        from ui import theme
+        f = self.fonts
+        ui = self.ui
+        w = self.world
+        scene = getattr(self, "_scene_rect", None) or pygame.Rect(0, 0, self.W, self.H)
+        top = (self._bar_rect.bottom + 8) if (self._bar_rect is not None and self._bar_visible()) else 14
+        bottom = scene.bottom - 12
+        bw = int(min(460, max(340, self.W * 0.30)))
+        HEAD, TABS, FOOT = 64, 38, 52
+        emerg = name == "EMERGENCIAS"
+        weight = name == "PESO Y RENDIMIENTO"
+        # filas: (alto, tipo, texto en líneas, valor, función, índice)
+        rows = []
+        for k, (txt, val, fn) in enumerate(items):
+            if fn == "info":
+                rows.append((24, "info", [txt], val, fn, k))
+            elif fn in ("menu", "back"):
+                rows.append((34, fn, [txt], val, fn, k))
+            else:
+                vw = f.get(12, True).size(val)[0] + 14 if val else 0
+                lines = f.wrap(txt, 14, bw - 70 - vw) or [""]
+                rows.append((12 + 19 * len(lines), "item", lines, val, fn, k))
+        need = HEAD + TABS + (470 if weight else sum(r[0] for r in rows) + 8) + FOOT
+        bh = int(max(200, min(bottom - top, need)))
+        box = pygame.Rect(self.W - bw - 14, top, bw, bh)
+        accent = theme.RED if emerg else theme.CYAN
+        panel_box(s, box, 14, (6, 16, 28, 238), border=(200, 60, 60) if emerg else (70, 76, 86))
+        # estado de cada casilla (antes de dibujar: el anillo del encabezado lo necesita)
+        state = {}
+        for h, kind, lines, val, fn, k in rows:
+            if kind == "item":
+                key = (name if not emerg else self.efb_emerg, k)
+                state[k] = (key, bool(fn is not None and fn(w)), self.efb_manual.get(key, False))
+        n_items = len(state)
+        n_done = sum(1 for _, a, m in state.values() if a or m)
+        pending = next((k for k, (_, a, m) in state.items() if not (a or m)), None)
+        # ---- encabezado
+        theme.spaced(f, s, f"LISTA DE VERIFICACIÓN  ·  {w.ac.t.short}", (box.x + 16, box.y + 12), 11, accent)
+        title = ("Emergencia: " + self.efb_emerg) if emerg and self.efb_emerg else self.EFB_SHORT.get(name, name)
+        maxw = box.w - (90 if n_items else 32)
+        while f.get(20, True).size(title)[0] > maxw and len(title) > 4:
+            title = title.rstrip("…")[:-1].rstrip() + "…"
+        f.blit(s, title, (box.x + 16, box.y + 30), 20, theme.TEXT, bold=True)
+        if n_items:
+            c = (box.right - 44, box.y + 38)              # lejos de la esquina recortada del panel
+            full = n_done == n_items
+            theme.ring(s, c, 18, n_done / n_items, theme.GREEN if full else accent, width=4)
+            f.blit(s, f"{n_done}/{n_items}", c, 12, theme.TEXT, bold=True, anchor="center")
+        # ---- pestañas en una sola fila (las flechas y la rueda la desplazan)
+        strip = pygame.Rect(box.x + 10, box.y + HEAD, box.w - 20, 28)
+        area_t = pygame.Rect(strip.x + 30, strip.y, strip.w - 60, strip.h)
+        shorts = [self.EFB_SHORT.get(nm, nm) for nm, _ in lists]
+        widths = [f.get(12, True).size(t)[0] + 36 for t in shorts]
+        xs, x = [], 0
+        for wd in widths:
+            xs.append(x)
+            x += wd + 6
+        total = x - 6
+        off = getattr(self, "efb_chip_off", 0)
+        if getattr(self, "_efb_last_tab", None) != self.efb_tab:      # la pestaña activa siempre a la vista
+            self._efb_last_tab = self.efb_tab
+            a0, a1 = xs[self.efb_tab], xs[self.efb_tab] + widths[self.efb_tab]
+            if a0 - off < 0:
+                off = a0 - 20
+            elif a1 - off > area_t.w:
+                off = a1 - area_t.w + 20
+        d = ui.scroll(strip)
+        if d:
+            off -= d * 60
+        off = self.efb_chip_off = max(0, min(off, max(0, total - area_t.w)))
+        for r_, step, lab in ((pygame.Rect(strip.x, strip.y, 26, 28), -1, "◀"),
+                              (pygame.Rect(strip.right - 26, strip.y, 26, 28), 1, "▶")):
+            if ui.button(s, r_, lab, size=10, tip="Lista anterior" if step < 0 else "Lista siguiente"):
+                self.efb_tab = (self.efb_tab + step) % len(lists)
+                self.efb_auto = False
+        clip = s.get_clip()
+        s.set_clip(area_t)
+        for k, ((nm, _), short) in enumerate(zip(lists, shorts)):
+            r = pygame.Rect(area_t.x + xs[k] - off, strip.y + 1, widths[k], 26)
+            if r.right < area_t.x or r.x > area_t.right:
+                continue
             act = k == self.efb_tab
-            col = (200, 40, 40) if "EMERG" in nm else (28, 92, 168)
-            pygame.draw.rect(s, col if act else (214, 218, 224), r, border_radius=6)
-            from ui import theme
-            kind = ("emergencia" if "EMERG" in nm else "peso" if "PESO" in nm else "plan" if nm == "PLAN" else
+            red = "EMERG" in nm
+            hov = ui.hover(r.clip(area_t))
+            col = theme.RED if red else theme.CYAN
+            if act:
+                pygame.draw.rect(s, col, r, border_radius=13)
+            else:
+                pygame.draw.rect(s, (40, 18, 22) if red else (12, 30, 46), r, border_radius=13)
+                pygame.draw.rect(s, col if hov else ((120, 50, 54) if red else (36, 74, 96)), r, 1, border_radius=13)
+            kind = ("emergencia" if red else "peso" if "PESO" in nm else "plan" if nm == "PLAN" else
                     "leccion" if nm == "Lección" else "lista")
-            tcol = (255, 255, 255) if act else (40, 46, 56)
-            theme.icon(s, kind, (r.x + 15, r.centery), 13, tcol, 2)
+            tcol = theme.DEEP if act else ((255, 140, 130) if red else theme.TEXT_DIM)
+            theme.icon(s, kind, (r.x + 15, r.centery), 12, tcol, 2)
             f.blit(s, short, (r.x + 26, r.centery), 12, tcol, bold=True, anchor="midleft")
-            if ui.hit(r):
+            if ui.hit(r.clip(area_t)):
                 self.efb_tab = k
                 self.efb_auto = False
-            tx += tw + 6
-        y = ty + 38
-        title = ("EMERGENCIA: " + self.efb_emerg).upper() if name == "EMERGENCIAS" and self.efb_emerg else name.upper()
-        f.blit(s, title, (box.x + 14, y), 15, (200, 40, 40) if "EMERG" in name else (20, 30, 44), bold=True)
-        y += 28
-        if name == "PESO Y RENDIMIENTO":
-            self._efb_weight(s, box, y)
-            return
-        done_n = 0
-        for k, (txt, val, fn) in enumerate(items):
-            rh = row_h(txt, val)
-            row = pygame.Rect(box.x + 8, y - 2, box.w - 16, rh - 2)
-            if y + rh > box.bottom - 50:
-                break
-            if fn == "info":
-                f.blit(s, txt, (row.x + 10, row.y + 6), 14, (20, 30, 44), bold=True)
-                f.blit(s, val, (row.right - 10, row.y + 7), 13, (40, 90, 160), bold=True, anchor="topright")
-                y += rh
-                continue
-            if fn in ("menu", "back"):
-                # filas de navegación del menú de emergencias
-                if ui.hover(row):
-                    pygame.draw.rect(s, (246, 220, 220), row, border_radius=6)
-                f.blit(s, txt, (row.x + 12, row.y + 6), 14, (170, 30, 30) if fn == "menu" else (40, 90, 160), bold=True)
+        for edge in (area_t.x, area_t.right):            # las pestañas se desvanecen en los bordes de la fila
+            more = off > 0 if edge == area_t.x else off < total - area_t.w
+            if more:
+                g = pygame.Surface((18, strip.h), pygame.SRCALPHA)
+                for i in range(18):
+                    a = int(238 * (1 - i / 18 if edge == area_t.x else i / 18))
+                    pygame.draw.line(g, (6, 16, 28, a), (i, 0), (i, strip.h))
+                s.blit(g, (edge if edge == area_t.x else edge - 18, strip.y))
+        s.set_clip(clip)
+        # ---- contenido
+        area = pygame.Rect(box.x + 8, strip.bottom + 10, box.w - 16, box.bottom - FOOT - strip.bottom - 12)
+        if weight:
+            self._efb_weight(s, area, area.y)
+        else:
+            content = sum(r[0] for r in rows)
+            max_off = max(0, content - area.h)
+            if not hasattr(self, "efb_scroll"):
+                self.efb_scroll = {}
+            skey = (name, self.efb_emerg if emerg else None)
+            sc = self.efb_scroll.get(skey, 0)
+            d = ui.scroll(area)
+            if d:
+                sc -= d * 40
+            elif self.efb_auto and pending is not None:                   # el paso pendiente siempre a la vista
+                py = sum(r[0] for r in rows if r[5] < pending)
+                if py < sc or py + 40 > sc + area.h:
+                    sc = py - area.h * 0.3
+            sc = self.efb_scroll[skey] = int(max(0, min(sc, max_off)))
+            s.set_clip(area)
+            y = area.y - sc
+            for h, kind, lines, val, fn, k in rows:
+                row = pygame.Rect(area.x, y, area.w, h - 4)
+                y += h
+                if row.bottom < area.y or row.y > area.bottom:
+                    continue
+                vis = row.clip(area)
+                if kind == "info":
+                    f.blit(s, lines[0], (row.x + 10, row.y + 3), 13, theme.TEXT, bold=True)
+                    if val:
+                        f.blit(s, val, (row.right - 10, row.y + 4), 13, theme.CYAN, bold=True, anchor="topright")
+                    continue
+                if kind in ("menu", "back"):
+                    if ui.hover(vis):
+                        pygame.draw.rect(s, (50, 20, 26) if kind == "menu" else (14, 36, 52), row, border_radius=8)
+                    f.blit(s, lines[0], (row.x + 12, row.centery), 14, (255, 130, 120) if kind == "menu" else theme.CYAN,
+                           bold=True, anchor="midleft")
+                    if val:
+                        f.blit(s, val, (row.right - 12, row.centery), 12, (255, 130, 120), bold=True, anchor="midright")
+                    if ui.hit(vis):
+                        self.efb_emerg = lines[0] if kind == "menu" else None
+                        self.efb_auto = False
+                    continue
+                key, auto, manual = state[k]
+                done = auto or manual
+                nxt = k == pending
+                if nxt:
+                    pygame.draw.rect(s, (12, 40, 60) if not emerg else (52, 18, 22), row, border_radius=8)
+                    pygame.draw.rect(s, accent, (row.x, row.y + 4, 3, row.h - 8), border_radius=2)
+                elif ui.hover(vis):
+                    pygame.draw.rect(s, (14, 30, 44), row, border_radius=8)
+                cb = pygame.Rect(row.x + 10, row.y + 5, 18, 18)
+                if done:
+                    pygame.draw.rect(s, theme.GREEN, cb, border_radius=5)
+                    pygame.draw.lines(s, theme.DEEP, False, [(cb.x + 4, cb.centery), (cb.x + 8, cb.bottom - 4),
+                                                             (cb.right - 4, cb.y + 4)], 3)
+                else:
+                    pygame.draw.rect(s, accent if nxt else (60, 104, 128), cb, 2, border_radius=5)
+                tcol = theme.TEXT if nxt else ((110, 140, 160) if done else (200, 216, 228))
+                for i, ln in enumerate(lines):
+                    f.blit(s, ln, (cb.right + 12, row.y + 4 + 19 * i), 14, tcol, bold=nxt)
                 if val:
-                    f.blit(s, val, (row.right - 10, row.y + 6), 14, (170, 30, 30), bold=True, anchor="topright")
-                if ui.hit(row):
-                    self.efb_emerg = txt if fn == "menu" else None
-                    self.efb_auto = False
-                y += 32
-                continue
-            key = (name if name != "EMERGENCIAS" else self.efb_emerg, k)
-            auto = fn is not None and fn(w)
-            manual = self.efb_manual.get(key, False)
-            done = auto or manual
-            done_n += done
-            if ui.hover(row):
-                pygame.draw.rect(s, (220, 228, 238), row, border_radius=6)
-            cb = pygame.Rect(row.x + 6, row.y + 6, 18, 18)
-            pygame.draw.rect(s, (40, 160, 80) if done else (255, 255, 255), cb, border_radius=4)
-            pygame.draw.rect(s, (90, 100, 110), cb, 1, border_radius=4)
-            if done:
-                pygame.draw.lines(s, (255, 255, 255), False, [(cb.x + 4, cb.centery), (cb.x + 8, cb.bottom - 4), (cb.right - 3, cb.y + 4)], 3)
-            col = (110, 120, 130) if done else (20, 24, 30)
-            f.blit(s, txt, (cb.right + 10, row.y + 6), 14, col)
-            if val:
-                vy = row.y + 7 if rh == 32 else row.y + 26
-                f.blit(s, val, (row.right - 8, vy), 12, (40, 90, 160) if not done else (120, 160, 130), bold=True, anchor="topright")
-            if fn is None and ui.hit(row):
-                self.efb_manual[key] = not manual
-            y += rh
-        # pie: progreso y navegación
-        foot = pygame.Rect(box.x + 10, box.bottom - 46, box.w - 20, 36)
-        f.blit(s, f"{done_n}/{len(items)} completados", (foot.x, foot.centery), 13, (60, 70, 84), anchor="midleft")
-        if ui.button(s, (foot.right - 150, foot.y, 150, 34), "Siguiente lista ▶", size=13):
+                    f.blit(s, val, (row.right - 10, row.y + 6), 12, (90, 150, 120) if done else theme.AMBER,
+                           bold=True, anchor="topright")
+                if fn is None and ui.hit(vis):
+                    self.efb_manual[key] = not manual
+            s.set_clip(clip)
+            # hay más arriba o abajo: degradado y una etiqueta con cuántos pasos quedan fuera
+            y = area.y - sc
+            above = below = 0
+            for h, kind, *_r in rows:
+                if kind == "item" or kind == "menu":
+                    if y < area.y - 2:
+                        above += 1
+                    elif y + h - 4 > area.bottom + 2:      # también la que se ve a medias
+                        below += 1
+                y += h
+            for edge, n in ((area.y, above if sc > 0 else 0), (area.bottom, below if sc < max_off else 0)):
+                low = edge == area.bottom
+                if (sc > 0 and not low) or (sc < max_off and low):
+                    g = pygame.Surface((area.w, 26), pygame.SRCALPHA)
+                    for i in range(26):
+                        pygame.draw.line(g, (6, 16, 28, int(235 * (i / 26 if low else 1 - i / 26))), (0, i), (area.w, i))
+                    s.blit(g, (area.x, edge - 26 if low else edge))
+                if n:
+                    lab = f"{'▼' if low else '▲'} {n} más"
+                    pill = pygame.Rect(0, 0, f.get(11, True).size(lab)[0] + 16, 18)
+                    pill.center = (area.centerx, edge - 10 if low else edge + 10)
+                    pygame.draw.rect(s, (16, 44, 62), pill, border_radius=9)
+                    pygame.draw.rect(s, (40, 90, 116), pill, 1, border_radius=9)
+                    f.blit(s, lab, pill.center, 11, theme.TEXT, bold=True, anchor="center")
+        # ---- pie: progreso y navegación
+        foot = pygame.Rect(box.x + 14, box.bottom - FOOT + 10, box.w - 28, 32)
+        pygame.draw.rect(s, (24, 44, 60), (box.x + 10, foot.y - 9, box.w - 20, 3), border_radius=2)
+        if n_items:
+            frac = n_done / n_items
+            pygame.draw.rect(s, theme.GREEN if frac >= 1 else accent, (box.x + 10, foot.y - 9, (box.w - 20) * frac, 3),
+                             border_radius=2)
+            f.blit(s, f"{n_done} de {n_items} hechos", (foot.x, foot.centery), 12, theme.TEXT_DIM, anchor="midleft")
+        if ui.button(s, (foot.right - 118, foot.y, 118, 32), "Siguiente ▶", size=12):
             self.efb_tab = (self.efb_tab + 1) % len(lists)
             self.efb_auto = False
-        if ui.button(s, (foot.right - 254, foot.y, 96, 34), "Auto", active=self.efb_auto, size=13,
+        if ui.button(s, (foot.right - 194, foot.y, 70, 32), "Auto", active=self.efb_auto, size=12,
                      tip="Elegir la lista según la fase del vuelo"):
             self.efb_auto = not self.efb_auto
 
@@ -1452,58 +1568,63 @@ class ScreensMixin:
             self.wb = WeightBalance(t.id)
         wb = self.wb
         x0 = box.x + 14
-        dark = (20, 30, 44)
+        from ui import theme
+        dark = theme.TEXT
         changed = False
         for key, nm, _arm, mx in wb.d["stations"]:
-            f.blit(s, nm, (x0, y + 6), 13, dark)
+            f.blit(s, nm, (x0, y + 4), 13, dark)
             v = wb.loads.get(key, 0.0)
             bx = box.right - 170
-            if ui.button(s, (bx, y, 30, 26), "−", size=14):
+            if ui.button(s, (bx, y, 28, 24), "−", size=14):
                 wb.loads[key] = max(0.0, v - 5)
                 changed = True
-            f.blit(s, f"{wb.loads[key]:.0f} kg", (bx + 75, y + 13), 14, dark, bold=True, anchor="center")
-            if ui.button(s, (bx + 120, y, 30, 26), "+", size=14):
+            f.blit(s, f"{wb.loads[key]:.0f} kg", (bx + 74, y + 12), 14, dark, bold=True, anchor="center")
+            if ui.button(s, (bx + 120, y, 28, 24), "+", size=14):
                 wb.loads[key] = min(mx * 1.3, v + 5)
                 changed = True
-            y += 32
+            y += 28
         # combustible
-        f.blit(s, "Combustible", (x0, y + 6), 13, dark)
+        f.blit(s, "Combustible", (x0, y + 4), 13, dark)
         bx = box.right - 170
-        if ui.button(s, (bx, y, 30, 26), "−", size=14):
+        if ui.button(s, (bx, y, 28, 24), "−", size=14):
             ac.sys.fuel_l = max(10.0, ac.sys.fuel_l - 10)
             changed = True
-        f.blit(s, f"{ac.sys.fuel_l:.0f} L", (bx + 75, y + 13), 14, dark, bold=True, anchor="center")
-        if ui.button(s, (bx + 120, y, 30, 26), "+", size=14):
+        f.blit(s, f"{ac.sys.fuel_l:.0f} L", (bx + 74, y + 12), 14, dark, bold=True, anchor="center")
+        if ui.button(s, (bx + 120, y, 28, 24), "+", size=14):
             ac.sys.fuel_l = min(t.fuel_capacity, ac.sys.fuel_l + 10)
             changed = True
-        y += 40
+        y += 32
         r = wb.apply(t, ac.sys.fuel_l) if (changed or getattr(self, "_wb_applied", None) != t.id) else \
             wb.compute(ac.sys.fuel_l, t.fuel_density)
         self._wb_applied = t.id
         ok = r["ok_w"] and r["ok_cg"] and r["ok_bag"]
-        res = pygame.Rect(box.x + 10, y, box.w - 20, 62)
-        pygame.draw.rect(s, (215, 240, 222) if ok else (250, 220, 215), res, border_radius=8)
-        f.blit(s, f"Peso {r['w_lb']:.0f} lb ({r['w_kg']:.0f} kg) · máx {r['mtow_lb']} lb", (res.x + 10, res.y + 8), 14,
-               (20, 110, 50) if r["ok_w"] else (180, 40, 30), bold=True)
-        f.blit(s, f"CG {r['cg']:.1f} in · límites {r['fwd']:.1f} – {r['aft']:.1f} in", (res.x + 10, res.y + 32), 14,
-               (20, 110, 50) if r["ok_cg"] else (180, 40, 30), bold=True)
+        res = pygame.Rect(box.x + 10, y, box.w - 20, 50)
+        pygame.draw.rect(s, (12, 46, 32) if ok else (60, 18, 20), res, border_radius=8)
+        pygame.draw.rect(s, theme.GREEN if ok else theme.RED, res, 1, border_radius=8)
+        f.blit(s, f"Peso {r['w_lb']:.0f} lb ({r['w_kg']:.0f} kg) · máx {r['mtow_lb']} lb", (res.x + 10, res.y + 6), 13,
+               theme.GREEN if r["ok_w"] else theme.RED, bold=True)
+        f.blit(s, f"CG {r['cg']:.1f} in · límites {r['fwd']:.1f} – {r['aft']:.1f} in", (res.x + 10, res.y + 27), 13,
+               theme.GREEN if r["ok_cg"] else theme.RED, bold=True)
         y = res.bottom + 10
         # envolvente de centrado
         env = wb.d["env"]
-        ch = pygame.Rect(box.x + 14, y, box.w - 28, 110)
-        pygame.draw.rect(s, (246, 248, 250), ch, border_radius=6)
-        cgs = [e[1] for e in env] + [e[2] for e in env] + [r["cg"]]
-        ws = [e[0] for e in env] + [r["w_lb"]]
-        c0, c1 = min(cgs) - 1, max(cgs) + 1
-        w0, w1 = min(ws) - 100, max(max(ws), wb.d["mtow_lb"]) + 100
+        ch = pygame.Rect(box.x + 14, y, box.w - 28, int(min(110, box.bottom - y - 4 * 20 - 30)))
+        if ch.h < 44:                     # poco sitio: primero las distancias, la envolvente se omite
+            ch.h = -10
+        else:
+            pygame.draw.rect(s, (10, 24, 36), ch, border_radius=6)
+            cgs = [e[1] for e in env] + [e[2] for e in env] + [r["cg"]]
+            ws = [e[0] for e in env] + [r["w_lb"]]
+            c0, c1 = min(cgs) - 1, max(cgs) + 1
+            w0, w1 = min(ws) - 100, max(max(ws), wb.d["mtow_lb"]) + 100
 
-        def P(cg, wt):
-            return (ch.x + 8 + (cg - c0) / (c1 - c0) * (ch.w - 16), ch.bottom - 8 - (wt - w0) / (w1 - w0) * (ch.h - 16))
-        poly = [P(e[1], e[0]) for e in env] + [P(e[2], e[0]) for e in reversed(env)]
-        pygame.draw.polygon(s, (200, 228, 210), poly)
-        pygame.draw.polygon(s, (40, 130, 70), poly, 2)
-        pygame.draw.circle(s, (20, 110, 50) if ok else (200, 40, 30), P(r["cg"], r["w_lb"]), 6)
-        f.blit(s, "envolvente de centrado", (ch.x + 8, ch.y + 4), 11, (90, 100, 110))
+            def P(cg, wt):
+                return (ch.x + 8 + (cg - c0) / (c1 - c0) * (ch.w - 16), ch.bottom - 8 - (wt - w0) / (w1 - w0) * (ch.h - 16))
+            poly = [P(e[1], e[0]) for e in env] + [P(e[2], e[0]) for e in reversed(env)]
+            pygame.draw.polygon(s, (16, 60, 44), poly)
+            pygame.draw.polygon(s, theme.GREEN, poly, 2)
+            pygame.draw.circle(s, theme.TEXT if ok else theme.RED, P(r["cg"], r["w_lb"]), 6)
+            f.blit(s, "envolvente de centrado", (ch.x + 8, ch.y + 4), 11, theme.TEXT_DIM)
         y = ch.bottom + 10
         # rendimiento con la meteorología y el aeródromo actuales
         wx = w.weather
@@ -1512,18 +1633,19 @@ class ScreensMixin:
         oat = 15 + wx.temp_offset - w.home.elev / FT * 0.00198
         _, surf = w.terrain.surface(w.active_rw.center[0], w.active_rw.center[1])
         p = wb.performance(r["w_lb"], w.home.elev / FT, wx.qnh_hpa, oat, head, grass=(surf == "cesped"))
-        rows = [("Altitud de densidad", f"{p['da']:.0f} ft"), (f"Viento en pista {w.active_end}", f"{head:+.0f} kt"),
+        rows = [("Altitud de densidad", f"{p['da']:.0f} ft"),
+                (f"Pista {w.active_end}: viento / disponible", f"{head:+.0f} kt / {w.active_rw.length / FT:.0f} ft"),
                 ("Despegue: carrera / sobre 50 ft", f"{p['to_roll']:.0f} / {p['to_50']:.0f} ft"),
-                ("Aterrizaje: carrera / sobre 50 ft", f"{p['ldg_roll']:.0f} / {p['ldg_50']:.0f} ft"),
-                ("Pista disponible", f"{w.active_rw.length / FT:.0f} ft")]
+                ("Aterrizaje: carrera / sobre 50 ft", f"{p['ldg_roll']:.0f} / {p['ldg_50']:.0f} ft")]
         for lab, val in rows:
-            if y > box.bottom - 30:
+            if y > box.bottom - 18:
                 break
             f.blit(s, lab, (x0, y), 13, dark)
-            col = (180, 40, 30) if ("Despegue" in lab and p["to_50"] > w.active_rw.length / FT) else (40, 90, 160)
+            col = theme.RED if ("Despegue" in lab and p["to_50"] > w.active_rw.length / FT) else theme.CYAN
             f.blit(s, val, (box.right - 14, y), 13, col, bold=True, anchor="topright")
-            y += 22
-        f.blit(s, "Valores típicos del POH: use siempre los de su avión.", (x0, box.bottom - 22), 11, (110, 120, 130))
+            y += 20
+        if y < box.bottom - 12:          # la nota, solo si queda sitio
+            f.blit(s, "Valores típicos del POH: use siempre los de su avión.", (x0, box.bottom - 14), 11, theme.TEXT_DIM)
 
     # ================================================================ pausa
     def screen_pause(self, events):
