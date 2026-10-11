@@ -38,7 +38,11 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
 - **Navegación:**
   - radiofaros NDB y ADF (clic derecho en el NAV 2);
   - declinación magnética real: la brújula, el direccional, el HSI, el VOR, el viento de la torre y los rumbos dictados son magnéticos;
-  - **GPS** con plan de vuelo, D→ y OBS en el mapa del G1000 (**F7** = CDI GPS/VLOC).
+  - **GPS** con plan de vuelo, D→ y OBS en el mapa del G1000 (**F7** = CDI GPS/VLOC);
+  - en D→ y «+ Añadir» se **teclea cualquier identificador** (o parte del nombre): Enter elige, Esc cierra;
+  - **aproximaciones RNAV (GPS) de entrenamiento** para cada pista (FPL → RNAV), en «T» con IAF, IF, FAF a 5 NM y
+    senda de 3°: escala de 0,3 NM en el final, rombo de senda en el PFD y piloto automático en APR. Son generadas,
+    **no publicadas**: para volar un procedimiento real use su carta.
 - **Instructor:**
   - congelar altitud, posición o combustible;
   - tiempo ×2/×4;
@@ -132,6 +136,7 @@ Las lecciones siguen las áreas de operación y tolerancias del examen práctico
 | | Espera (holding) sobre un VOR | IR.IV.A | entrada directa/gota/paralela, tramos de 1 min, altitud ±100 ft |
 | | Aproximación de no precisión (LOC) | IR.VI.A | no bajar de la MDA (+100/−0), decisión en el MAP |
 | | Aproximación frustrada | IR.VI.C | frustrada inmediata, rumbo ±10°, ascenso publicado |
+| | Aproximación RNAV (GPS) de entrenamiento | IR.VI.B | ruta IAF → IF → FAF, ≤ 3/4 de escala lateral y vertical, velocidad ±10 kt, DA 250 ft |
 | | Navegación VOR a otro aeródromo | PA.VI.B / IR.V.A | altitud ±100 ft, ≤ 3/4 de escala |
 | 7 Multimotor (DA42) | Falla de motor: identificar, verificar, embanderar | CA.X.A | rumbo ±10°, Vyse +10/−5 kt, alabeo 2‑5° al motor bueno |
 | | Demostración de Vmc | CA.X.B | rumbo ±10° con pedal, recuperación a la primera señal |

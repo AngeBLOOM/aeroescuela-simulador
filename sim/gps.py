@@ -5,15 +5,19 @@ Da lo mismo que un receptor NAV (valid, cdi, to_from, obs, station, dme_nm…) p
 lo sigan igual que a un VOR cuando el selector CDI está en GPS. La desviación es lineal: la escala completa es de
 2 NM en ruta y 1 NM en terminal (a menos de 30 NM del aeródromo de destino). Rumbos y cursos que se muestran,
 magnéticos; la geometría, verdadera.
+
+Con una aproximación RNAV cargada (sim/rnav.py), desde 2 NM antes del FAF la escala pasa a 0,3 NM (APR), el GPS da
+una senda vertical de 3° como la del ILS (gs, gs_valid) y se comporta como un localizador para el piloto
+automático (is_loc), que la puede volar en APR acoplado.
 """
 import math
 from types import SimpleNamespace
 
 import numpy as np
 
-from .mathx import NM, clamp, wrap180, wrap360
+from .mathx import FT, NM, clamp, wrap180, wrap360
 
-SCALE_NM = {"ENR": 2.0, "TERM": 1.0}
+SCALE_NM = {"ENR": 2.0, "TERM": 1.0, "APR": 0.3}
 
 
 class Waypoint:
@@ -37,6 +41,7 @@ class Gps:
         self.obs_mode = False
         self.obs_course = 360.0     # curso magnético del modo OBS
         self._from_here = False     # el tramo activo empieza en la posición del avión, no en el punto anterior
+        self.approach = None        # aproximación RNAV cargada (sim/rnav.py) o None
         self.reset_outputs()
 
     # ------------------------------------------------------------ base de datos
@@ -100,6 +105,31 @@ class Gps:
         self.obs_mode = False
         self.origin = None
         self._from_here = False
+        self.approach = None
+
+    def load_approach(self, apr, iaf=None, first="IAF"):
+        """Carga una aproximación RNAV al final del plan (en lugar del aeródromo de destino, si es el último punto) y,
+        si no había plan, la activa. iaf: "L", "R" o None (vectores). first: el punto hacia el que se activa ("IAF" o
+        "IF": el primero; "FAF" o "MAP": ya alineado en el final, el siguiente por delante; ver rnav.entry)."""
+        if self.plan and self.plan[-1].kind == "APT" and self.plan[-1].ident == apr.airport.ident:
+            self.plan.pop()
+        start = len(self.plan)
+        legs = apr.legs(iaf)
+        self.plan += legs
+        self.approach = apr
+        self.obs_mode = False
+        if start == 0 or self.direct is not None:
+            k = next((i for i, p in enumerate(legs) if p.role == first), 0)
+            self.activate(start + k)
+            self._from_here = True
+        return start
+
+    def _approach_final(self, tgt):
+        """En el tramo final: hacia el FAF a menos de 2 NM de él, o hacia el umbral (MAP)."""
+        role = getattr(tgt, "role", "")
+        if self.approach is None or role not in ("FAF", "MAP"):
+            return False
+        return role == "MAP" or self.dis_nm < 2.0
 
     def activate(self, index):
         """Activa el tramo hacia plan[index] desde el punto anterior (o desde la posición actual si es el primero)."""
@@ -149,7 +179,8 @@ class Gps:
 
     @property
     def is_loc(self):
-        return False
+        # en el tramo final de una RNAV el piloto automático la sigue como un localizador (curso del tramo, más fino)
+        return self.scale == "APR"
 
     @property
     def target(self):
@@ -201,8 +232,20 @@ class Gps:
         self.brg = w.mag(math.degrees(math.atan2(dy, dx)))
         self.to_from = "TO" if remaining >= 0 else "FROM"
         dest = self.plan[-1] if self.plan else tgt
-        near_dest = dest.kind == "APT" and math.hypot(dest.pos[0] - p[0], dest.pos[1] - p[1]) < 30 * NM
+        dest_pos, dest_apt = dest.pos, dest.kind == "APT"
+        if self.approach is not None:                     # con aproximación cargada, el destino es su aeródromo
+            dest_pos, dest_apt = self.approach.airport.ref, True
+        near_dest = dest_apt and math.hypot(dest_pos[0] - p[0], dest_pos[1] - p[1]) < 30 * NM
         self.scale = "TERM" if near_dest else "ENR"
+        if self._approach_final(tgt):
+            self.scale = "APR"
+            # senda vertical: 3° desde el punto donde toca el suelo (pasado el umbral, para cruzarlo a 50 ft)
+            apr = self.approach
+            back = -float(np.dot(p - apr.threshold, apr.dir)) + apr.tch_ft * FT / math.tan(math.radians(apr.gp_deg))
+            if back > 50.0:
+                dev = math.degrees(math.atan2(ac.alt_msl - apr.elev_ft * FT, back)) - apr.gp_deg
+                self.gs = clamp(-dev / 0.7, -1.0, 1.0)
+                self.gs_valid = True
         self.cdi = clamp(-self.xtk_nm / SCALE_NM[self.scale], -1.0, 1.0)
         self.ete_s = self.dis_nm * NM / ac.gs if ac.gs > 5 else None
         self.station = SimpleNamespace(ident=tgt.ident, kind="GPS", course=dtk_true, magvar=w.magvar, pos=to)
