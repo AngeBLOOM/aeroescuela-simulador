@@ -21,12 +21,27 @@ from .ui import COL
 
 
 class _NullUI:
+    """Pantalla de la consola: no hay ratón. Los botones de cabina se dibujan (las listas del GPS, que se recorren con la
+    perilla FMS, y los rótulos de las teclas), pero no se pueden pulsar."""
     tooltip = None
+
+    def __init__(self, fonts=None):
+        self.f = fonts
 
     def button(self, *a, **k):
         return False
 
-    def cockpit_button(self, *a, **k):
+    def cockpit_button(self, surf, rect, label, active=False, size=15, color=None, enabled=True, tip=None, style="normal"):
+        if self.f is None:
+            return False
+        rect = pygame.Rect(rect)
+        base = COL["button_on"] if active else (color if color is not None else COL["button"])
+        if not enabled:
+            base = (36, 38, 42)
+        if style != "flat":
+            pygame.draw.rect(surf, base, rect, border_radius=6)
+        pygame.draw.rect(surf, (64, 70, 80), rect, 1, border_radius=6)
+        self.f.blit(surf, label, rect.center, size, COL["white"] if enabled else COL["dim"], bold=True, anchor="center")
         return False
 
     def scroll(self, *a, **k):
@@ -305,9 +320,9 @@ class InstrumentDisplay:
                 buf.fill((0, 0, 0, 255))
                 dst = pygame.Rect(0, 0, NW, bh)
             if name == "pfd":
-                panel.glass.pfd(buf, dst, world, _NullUI())
+                panel.glass.pfd(buf, dst, world, _NullUI(self.f))
             else:
-                panel.glass.mfd(buf, dst, world, _NullUI())
+                panel.glass.mfd(buf, dst, world, _NullUI(self.f))
             if buf is not s:
                 s.blit(pygame.transform.smoothscale(buf, rect.size), (0, 0))
 

@@ -370,7 +370,8 @@ class App(ScreensMixin):
         """Se está escribiendo un punto en el GPS: la lista D→ / añadir está abierta y el mapa del G1000 a la vista
         (panel 2D de cristal). Si se cambia de vista, la lista se cierra y el teclado vuelve a los mandos."""
         g = self.panel.glass
-        if g.gps_typing() and not (self.cockpit_style == "2d" and self.panel.mode == "glass"):
+        on_screen = self.panel.mode == "glass" and (self.cockpit_style == "2d" or self.console_here())
+        if g.gps_typing() and not on_screen:      # con la consola, el G1000 está en la pantalla de instrumentos
             g.gps_page, g.gps_query = None, ""
         return g.gps_typing()
 
@@ -1289,6 +1290,7 @@ class App(ScreensMixin):
             if self._joy_reload_t is not None and now >= self._joy_reload_t:
                 self._joy_reload_t = None
                 self.reload_joysticks()
+            self.hardware.on_events(events)      # pulsos de las perillas giratorias de la consola, uno a uno
             for ev in events:
                 if ev.type == pygame.WINDOWCLOSE and self.instr_win is not None and getattr(ev, "window", None) is self.instr_win:
                     self.settings["pantalla_instr"] = "no"

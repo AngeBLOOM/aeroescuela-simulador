@@ -45,6 +45,28 @@ El dibujo muestra la curva y un punto naranja con la posición real del mando. *
 Las **setas** (palancas de 4 posiciones del volante) se asignan como un botón: pulse «Asignar» y mueva la seta hacia
 el lado que quiera (por ejemplo, compensador arriba/abajo).
 
+## 3b-3. Teclas y perillas del G1000 (C172S)
+Están al final de la lista de Asignar mandos, todas como **PULS** (la rueda del ratón recorre la lista). Cada perilla
+giratoria (encoder) se asigna dos veces: «+» girándola a la derecha y «−» a la izquierda. Si la perilla es doble
+(grande y pequeña), cada parte tiene su «+» y su «−»; si además se pulsa, eso es otra función.
+- **Piloto automático:** AP, FD, HDG, NAV, APR, ALT, VS, NOSE UP / NOSE DN (VS ±100 ft/min) y la perilla de altitud
+  (grande ±1000 ft, pequeña ±100 ft).
+- **Perillas del tablero:** HDG (± y pulsada = al rumbo actual), CRS (OBS del NAV 1; con el CDI en GPS, el curso del
+  modo OBS), CRS del NAV 2 y BARO (± 1 hPa, pulsada = STD 1013).
+- **Radios, dos formas (se pueden usar las dos a la vez):**
+  - *una perilla doble por radio* (COM 1, NAV 1, NAV 2, ADF): grande = MHz (ADF: centenas de kHz), pequeña = kHz, y
+    el botón ⇄ que pasa la reserva a activa;
+  - *una perilla doble compartida*: el **selector** elige la radio (COM 1 → NAV 1 → NAV 2 → ADF) y la perilla y el ⇄
+    actúan sobre ella. La radio elegida lleva un recuadro cian en la barra superior del PFD.
+  Como en el avión, las perillas cambian la frecuencia **de reserva** (blanca) y ⇄ la pasa a **activa** (verde).
+- **Transpondedor:** «siguiente dígito» elige la cifra (subrayada en cian), «+» y «−» la cambian (0-7) e IDENT.
+- **GPS:** D→, FPL, PROC (aproximaciones RNAV de entrenamiento), CLR, ENT, perilla FMS (grande: recorre la lista;
+  pequeña: deletrea el identificador; pulsada: siguiente letra), RANGE ± del mapa, CDI (GPS/VLOC) y OBS.
+  Ejemplo, directo a VN: D→, pequeña hasta la «V», pulsar la FMS, pequeña hasta la «N», ENT.
+
+Todo esto funciona solo con la **aviónica encendida** y en vuelo (no en pausa). Los clics de las perillas se cuentan
+uno a uno aunque se giren rápido.
+
 ## 3c. Interruptores al empezar el vuelo
 - Si la lección empieza con el avión **frío en tierra** (motor parado), el simulador copia la posición de los
   interruptores reales: batería, luces, magnetos, combustible… (el tren nunca se sube en tierra).

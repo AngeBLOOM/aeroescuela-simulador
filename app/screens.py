@@ -758,9 +758,15 @@ class ScreensMixin:
         if not hasattr(self, "hw_scroll"):
             self.hw_scroll = 0
         d = ui.scroll(box)
+        last = max(0, (len(FUNCTIONS) - per_col * 2 + 1) // 2)        # sin pasarse del final de la lista
         if d:
-            self.hw_scroll = max(0, self.hw_scroll - d * 2)
+            self.hw_scroll = max(0, min(last, self.hw_scroll - d * 2))
+        self.hw_scroll = min(self.hw_scroll, last)
         items = FUNCTIONS[self.hw_scroll * 2:]
+        n_vis = min(len(items), per_col * 2)
+        if not hw.capture and hw.calib is None:      # en esa línea va el aviso de asignar o calibrar
+            f.blit(s, f"Funciones {self.hw_scroll * 2 + 1}–{self.hw_scroll * 2 + n_vis} de {len(FUNCTIONS)} · rueda: más",
+                   (box.right - 16, top - 22), 12, COL["grey"], anchor="topright")
         kind_txt = {"eje": "EJE", "interruptor": "INT", "pulsador": "PULS", "mantener": "MANT"}
         for i, (key, name, kind) in enumerate(items[:per_col * 2]):
             col, row = i // per_col, i % per_col
