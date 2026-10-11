@@ -148,6 +148,33 @@ plugged.insert(0, yoke)
 hw.refresh()
 print("frenos de pie OK")
 
+# ---------------------------------------------------------------- 3b'. la consola es solo del C172S
+# con otro avión (aquí el DA42) no se lee nada de ella: ni volante, ni gases, ni frenos de pie, ni interruptores
+other = World("da42")
+other.reposition("plataforma")
+so = other.ac.sys
+so.ready_to_fly()
+B["eje_gases"] = dict(dev=dev["Volante"], eje=2, inv=False)
+yoke.axes[0], yoke.axes[2], yoke.axes[4] = 0.8, 1.0, 1.0     # volante a la derecha, gases a fondo, freno pisado
+for en in so.engines:
+    en.throttle = 0.2
+bat = so.master
+panel.btns[0] = 0 if bat else 1                               # el interruptor real de batería, al revés
+hw.request_sync()
+hw.update(0.016, other, app)
+assert all(en.throttle == 0.2 for en in so.engines) and so.master == bat
+assert hw.brake_l == hw.brake_r == hw.brake_cmd == 0.0
+other.ap.engaged = False
+ctl.update(0.016, other, None, 0)
+assert abs(other.ac.ctl_ail) < 0.05, other.ac.ctl_ail          # ni la consola ni su volante como joystick genérico
+assert not hw.applies_to("da42") and hw.applies_to("c172")
+hw.update(0.016, world, app)                                  # con el C172S, la misma consola sí manda
+assert s.engines[0].throttle == 1.0 and hw.brake_l == 1.0
+B.pop("eje_gases")
+yoke.axes[2], yoke.axes[4] = 0.0, -1.0
+panel.btns[0] = 0
+print("consola solo del C172S OK")
+
 # ---------------------------------------------------------------- 3c. sensibilidad por eje y setas
 from app.hardware import shape
 
