@@ -214,6 +214,8 @@ class App(ScreensMixin):
         self.auto_start = None
         self.menu_t = 0.0
         self.fps = 60.0
+        from app.latency import LatencyMeter
+        self.latency = LatencyMeter()       # retardo interno (F9 lo muestra; se guarda en datos/retardo.json)
         self.selected_lesson = 0
         self.free_cfg = dict(avion=self.settings.get("avion", "c172"), pos="pista", clima=1, hora=1)
         self.loc_query = ""
@@ -835,8 +837,11 @@ class App(ScreensMixin):
 
     def end_flight(self):
         """Termina el vuelo y abre el análisis posterior."""
+        # retardo interno medido en este vuelo, para la guía de pruebas
+        self.latency.report(os.path.join(DATA, "retardo.json"), fps=self.fps, avion=self.world.ac.t.short,
+                            resolucion=f"{self.W}x{self.H}", calidad=self.settings.get("calidad", "auto"))
         L = self.lesson
-        flight_s = self.world.stats["flight_time"] - self.flight_time_start
+        flight_s =self.world.stats["flight_time"] - self.flight_time_start
         landings = self.world.stats["landings"] - self.landings_start
         if L is not None and not isinstance(L, FreeFlight):
             if not L.done:
@@ -1165,6 +1170,7 @@ class App(ScreensMixin):
                 en.starter = crank and en.magnetos > 0 and not en.running
         # mandos a la frecuencia de fotograma; la física avanza a 240 Hz
         # mientras se escribe un identificador en el GPS, las letras no mueven palanca, pedales ni gases
+        self.latency.mark_input()
         self.controls.update(dt, w, keys, mods, ui_wants_keys=self.gps_typing())
         ac.brake = max(ac.brake, self.hardware.brake_cmd)
         ac.brake_l, ac.brake_r = self.hardware.brake_l, self.hardware.brake_r   # frenos de pie: cada rueda
@@ -1279,6 +1285,7 @@ class App(ScreensMixin):
                 self.udp.update(dt, self)
             self.frame(dt, events)
             pygame.display.flip()
+            self.latency.mark_frame()            # retardo interno: mandos leídos → imagen entregada
             self.draw_instrument_window()
             self._pace(time.perf_counter() - t_start, dt)
             self.clock.tick(self.fps_cap)
@@ -1413,7 +1420,10 @@ class App(ScreensMixin):
             pygame.draw.rect(self.overlay, (8, 14, 24, 200), (self.W / 2 - tw / 2 - 12, 4, tw + 24, th + 8), border_radius=6)
             self.fonts.blit(self.overlay, txt, (self.W / 2, 8), 15, COL["yellow"], bold=True, anchor="midtop")
         if self.settings.get("mostrar_fps"):
-            self.fonts.blit(self.overlay, f"{self.fps:4.0f} FPS", (self.W - 10, self.H - 22), 13, COL["grey"], anchor="topright")
+            st = self.latency.stats()
+            txt = f"{self.fps:4.0f} FPS" + (f"  ·  retardo interno {st[0]:.0f} ms (95 %: {st[1]:.0f}) · peor caso "
+                                             f"{self.latency.worst_case(st[1], self.fps):.0f} ms" if st else "")
+            self.fonts.blit(self.overlay, txt, (self.W - 10, self.H - 22), 13, COL["grey"], anchor="topright")
         self._draw_fade()
         self.renderer.draw_overlay(self.overlay)
 
