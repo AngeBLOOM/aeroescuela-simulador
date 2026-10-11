@@ -1,6 +1,6 @@
 # Guía de pruebas — AeroEscuela con el Cessna 172S Skyhawk
 
-Generada el 10/10/2026 a las 23:32 con `python tools/guia_pruebas.py` --pruebas · versión del programa `fdba4eb`.
+Generada el 10/10/2026 a las 23:32 con `python tools/guia_pruebas.py --pruebas` · versión del programa `fdba4eb`.
 
 > Esta guía reúne las pruebas objetivas y funcionales del dispositivo para el expediente ante la autoridad aeronáutica (guía de pruebas de calificación, OACI Doc 9625). **No es una certificación:** la calificación la otorga la autoridad tras evaluar el dispositivo instalado, con su consola física y sus pantallas. Las cifras del manual son las típicas publicadas del C172S; para un avión concreto deben usarse las de su propio POH.
 

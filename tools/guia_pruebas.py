@@ -77,8 +77,8 @@ def main():
     a = L.append
     a(f"# Guía de pruebas — AeroEscuela con el {REFERENCIA['nombre']}")
     a("")
-    a(f"Generada el {time.strftime('%d/%m/%Y a las %H:%M')} con `python tools/guia_pruebas.py`"
-      f"{' --pruebas' if run_tests else ''} · versión del programa `{version()}`.")
+    a(f"Generada el {time.strftime('%d/%m/%Y a las %H:%M')} con `python tools/guia_pruebas.py"
+      f"{' --pruebas' if run_tests else ''}` · versión del programa `{version()}`.")
     a("")
     a("> Esta guía reúne las pruebas objetivas y funcionales del dispositivo para el expediente ante la autoridad "
       "aeronáutica (guía de pruebas de calificación, OACI Doc 9625). **No es una certificación:** la calificación la "
