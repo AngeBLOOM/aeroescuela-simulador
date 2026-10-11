@@ -18,6 +18,10 @@ import pygame
 
 from sim.mathx import clamp
 
+# La consola física reproduce la cabina del Cessna 172S, el avión de referencia. Los demás aviones se pueden volar,
+# pero sin ella: con teclado, ratón, el panel 2D o un joystick USB aparte.
+CONSOLE_AIRCRAFT = "c172"
+
 # (clave, nombre, tipo)
 FUNCTIONS = [
     ("eje_alabeo", "Volante: alabeo", "eje"),
@@ -424,13 +428,18 @@ class Hardware:
         """True si hay cabina física: el volante (alabeo y cabeceo) asignado y su mando enchufado."""
         return self.has_axis("eje_alabeo") and self.has_axis("eje_cabeceo")
 
+    @staticmethod
+    def applies_to(aircraft_id):
+        """La consola solo manda en el avión que reproduce (CONSOLE_AIRCRAFT); con otro no se lee nada de ella."""
+        return aircraft_id == CONSOLE_AIRCRAFT
+
     # ------------------------------------------------------------ aplicar al avión
     def update(self, dt, world, app):
         self.brake_cmd = self.brake_l = self.brake_r = 0.0   # sin lectura (mando quitado) no queda frenado
         if self.capture:
             self._poll_capture()
             return
-        if not self.bindings or not self.devices:
+        if not self.bindings or not self.devices or not self.applies_to(world.ac.t.id):
             return
         ac = world.ac
         s = ac.sys
