@@ -30,6 +30,8 @@ class GlassCockpit:
         self.rose_cache = {}
         self.gps_page = None        # lista abierta en el mapa: None, "dto", "fpl" o "add"
         self.gps_query = ""         # identificador que se escribe con el teclado en D→ / añadir (vacío: los cercanos)
+        self.gps_cursor = 0         # fila elegida con la perilla FMS de la consola
+        self.gps_newchar = False    # la próxima vuelta de la perilla FMS pequeña empieza una letra nueva
 
     # ================================================================ PFD
     def pfd(self, surf, rect, world, ui):
@@ -387,18 +389,25 @@ class GlassCockpit:
         ap = world.ap
         bar = pygame.Rect(rect.x, rect.y, rect.w, 26)
         pygame.draw.rect(surf, (0, 0, 0), bar)
-        f.blit(surf, f"NAV1 {world.nav1.freq:6.2f}", (bar.x + 8, bar.centery), 13, GREEN, mono=True, anchor="midleft")
-        f.blit(surf, f"COM1 {world.com_freq:7.3f}", (bar.right - 8, bar.centery), 13, GREEN, mono=True, anchor="midright")
+        # en PFD estrechos (panel 2D) letra más chica, sin el rótulo NAV1/COM1 y los modos del PA más juntos
+        narrow = bar.w < 560
+        fs, fa = (11, 12) if narrow else (13, 15)
+        f.blit(surf, ("" if narrow else "NAV1 ") + f"{world.nav1.freq:6.2f}", (bar.x + 6, bar.centery), fs, GREEN,
+               mono=True, anchor="midleft")
+        f.blit(surf, ("" if narrow else "COM1 ") + f"{world.com_freq:7.3f}", (bar.right - 6, bar.centery), fs, GREEN,
+               mono=True, anchor="midright")
         mid = bar.centerx
+        k = bar.w / 640.0                                # posiciones proporcionales al ancho
         if ap.engaged or ap.fd:
-            f.blit(surf, ap.lat, (mid - 70, bar.centery), 15, GREEN, mono=True, bold=True, anchor="center")
-            if ap.nav_armed:
-                f.blit(surf, "LOC" if ap.gs_armed else "VOR", (mid - 120, bar.centery), 13, WHITE, mono=True, anchor="center")
-            f.blit(surf, "AP" if ap.engaged else "FD", (mid, bar.centery), 15, GREEN, mono=True, bold=True, anchor="center")
-            vt = ap.vert + (f" {ap.vs_sel:+.0f}FPM" if ap.vert == "VS" else (f" {ap.alt_sel:.0f}FT" if ap.vert == "ALT" else ""))
-            f.blit(surf, vt, (mid + 80, bar.centery), 15, GREEN, mono=True, bold=True, anchor="center")
-            if ap.alt_armed or ap.gs_armed:
-                f.blit(surf, "ALTS" if ap.alt_armed else "GS", (mid + 170, bar.centery), 13, WHITE, mono=True, anchor="center")
+            f.blit(surf, ap.lat, (mid - 70 * k, bar.centery), fa, GREEN, mono=True, bold=True, anchor="center")
+            if ap.nav_armed and not narrow:
+                f.blit(surf, "LOC" if ap.gs_armed else "VOR", (mid - 120 * k, bar.centery), fs, WHITE, mono=True, anchor="center")
+            f.blit(surf, "AP" if ap.engaged else "FD", (mid, bar.centery), fa, GREEN, mono=True, bold=True, anchor="center")
+            vt = ap.vert + ("" if narrow else
+                            (f" {ap.vs_sel:+.0f}FPM" if ap.vert == "VS" else (f" {ap.alt_sel:.0f}FT" if ap.vert == "ALT" else "")))
+            f.blit(surf, vt, (mid + 70 * k, bar.centery), fa, GREEN, mono=True, bold=True, anchor="center")
+            if (ap.alt_armed or ap.gs_armed) and not narrow:
+                f.blit(surf, "ALTS" if ap.alt_armed else "GS", (mid + 170 * k, bar.centery), fs, WHITE, mono=True, anchor="center")
 
     # ================================================================ MFD
     def _build_map(self, world):
@@ -463,6 +472,156 @@ class GlassCockpit:
             self.gps_query += text.upper()
             return True
         return False
+
+    # ------------------------------------------------------------ combustible (franja de motor del MFD)
+    def _fuel_block(self, surf, r, world, compact=False):
+        """Medidor de combustible: un tanque a cada lado con su nivel en color (verde, amarillo por debajo del 25 %,
+        rojo por debajo del 12 %), litros de cada uno, total, consumo y autonomía, con aviso de reserva por debajo de
+        45 minutos. En pantallas chicas, versión compacta: dos barras y una línea con total y autonomía."""
+        f = self.f
+        ac = world.ac
+        sysm = ac.sys
+        cap = ac.t.fuel_capacity / 2
+        tank = sysm.fuel_l / 2                           # el selector en AMBOS reparte el consumo entre los dos tanques
+        flow = sum(en.fuel_flow for en in sysm.engines)
+        endur_h = sysm.fuel_l / flow if flow > 1.0 else None
+        frac = tank / cap if cap > 0 else 0.0
+        col = (40, 190, 80) if frac > 0.25 else ((235, 190, 40) if frac > 0.12 else (235, 50, 40))
+        reserve = endur_h is not None and endur_h < 0.75
+        pygame.draw.rect(surf, (6, 8, 12), r, border_radius=4)
+        pygame.draw.rect(surf, (235, 50, 40) if reserve else (60, 66, 76), r, 1, border_radius=4)
+        if compact:
+            lh = max(10, (r.h - 6) / 3)
+            for i, lab in enumerate(("I", "D")):
+                yb = r.y + 3 + i * lh
+                f.blit(surf, lab, (r.x + 4, yb + lh / 2), 10, COL["grey"], bold=True, anchor="midleft")
+                bar = pygame.Rect(r.x + 14, yb + 2, r.w * 0.52, lh - 4)
+                pygame.draw.rect(surf, (24, 28, 34), bar)
+                pygame.draw.rect(surf, col, (bar.x, bar.y, bar.w * clamp(frac, 0, 1), bar.h))
+                f.blit(surf, f"{tank:.0f}L", (r.right - 3, yb + lh / 2), 11, WHITE, mono=True, bold=True, anchor="midright")
+            if endur_h is not None:
+                txt = ("RES " if reserve else "") + f"{int(endur_h)}h{int(endur_h % 1 * 60):02d}"
+            else:
+                txt = "MOTOR OFF"
+            f.blit(surf, txt, (r.centerx, r.y + 3 + 2.5 * lh), 11, (235, 50, 40) if reserve else (120, 220, 255),
+                   mono=True, bold=True, anchor="center")
+            return
+        f.blit(surf, "COMBUSTIBLE", (r.centerx, r.y + 4), 12, COL["grey"], bold=True, anchor="midtop")
+        # un tanque en el centro de cada mitad, con su nombre y sus litros debajo (nada se sale del recuadro)
+        gw, gh = r.w * 0.24, r.h * 0.38
+        for i, lab in enumerate(("IZQ", "DER")):
+            cx = r.x + r.w * (0.25 + 0.5 * i)
+            g = pygame.Rect(cx - gw / 2, r.y + 20, gw, gh)
+            pygame.draw.rect(surf, (24, 28, 34), g, border_radius=3)
+            fill = pygame.Rect(g.x, g.bottom - g.h * clamp(frac, 0, 1), g.w, g.h * clamp(frac, 0, 1))
+            pygame.draw.rect(surf, col, fill, border_radius=3)
+            pygame.draw.rect(surf, (120, 128, 140), g, 1, border_radius=3)
+            for k in (0.25, 0.5, 0.75):
+                yk = g.bottom - g.h * k
+                pygame.draw.line(surf, (120, 128, 140), (g.right, yk), (g.right + 3, yk), 1)
+            f.blit(surf, f"{lab} {tank:.0f} L", (cx, g.bottom + 3), 13, WHITE, mono=True, bold=True, anchor="midtop")
+        yy = r.y + 20 + gh + 20
+        f.blit(surf, f"TOTAL {sysm.fuel_l:.0f} L · {sysm.fuel_l / 3.785:.0f} gal", (r.centerx, yy), 12, WHITE,
+               mono=True, bold=True, anchor="midtop")
+        if endur_h is not None:
+            hh, mm = int(endur_h), int(endur_h % 1 * 60)
+            txt = f"AUTONOMÍA {hh} h {mm:02d}" + (" · RES" if reserve else "")
+            blink = reserve and int(time.time() * 2) % 2 == 0
+            f.blit(surf, txt, (r.centerx, yy + 16), 12, (235, 50, 40) if reserve and not blink else
+                   ((255, 120, 100) if reserve else (120, 220, 255)), mono=True, bold=True, anchor="midtop")
+            f.blit(surf, f"{flow:.1f} L/h", (r.centerx, yy + 32), 11, COL["grey"], mono=True, anchor="midtop")
+        else:
+            f.blit(surf, "motor parado", (r.centerx, yy + 16), 12, COL["grey"], anchor="midtop")
+
+    # ------------------------------------------------------------ GPS desde la consola (teclas y perillas del G1000)
+    ALPH = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    MAP_RANGES = [2, 5, 10, 20, 40]
+
+    def _approaches(self, world):
+        from sim import rnav
+        ac = world.ac
+        return sorted(rnav.for_world(world), key=lambda a: math.hypot(a.airport.ref[0] - ac.pos[0], a.airport.ref[1] - ac.pos[1]))
+
+    def _gps_rows(self, world):
+        """Filas elegibles con la perilla FMS en la página abierta."""
+        gps = world.gps
+        if self.gps_page in ("dto", "add"):
+            return [r[0] for r in gps.search(self.gps_query, 12)]
+        if self.gps_page == "apr":
+            return self._approaches(world)
+        if self.gps_page == "fpl":
+            return list(gps.plan) + ["+", "RNAV", "BORRAR"]
+        return []
+
+    def gps_open(self, page):
+        """Tecla D→ (dto), FPL (fpl) o PROC (apr): abre la página, o la cierra si ya estaba abierta."""
+        self.gps_page = None if self.gps_page == page else page
+        self.gps_query, self.gps_cursor, self.gps_newchar = "", 0, False
+
+    def gps_fms(self, world, big=0, small=0, push=False):
+        """Perilla FMS. En D→ / añadir, la pequeña deletrea el identificador (cambia la última letra; pulsar la perilla
+        pasa a la siguiente) y la grande recorre los puntos que coinciden. En el plan y en RNAV, cualquiera de las dos
+        mueve el cursor."""
+        if self.gps_page is None:
+            return
+        typing = self.gps_page in ("dto", "add")
+        if typing and push:
+            if self.gps_query and len(self.gps_query) < 6:
+                self.gps_newchar = True
+            return
+        if typing and small:
+            A = self.ALPH
+            if not self.gps_query or self.gps_newchar:
+                self.gps_query += A[0] if small > 0 else A[-1]
+                self.gps_newchar = False
+            else:
+                c = self.gps_query[-1]
+                i = A.index(c) if c in A else 0
+                self.gps_query = self.gps_query[:-1] + A[(i + small) % len(A)]
+            self.gps_cursor = 0
+            return
+        n = len(self._gps_rows(world))
+        if n:
+            self.gps_cursor = (self.gps_cursor + (big or small)) % n
+
+    def gps_enter(self, world):
+        """ENT: elige la fila del cursor."""
+        rows = self._gps_rows(world)
+        if not rows:
+            return
+        row = rows[min(self.gps_cursor, len(rows) - 1)]
+        gps = world.gps
+        if self.gps_page in ("dto", "add"):
+            self.gps_choose(gps, row)
+        elif self.gps_page == "apr":
+            from sim import rnav
+            gps.load_approach(row, *rnav.entry(row, world.ac.pos))
+            self.gps_page, self.gps_cursor = "fpl", 0
+        elif row == "+":
+            self.gps_open("add")
+        elif row == "RNAV":
+            self.gps_open("apr")
+        elif row == "BORRAR":
+            gps.clear()
+            self.gps_cursor = 0
+        else:
+            gps.activate(self.gps_cursor)
+
+    def gps_clr(self, world):
+        """CLR: borra la última letra (o cierra si no hay nada escrito); en el plan quita el punto del cursor."""
+        if self.gps_page in ("dto", "add") and self.gps_query:
+            self.gps_query, self.gps_newchar, self.gps_cursor = self.gps_query[:-1], False, 0
+        elif self.gps_page == "fpl" and self.gps_cursor < len(world.gps.plan):
+            world.gps.remove(self.gps_cursor)
+            self.gps_cursor = min(self.gps_cursor, max(0, len(world.gps.plan) - 1))
+        else:
+            self.gps_page, self.gps_query, self.gps_cursor = None, "", 0
+
+    def map_range_step(self, d):
+        """Perilla RANGE: + aleja el mapa, − lo acerca."""
+        opts = self.MAP_RANGES
+        i = opts.index(self.map_range_nm) if self.map_range_nm in opts else 2
+        self.map_range_nm = opts[int(clamp(i + d, 0, len(opts) - 1))]
 
     def _gps_keys(self, surf, mp, world, ui):
         """Teclas del GPS en el mapa: D→ (directo a), FPL (plan de vuelo), OBS y selector CDI GPS/VLOC; y sus
@@ -609,8 +768,6 @@ class GlassCockpit:
                 ("T ACEITE", e.oil_temp, 50, 260, (100, 245)),
                 ("EGT °F", e.egt, 800, 1650, (1150, 1550)),
                 ("CHT °F", e.cht, 100, 500, (200, 435)),
-                ("COMB L", sysm.fuel_l / 2, 0, cap, (cap * 0.15, cap)),
-                ("COMB R", sysm.fuel_l / 2, 0, cap, (cap * 0.15, cap)),
                 ("VOLTS", sysm.bus_volts, 20, 32, (24.5, 29.5))]
         if ac.t.fadec:
             if sysm.twin:
@@ -621,10 +778,16 @@ class GlassCockpit:
                 rows.insert(0, ("CARGA %", e.load, 0, 100, (0, 100)))
         elif not ac.t.fixed_pitch:
             rows.insert(0, ("MAN IN", e.map_inhg, 10, 35, (15, 25)))
-        rh = (es.bottom - y - 4) / len(rows)
+        # bloque de combustible al pie: grande en pantallas amplias (la de instrumentos de la consola) y compacto en las
+        # chicas (panel 2D), siempre dejando al menos 15 px a cada barra de motor
+        compact = es.w < 170 or es.bottom - y < 330
+        fb = 62 if compact else max(150, int(es.h * 0.34))
+        fb = min(fb, max(40, int(es.bottom - y - 4 - 15 * len(rows))))
+        rh = (es.bottom - fb - y - 4) / len(rows)
         for lab, v, lo, hi, gr in rows:
             bar_gauge(f, surf, (x, y, w, rh - 3), lab, v, lo, hi, gr, fmt="{:.1f}" if hi < 40 else "{:.0f}")
             y += rh
+        self._fuel_block(surf, pygame.Rect(es.x + 4, es.bottom - fb, es.w - 8, fb - 4), world, compact)
         # mapa móvil
         mp = pygame.Rect(es.right + 4, rect.y, rect.right - es.right - 4, rect.h)
         rng_m = self.map_range_nm * NM

@@ -57,6 +57,19 @@ check(ent == [(None, "IF"), (None, "FAF"), (None, "MAP")],
 g0 = World("c172").gps
 g0.load_approach(rnav.build(g0.world.home, g0.world.active_rw, g0.world.active_end), None, "MAP")
 check(g0.target.role == "MAP", f"cargada a 3 NM en el final: activa hacia el umbral ({g0.ident})")
+# otra aproximación reemplaza a la anterior y deja los puntos de ruta del instructor
+g1 = World("c172").gps
+w1 = g1.world
+vn = g1.find("VN", "NDB")
+g1.add(vn)
+a_esc = rnav.for_world(w1)
+a1 = next(a for a in a_esc if a.airport.ident == "ESC")
+a2 = next(a for a in a_esc if a.airport.ident == "VNT")
+g1.load_approach(a1, "L")
+g1.load_approach(a2, "R")
+ids1 = [p.ident for p in g1.plan]
+check(ids1[0] == "VN" and g1.approach is a2 and not any(i.startswith("ESC") for i in ids1) and len(ids1) == 6,
+      f"cambiar de aproximación la reemplaza: {ids1}")
 
 print("Agujas en el tramo final")
 g = w.gps

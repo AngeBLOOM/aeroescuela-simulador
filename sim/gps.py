@@ -110,7 +110,14 @@ class Gps:
     def load_approach(self, apr, iaf=None, first="IAF"):
         """Carga una aproximación RNAV al final del plan (en lugar del aeródromo de destino, si es el último punto) y,
         si no había plan, la activa. iaf: "L", "R" o None (vectores). first: el punto hacia el que se activa ("IAF" o
-        "IF": el primero; "FAF" o "MAP": ya alineado en el final, el siguiente por delante; ver rnav.entry)."""
+        "IF": el primero; "FAF" o "MAP": ya alineado en el final, el siguiente por delante; ver rnav.entry).
+        Si ya había otra aproximación cargada, la reemplaza (sus puntos salen del plan)."""
+        was_active = False                               # se volaba hacia un punto de la aproximación anterior
+        if self.approach is not None:
+            was_active = self.active < len(self.plan) and getattr(self.plan[self.active], "role", "") != ""
+            self.plan = [p for p in self.plan if not getattr(p, "role", "")]
+            self.active = min(self.active, max(0, len(self.plan) - 1))
+            self.approach = None
         if self.plan and self.plan[-1].kind == "APT" and self.plan[-1].ident == apr.airport.ident:
             self.plan.pop()
         start = len(self.plan)
@@ -118,7 +125,7 @@ class Gps:
         self.plan += legs
         self.approach = apr
         self.obs_mode = False
-        if start == 0 or self.direct is not None:
+        if start == 0 or self.direct is not None or was_active:
             k = next((i for i, p in enumerate(legs) if p.role == first), 0)
             self.activate(start + k)
             self._from_here = True
