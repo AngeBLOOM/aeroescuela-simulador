@@ -21,7 +21,9 @@ class AircraftType:
     pass
 
 
-def cessna172():
+def _cessna172_base():
+    """Base común: el C172 tal como se ajustó al principio. Los demás aviones parten de ella y cambian lo suyo;
+    el C172S de referencia (cessna172) le añade además el ajuste a su manual."""
     a = AircraftType()
     a.id = "c172"
     a.name = "Cessna 172S Skyhawk"
@@ -143,8 +145,24 @@ def cessna172():
     return a
 
 
+def cessna172():
+    """Cessna 172S, el avión de referencia: la base con el ajuste a su manual (POH). Las cifras que se comprueban,
+    con su tolerancia, están en sim/poh.py y las mide tools/validacion.py (prueba test_validacion)."""
+    a = _cessna172_base()
+    a.CD0 = 0.026                 # crucero de 124 KTAS al 75 % a 8000 ft
+    a.e = 0.90                    # con CD0: ascenso cerca de 730 ft/min a Vy
+    a.prop_vc = 44.0              # empuje estático: carrera de despegue de pista corta de 960 ft
+    a.alpha_stall_flap_delta = math.radians(-0.3)   # pérdida con flaps 30° a 48 KCAS
+    a.prop_windmill = 0.57        # hélice en molinete: planeo de 9:1 (1,5 NM por cada 1000 ft)
+    a.brake_max = 0.35            # par de los frenos: carrera de aterrizaje de 575 ft con frenada máxima
+    # con menos resistencia el crucero pide menos potencia (menos par): reglaje neutro con mandos sueltos a ~108 kt
+    a.rig_roll = 2.8e-4
+    a.rig_yaw = 1.75e-4
+    return a
+
+
 def piper_arrow():
-    a = cessna172()
+    a = _cessna172_base()
     a.id = "pa28r"
     a.name = "Piper PA-28R-201 Arrow"
     a.short = "PA-28R"
@@ -194,7 +212,7 @@ def piper_arrow():
 
 def diamond_da40():
     """Diamond DA40 NG: monomotor diésel (FADEC), ala baja, cola en T, G1000."""
-    a = cessna172()
+    a = _cessna172_base()
     a.id = "da40"
     a.name = "Diamond DA40 NG"
     a.short = "DA40 NG"
@@ -318,7 +336,7 @@ def diamond_da42():
 
 def cessna152():
     """Cessna 152: biplaza de ala alta, 110 hp, el entrenador básico más extendido."""
-    a = cessna172()
+    a = _cessna172_base()
     a.id = "c152"
     a.name = "Cessna 152"
     a.short = "C152"

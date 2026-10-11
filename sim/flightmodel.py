@@ -476,7 +476,9 @@ class Aircraft:
                 brk = 1.0 if s.parking_brake else clamp(max(self.brake, side), 0.0, 1.0)
             # pista mojada: los frenos agarran menos y la rueda derrapa antes
             wet = getattr(self.atmo, "wet", 0.0) if gsurf != "agua" else 0.0
-            mu_l = sfc["roll"] + brk * sfc["brake"] * (1.0 - 0.45 * wet)
+            # los frenos de una avioneta los limita su par antes que la adherencia del neumático (brake_max)
+            mu_b = min(sfc["brake"], getattr(t, "brake_max", sfc["brake"]))
+            mu_l = sfc["roll"] + brk * mu_b * (1.0 - 0.45 * wet)
             if getattr(self, "soft_field", False):
                 # pista blanda: el barro frena mucho más, sobre todo la rueda de morro
                 mu_l += 0.10 if gr.steer else 0.06
