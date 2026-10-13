@@ -790,6 +790,9 @@ class App(ScreensMixin):
                 self.world.set_aircraft(L.aircraft)
         if self.world.ac.t.default_cockpit == "glass":
             self.panel.mode = "glass"
+        elif self.console_here():
+            from .hardware import CONSOLE_COCKPIT
+            self.panel.mode = CONSOLE_COCKPIT        # la consola física reproduce el tablero del C172S (G1000)
         # cada vuelo empieza con el GPS sin plan y el CDI en VLOC (la lección puede cambiarlo en setup)
         self.world.gps.clear()
         self.world.cdi_src = "VLOC"

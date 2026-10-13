@@ -23,6 +23,7 @@ from .consola_g1000 import FUNCTIONS as G1000_FUNCTIONS, KEYS as G1000_KEYS, Con
 # La consola física reproduce la cabina del Cessna 172S, el avión de referencia. Los demás aviones se pueden volar,
 # pero sin ella: con teclado, ratón, el panel 2D o un joystick USB aparte.
 CONSOLE_AIRCRAFT = "c172"
+CONSOLE_COCKPIT = "glass"      # su tablero es el G1000 (pantallas): con la consola, los vuelos del C172S empiezan en G1000
 
 # (clave, nombre, tipo)
 FUNCTIONS = [
