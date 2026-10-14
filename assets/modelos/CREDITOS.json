@@ -1,0 +1,37 @@
+{
+ "c172": {
+  "archivo": "free_cessna_172sp.glb",
+  "titulo": "FREE Cessna 172SP",
+  "autor": "NLM (https://sketchfab.com/NLM-Group)",
+  "url": "https://sketchfab.com/3d-models/free-cessna-172sp-c9cadc2f026946da8cf9715a683739e9",
+  "licencia": "CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)"
+ },
+ "c152": {
+  "archivo": "cessna_152.glb",
+  "titulo": "Cessna 152",
+  "autor": "micheal_wain (https://sketchfab.com/micheal_wain)",
+  "url": "https://sketchfab.com/3d-models/cessna-152-09a51df6d49b44fbac04c1971a2418f6",
+  "licencia": "CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)"
+ },
+ "pa28w": {
+  "archivo": "piper_pa_28_cadet.glb",
+  "titulo": "Piper Pa 28 \"Cadet\"",
+  "autor": "helijah (https://sketchfab.com/helijah)",
+  "url": "https://sketchfab.com/3d-models/piper-pa-28-cadet-ba310f1e1ba349c7a54ab9db92e48970",
+  "licencia": "CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)"
+ },
+ "da42": {
+  "archivo": "diamond_da42_twin_star.glb",
+  "titulo": "Diamond Da42 \"Twin Star\"",
+  "autor": "helijah (https://sketchfab.com/helijah)",
+  "url": "https://sketchfab.com/3d-models/diamond-da42-twin-star-d83b6e776955401f87f7bc2ad5d5a252",
+  "licencia": "CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)"
+ },
+ "sr20": {
+  "archivo": "cirrus_sr22.glb",
+  "titulo": "Cirrus SR22",
+  "autor": "KOG_THORNS (https://sketchfab.com/ioai25312)",
+  "url": "https://sketchfab.com/3d-models/cirrus-sr22-cba602c99c524cd4b40e5c2e5f9c5b4f",
+  "licencia": "CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)"
+ }
+}

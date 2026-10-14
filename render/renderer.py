@@ -1,5 +1,6 @@
 """Renderizador OpenGL (moderngl) del simulador."""
 import math
+import os
 
 import moderngl
 import numpy as np
@@ -66,6 +67,7 @@ class Renderer:
         self.p_water = ctx.program(vertex_shader=sh.WATER_VS, fragment_shader=sh.WATER_FS)
         self.p_obj = ctx.program(vertex_shader=sh.OBJECT_VS, fragment_shader=sh.OBJECT_FS)
         self.p_tex = ctx.program(vertex_shader=sh.TEX_VS, fragment_shader=sh.TEX_FS)
+        self.p_model = ctx.program(vertex_shader=sh.MODEL_VS, fragment_shader=sh.MODEL_FS)
         self.p_sky = ctx.program(vertex_shader=sh.SKY_VS, fragment_shader=sh.SKY_FS)
         self.p_light = ctx.program(vertex_shader=sh.LIGHT_VS, fragment_shader=sh.LIGHT_FS)
         self.p_cloud = ctx.program(vertex_shader=sh.CLOUD_VS, fragment_shader=sh.CLOUD_FS)
@@ -240,6 +242,74 @@ class Renderer:
         self.ac_lights = lights
         self.ac_type_id = t.id
 
+    # ------------------------------------------------------------ modelos 3D reales (assets/modelos)
+    MODEL_ALIAS = {"pa28r": "pa28w"}         # el Arrow usa el modelo del PA-28 (mismo fuselaje)
+
+    def aircraft_model(self, type_id):
+        """Modelo 3D real del avión (convertido con tools/importar_modelo.py) o None si no hay: entonces se usa el
+        dibujado por código. Lista de (vao, textura, material), primero los opacos."""
+        if not hasattr(self, "_models"):
+            self._models = {}
+        mid = self.MODEL_ALIAS.get(type_id, type_id)
+        if mid in self._models:
+            return self._models[mid]
+        import json
+        import pygame
+        from ui import assets
+        model = None
+        path = assets.path(os.path.join("modelos", mid + ".npz"))
+        if os.path.exists(path):
+            try:
+                z = np.load(path)
+                meta = json.loads(str(z["meta"]))
+                model, texs = [], {}
+                for k, m in enumerate(meta):
+                    vbo = self.ctx.buffer(np.ascontiguousarray(z[f"v{k}"], np.float32).tobytes())
+                    ibo = self.ctx.buffer(np.ascontiguousarray(z[f"i{k}"], np.uint32).tobytes())
+                    vao = self.ctx.vertex_array(self.p_model, [(vbo, "3f 3f 2f", "in_pos", "in_norm", "in_uv")], ibo)
+                    tex = None
+                    if m.get("tex"):
+                        if m["tex"] not in texs:
+                            img = pygame.image.load(assets.path(os.path.join("modelos", m["tex"])))
+                            t_ = self.ctx.texture(img.get_size(), 4, pygame.image.tobytes(img, "RGBA"))
+                            t_.build_mipmaps()
+                            t_.repeat_x = t_.repeat_y = True
+                            t_.anisotropy = 8.0
+                            texs[m["tex"]] = t_
+                        tex = texs[m["tex"]]
+                    model.append((vao, tex, m))
+                model.sort(key=lambda it: it[2].get("blend", False))
+            except Exception as ex:                       # archivo dañado: se sigue con el avión de código
+                print("Modelo", mid, "no se pudo cargar:", ex)
+                model = None
+        self._models[mid] = model
+        return model
+
+    def _draw_model(self, model, M, alpha=1.0):
+        pm = self.p_model
+        pm["u_model"].write(gl_bytes(M))
+        pm["u_spec"].value = 0.45
+        pm["u_tint"].value = (1.0, 1.0, 1.0, float(alpha))
+        blending = False
+        for vao, tex, m in model:
+            if m.get("blend") and not blending:          # los transparentes (vidrios) al final, sin escribir profundidad
+                blending = True
+                self.ctx.enable(moderngl.BLEND)
+                self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+                self.ctx.depth_mask = False
+            pm["u_base"].value = tuple(float(c) for c in m["color"])
+            pm["u_cutoff"].value = float(m.get("cutoff", 0.0))
+            if tex is not None:
+                tex.use(9)
+                pm["u_tex"].value = 9
+                pm["u_has_tex"].value = 1
+            else:
+                pm["u_has_tex"].value = 0
+            vao.render()
+        if blending:
+            self.ctx.depth_mask = True
+            self.ctx.disable(moderngl.BLEND)
+
     # ------------------------------------------------------------ tráfico IA
     ACCENTS = [(0.70, 0.08, 0.08), (0.08, 0.20, 0.55), (0.10, 0.40, 0.22), (0.85, 0.45, 0.05)]
 
@@ -275,8 +345,12 @@ class Renderer:
             d = p.pos - cam_eye
             if float(d @ d) > 16000.0 ** 2:
                 continue
-            meshes, _ = self.traffic_mesh(p.type_id, getattr(p, 'livery', None) or hash(p.callsign) % 4)
             M = model_matrix(quat_to_mat(p.quat), p.pos)
+            real = None if p.type_id in geo.JETS else self.aircraft_model(p.type_id)
+            if real is not None:
+                self._draw_model(real, M)
+                continue
+            meshes, _ = self.traffic_mesh(p.type_id, getattr(p, 'livery', None) or hash(p.callsign) % 4)
             po["u_model"].write(gl_bytes(M))
             if float(d @ d) > 2500.0 ** 2:
                 meshes["body"].render()
@@ -728,7 +802,7 @@ void main() { f_color = texture(u_tex, v_uv); }
         ctx.enable(moderngl.DEPTH_TEST)
 
         # terreno y agua
-        for prog in (self.p_terrain, self.p_water, self.p_obj, self.p_tex, self.p_light, self.p_cloud):
+        for prog in (self.p_terrain, self.p_water, self.p_obj, self.p_tex, self.p_model, self.p_light, self.p_cloud):
             self._set_common(prog, view, proj, cam.eye)
         self.t_detail.use(1)
         self.p_terrain["u_detail"] = 1
@@ -938,12 +1012,17 @@ void main() { f_color = texture(u_tex, v_uv); }
             self.prop_angles = [0.0, 0.0]
         for i, r_ in enumerate(rpms[:2]):
             self.prop_angles[i] = (self.prop_angles[i] + r_ / 60.0 * 2 * math.pi * 0.016 * 0.37) % (2 * math.pi)
+        real = None if inside else self.aircraft_model(t.id)
+        if real is not None:                          # vistas de afuera: el modelo real; desde la cabina, el de código
+            self._draw_model(real, body_M)
         po["u_spec"].value = 0.5
         if self.t_skin is not None:
             self.t_skin.use(8)
             po["u_skin_tex"] = 8
             po["u_skin"].value = 1
         for name, (m, piv, ax) in self.ac_meshes.items():
+            if real is not None and not name.startswith("disc"):
+                continue                                  # con el modelo real solo se añade el disco de la hélice girando
             if inside and name in ("body", "gear", "elevator", "rudder"):
                 continue
             if name == "cowl" and not (inside and getattr(self, "_cab3d", False)):

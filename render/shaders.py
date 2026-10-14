@@ -505,3 +505,54 @@ void main() {
     f_color = texture(u_tex, v_uv);
 }
 """
+
+# Modelos 3D reales de los aviones (assets/modelos, convertidos con tools/importar_modelo.py): textura de color,
+# mismo sol, ambiente, brillo y niebla que los objetos dibujados por código.
+MODEL_VS = COMMON + """
+uniform mat4 u_model;
+in vec3 in_pos;
+in vec3 in_norm;
+in vec2 in_uv;
+out vec3 v_pos;
+out vec3 v_norm;
+out vec2 v_uv;
+out float v_logz;
+void main() {
+    vec4 wp = u_model * vec4(in_pos, 1.0);
+    v_pos = wp.xyz;
+    v_norm = mat3(u_model) * in_norm;
+    v_uv = in_uv;
+    gl_Position = u_proj * u_view * wp;
+    v_logz = 1.0 + gl_Position.w;
+}
+"""
+
+MODEL_FS = COMMON + FOG_FN + """
+uniform sampler2D u_tex;
+uniform int u_has_tex;
+uniform vec4 u_base;
+uniform float u_cutoff;
+uniform float u_spec;
+uniform vec4 u_tint;
+in vec3 v_pos;
+in vec3 v_norm;
+in vec2 v_uv;
+in float v_logz;
+out vec4 f_color;
+void main() {
+    vec4 c = u_base;
+    if (u_has_tex == 1) c *= texture(u_tex, v_uv);
+    if (c.a < u_cutoff) discard;
+    vec3 n = normalize(v_norm);
+    vec3 v = normalize(u_campos - v_pos);
+    if (dot(n, v) < 0.0) n = -n;
+    float diff = max(dot(n, u_sun), 0.0);
+    vec3 h = normalize(u_sun + v);
+    float spec = pow(max(dot(n, h), 0.0), 48.0) * u_spec * smoothstep(0.35, 0.8, dot(c.rgb, vec3(0.333)));
+    vec3 base = c.rgb * u_tint.rgb;
+    vec3 lit = base * (u_amb + u_sun_col * diff) + u_sun_col * spec;
+    f_color = vec4(apply_fog(lit, v_pos), c.a * u_tint.a);
+    gl_FragDepth = log2(v_logz) * u_logc * 0.5;
+}
+"""
+

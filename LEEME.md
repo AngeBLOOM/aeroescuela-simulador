@@ -285,6 +285,19 @@ Uso personal y educativo.
 Las nubes, el asfalto y el césped son fotos (generadas con IA); para cambiarlas use `python tools/importar_imagenes.py` (nubes sobre fondo negro → transparencia; texturas →
 repetibles sin costuras).
 
+## Modelos 3D de los aviones
+
+En las vistas de afuera (exterior, torre, cámara libre, repetición) y en el tráfico, los aviones son modelos 3D
+reales descargados de Sketchfab (`assets/modelos`). Desde la cabina se siguen viendo las alas y la hélice del modelo
+propio del simulador. Para cambiar o agregar uno, descargue el modelo en **glTF Binary (.glb)** y conviértalo:
+
+    python tools/importar_modelo.py c172 Descargas/free_cessna_172sp.glb quitar=remove_before_flight,Concrete
+
+El conversor lo pone en los ejes del avión, lo escala a la envergadura real, apoya las ruedas a la altura del tren,
+reduce las texturas y guarda el crédito del autor (`invertir` si queda al revés; `quitar=` para piezas que no deben
+verse en vuelo, como amarres). El avión que no tenga modelo se dibuja por código. El DA40 descargado traía la cúpula
+abierta, así que por ahora sigue con el de código.
+
 ## Cabina física: pantalla solo de instrumentos
 
 Para montar el simulador en una cabina real (volante, pedales, gases e interruptores físicos), la
@@ -430,6 +443,9 @@ pull request) o una sola, p. ej. `python tests/test_lessons.py` (con `LOC=LEMD` 
 - Relieve (AWS Terrain Tiles), aeropuertos (OurAirports, dominio público) y METAR (NOAA, dominio público):
   sin restricciones relevantes. Edificios y bosques: © OpenStreetMap (ODbL), con atribución.
 - Voces: síntesis y reconocimiento de voz incluidos en Windows.
+- Modelos 3D de los aviones (Sketchfab, **CC BY 4.0**, uso comercial permitido citando al autor; la cita se muestra en
+  Vuelo libre y está en `assets/modelos/CREDITOS.json`): «FREE Cessna 172SP» de NLM, «Cessna 152» de micheal_wain,
+  «Piper Pa 28 Cadet», «Diamond Da42 Twin Star» de helijah y «Cirrus SR22» de KOG_THORNS.
 - Tipografía **Orbitron** (© The Orbitron Project Authors, SIL Open Font License 1.1, texto en `assets/fuentes/Orbitron_OFL.txt`): libre para uso comercial e incluida con el programa.
 
 ## Límites honestos
