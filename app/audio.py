@@ -56,6 +56,19 @@ class Audio:
         sig /= np.max(np.abs(sig)) + 1e-9
         return _to_sound(sig, 0.85)
 
+    @staticmethod
+    def _tap(rng, base, glide, dur=0.075):
+        """Clic de interfaz: un golpe de ruido de 2 ms, un tono que se desliza hacia abajo y su octava grave."""
+        n = int(SR * dur)
+        tt = np.arange(n) / SR
+        f = base + glide * np.exp(-tt * 220)
+        tone = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-tt * 65)
+        body = np.sin(2 * np.pi * np.cumsum(f / 2) / SR) * np.exp(-tt * 90) * 0.35
+        noise = rng.normal(0, 1, n)
+        noise = (noise - _lowpass(noise, 1)) * np.exp(-tt * 1500) * 0.35
+        sig = (tone + body + noise) * np.minimum(1, tt / 0.001)
+        return sig / (np.max(np.abs(sig)) + 1e-9)
+
     def _build(self):
         rng = np.random.default_rng(4)
         self.engine_rpms = list(range(300, 3001, 100))
@@ -128,6 +141,8 @@ class Audio:
         n = int(SR * 0.03)
         tt = np.arange(n) / SR
         self.click = _to_sound(np.sin(2 * np.pi * 2000 * tt) * np.exp(-tt * 300), 0.4)
+        # botón de la interfaz: toque limpio y moderno (ataque nítido, tono que cae de 1,8 a 1,15 kHz, cuerpo suave)
+        self.ui_click = _to_sound(self._tap(np.random.default_rng(11), 1150, 650), 0.5)   # su propio azar: no cambia los demás
         # interfaz: abrir (barrido ascendente), cerrar (descendente) y aviso (dos tonos)
         n = int(SR * 0.14)
         tt = np.arange(n) / SR
