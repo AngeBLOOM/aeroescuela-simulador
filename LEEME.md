@@ -95,6 +95,8 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   visibilidad es la del METAR, al subir mejora y desde arriba se ve la capa de bruma en el horizonte. Dentro de una
   capa de nubes la visibilidad es pareja. Los cúmulos, vistos desde arriba, cubren más o menos la fracción del
   METAR (FEW, SCT, BKN) y con sol **proyectan su sombra sobre el suelo**, los edificios, los árboles y el avión.
+- **Pista mojada**: con lluvia el pavimento se oscurece, se espeja (refleja el cielo cuanto más rasante se mira y el
+  brillo del Sol) y aparecen charcos; la pintura sigue viéndose. Se seca de a poco cuando para de llover.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.
 - **Salida de datos por UDP** para instrumentos, paneles y movimiento: `docs/PROTOCOLO_UDP.md`.
 - **Pruebas:** `python tools/pruebas.py` ejecuta 21 pruebas sin ventana; GitHub las ejecuta en cada pull request.

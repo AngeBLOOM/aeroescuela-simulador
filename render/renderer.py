@@ -1536,10 +1536,17 @@ void main() { f_color = texture(u_tex, v_uv); }
             self.p_tex["u_asph"] = 6
             self.p_tex["u_asph_on"].value = 1
             self.p_tex["u_asph_gain"].value = float(self.asph_gain)
+        # pista mojada: se moja con la lluvia y se seca de a poco (unos minutos) cuando para
+        rain = float(getattr(world.atmo, "rain_here", 0.0))
+        wet = getattr(self, "_wet", 0.0)
+        wet = min(1.0, wet + dt * rain * 0.2) if rain > 0.02 else max(0.0, wet - dt / 240.0)
+        self._wet = wet
+        self.p_tex["u_wet"].value = float(wet)
         for tex, m in self.runway_meshes:
             tex.use(0)
             self.p_tex["u_tex"] = 0
             m.render()
+        self.p_tex["u_wet"].value = 0.0
 
         # objetos estáticos
         po = self.p_obj

@@ -368,6 +368,7 @@ void main() {
 
 TEX_FS = COMMON + FOG_FN + SHADOW_FN + """
 uniform sampler2D u_tex;
+uniform float u_wet;          // pista mojada (0 seca, 1 empapada)
 uniform sampler2D u_detail;
 uniform sampler2D u_asph;
 uniform int u_asph_on;
@@ -408,6 +409,19 @@ void main() {
     }
     float diff = max(-u_sun.z, 0.0) * sun_shadow(v_pos);
     vec3 lit = base * (u_amb + u_sun_col * diff + landing_light(v_pos));
+    if (u_wet > 0.01) {
+        // pavimento mojado: más oscuro y espejado; refleja el cielo cuanto más rasante se mira y el brillo del Sol
+        vec3 v = normalize(u_campos - v_pos);
+        float fres = pow(1.0 - clamp(-v.z, 0.0, 1.0), 5.0);
+        vec3 r = reflect(-v, vec3(0.0, 0.0, -1.0));
+        float sp = pow(max(dot(r, u_sun), 0.0), 60.0);
+        float puddle = smoothstep(0.35, 0.75, texture(u_detail, v_pos.xy / 23.0).g);   // charcos
+        float wet = u_wet * (0.75 + 0.25 * puddle);
+        float paintw = smoothstep(0.35, 0.7, dot(t.rgb, vec3(0.333)));   // la pintura sigue viéndose
+        lit *= 1.0 - 0.38 * wet * (1.0 - 0.6 * paintw);
+        lit = mix(lit, u_fog_col * 0.9, wet * (0.06 + 0.42 * fres) * (1.0 - 0.6 * paintw));
+        lit += u_sun_col * sp * wet * 1.6;
+    }
     f_color = vec4(apply_fog(lit, v_pos), t.a);
     gl_FragDepth = log2(v_logz) * u_logc * 0.5;
 }
