@@ -1458,6 +1458,8 @@ void main() { f_color = texture(u_tex, v_uv); }
             fovy = math.degrees(2 * math.atan(math.tan(math.radians(cam.fov) / 2) / aspect))
         self.fovy = fovy
         proj = perspective(fovy, aspect, cam.near, FAR)
+        if cam.mode == "cabina" and getattr(cam, "shift_y", 0.0):
+            proj[1, 2] = float(cam.shift_y)          # visión 1:1: el centro de la pantalla queda bajo el ojo
         view = look_dir(cam.eye, cam.fwd, cam.up)
         self.last_view, self.last_proj, self.last_viewport = view, proj, screen_vp
         rot_view = view.copy()

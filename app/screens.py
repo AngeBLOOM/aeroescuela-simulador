@@ -1126,6 +1126,25 @@ class ScreensMixin:
                 st["monitores_paisaje"] = n
                 self.save_settings()
         y += 44
+        f.blit(s, "Visión 1:1 (cm)", (x0, y + 8), 16, COL["white"])
+        tips = {"vision_ancho_cm": "Ancho visible del paisaje en la pantalla, medido con cinta (0 = campo de visión fijo de 80°)",
+                "vision_dist_cm": "Distancia del ojo del alumno sentado a la pantalla",
+                "vision_ojo_cm": "Altura del ojo sobre el centro del paisaje (negativa si el ojo queda más abajo)"}
+        for i, (key, lab) in enumerate((("vision_ancho_cm", "Ancho"), ("vision_dist_cm", "Distancia"),
+                                        ("vision_ojo_cm", "Ojo"))):
+            bx = x0 + 220 + i * 200
+            v = int(st.get(key, 0) or 0)
+            f.blit(s, f"{lab} {v}", (bx, y + 8), 14, COL["white"] if v else COL["grey"])
+            for j, dv in enumerate((-5, -1, 1, 5)):
+                if self.ui.button(s, (bx + 92 + j * 26, y + 2, 24, 28), ("−" if dv < 0 else "+") + ("" if abs(dv) == 1 else "5"),
+                                  size=11, tip=tips[key]):
+                    lo = -60 if key == "vision_ojo_cm" else 0
+                    st[key] = max(lo, min(400, v + dv))
+                    self.save_settings()
+        calib = self.vision_calibration(self.W, int(self.H * 0.6))
+        f.blit(s, f"campo {calib[0]:.0f}°" if calib else "80° fijo", (x0 + 820, y + 8), 13,
+               COL["green"] if calib else COL["grey"])
+        y += 44
         f.blit(s, "Resolución*", (x0, y + 8), 16, COL["white"])
         opts = [(0, 0, "Automática"), (1280, 720, "1280×720"), (1600, 900, "1600×900"), (1920, 1080, "1920×1080")]
         for i, (w_, h_, lab) in enumerate(opts):

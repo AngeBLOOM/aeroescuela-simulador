@@ -98,6 +98,9 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
 - **Pista mojada**: con lluvia el pavimento se oscurece, se espeja (refleja el cielo cuanto más rasante se mira y el
   brillo del Sol) y aparecen charcos; la pintura sigue viéndose. Es la misma humedad que informa el ATIS y que usa
   el frenado. De noche, las luces de pista se reflejan en el pavimento como estelas hacia el piloto.
+- **Visión 1:1 en la cabina física** (Ajustes → *Visión 1:1*): con el ancho visible del paisaje, la distancia del
+  ojo y su altura sobre el centro, el campo de visión es el real y el horizonte queda a la altura del ojo (corrimiento
+  óptico de la imagen, sin inclinar la cámara): la pista y las distancias se ven del tamaño que tienen desde el avión.
 - **Niebla de valle (radiación)**: con aire casi saturado (temperatura − rocío ≤ 2 °C, se ajusta con la humedad
   del instructor), viento flojo y entre la madrugada y unas horas después del amanecer, los valles se llenan de
   niebla en parches y los cerros quedan despejados. El METAR y el ATIS la informan (FG con menos de 1000 m, BR

@@ -52,6 +52,9 @@ DEFAULT_SETTINGS = dict(
     udp_puerto=49020, udp_hz=30,
     monitores_paisaje=1,      # nº de monitores (de izquierda a derecha) que ocupa la vista exterior
     vistas=1,                 # 1 o 3 vistas (izquierda · frente · derecha) en la vista exterior
+    # visión 1:1 de la cabina física: ancho visible del paisaje en la pantalla, distancia del ojo y altura del ojo
+    # sobre el centro del paisaje (cm). Con ancho y distancia cargados, el campo de visión es el real (0 = 80° fijo)
+    vision_ancho_cm=0, vision_dist_cm=0, vision_ojo_cm=0,
     pantalla_instr="no",      # "no" · "ambiente" (paisaje + instrumentos) · "unica" (solo instrumentos) · "segunda" (2.º monitor)
 )
 
@@ -1543,6 +1546,19 @@ class App(ScreensMixin):
             ui.clicked, ui.right_clicked = clicked0, right0
         return hit is not None
 
+    def vision_calibration(self, vp_w, vp_h):
+        """(campo de visión horizontal en grados, corrimiento vertical de la imagen) para que el paisaje se vea a
+        escala real desde el asiento: la pantalla ocupa desde el ojo el mismo ángulo que esa parte del mundo y el
+        horizonte queda a la altura del ojo. None si no está calibrado."""
+        st = self.settings
+        w_cm, d_cm = float(st.get("vision_ancho_cm", 0) or 0), float(st.get("vision_dist_cm", 0) or 0)
+        if w_cm <= 0 or d_cm <= 0 or vp_w <= 0 or vp_h <= 0:
+            return None
+        h_cm = w_cm * vp_h / vp_w
+        hfov = math.degrees(2.0 * math.atan(w_cm / 2.0 / d_cm))
+        shift = -2.0 * float(st.get("vision_ojo_cm", 0) or 0) / h_cm
+        return hfov, shift
+
     def draw_flight(self, dt, paused=False):
         w = self.world
         cam = self.camera
@@ -1581,6 +1597,17 @@ class App(ScreensMixin):
                 cam.head_yaw = 0.0
                 cam.head_pitch = math.radians(-4.0)
                 cam.fov = 80.0
+        # cabina física sin tablero dibujado: visión 1:1 si está calibrada (el horizonte queda a la altura del ojo)
+        calib = self.vision_calibration(self.W, self.H - ph) if in_cab and not cockpit2d and not cockpit3d else None
+        if calib is not None:
+            if getattr(self, "_calib_view", None) is not self.lesson:
+                self._calib_view = self.lesson
+                cam.anim = None
+                cam.head_yaw = 0.0
+                cam.head_pitch = 0.0
+            cam.fov, cam.shift_y = calib
+        else:
+            cam.shift_y = 0.0
         cam.update(dt if dt else 0.0, w)
         viewport = (0, ph, self.W, self.H - ph)
         self._scene_rect = pygame.Rect(0, 0, self.W, self.H - ph)     # zona del paisaje en pantalla

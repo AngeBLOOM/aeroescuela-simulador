@@ -86,6 +86,11 @@ uno a uno aunque se giren rápido.
      instrumentos».
    - **Vista exterior**: 1 vista o 3 vistas (panorámica) y en cuántos monitores va el paisaje.
    - **Fondo de instrumentos**: «Negro (cabina física)» si delante hay un tablero con los huecos de los relojes.
+   - **Visión 1:1 (cm)**: con el alumno sentado en su posición normal, mida con cinta el **ancho visible del
+     paisaje** en la pantalla, la **distancia del ojo** a la pantalla y la **altura del ojo** sobre el centro del
+     paisaje (negativa si el ojo queda más abajo). El simulador calcula el campo de visión real (se muestra al lado,
+     p. ej. «campo 46°») y deja el horizonte a la altura del ojo: la pista, el capó imaginario y las distancias se
+     ven del tamaño real, como en el avión. Con ancho o distancia en 0 queda el campo fijo de 80°.
 3. En vuelo, **F3** permite mover y escalar cada instrumento hasta que coincida con el hueco del tablero.
 
 ## 6. Varias cabinas iguales

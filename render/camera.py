@@ -15,6 +15,7 @@ class Camera:
         self.head_yaw = 0.0
         self.head_pitch = math.radians(-10.0)
         self.fov = 78.0
+        self.shift_y = 0.0        # corrimiento vertical de la proyección (visión 1:1 de la cabina física)
         self.orbit_yaw = math.radians(200)
         self.orbit_pitch = math.radians(12)
         self.orbit_dist = 22.0
