@@ -86,6 +86,8 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   - **faro giratorio** blanco y verde (12 vueltas por minuto) de noche o con cielo cubierto.
   - **REIL** (dos destellos blancos sincronizados a los lados del umbral) en los extremos sin luces de aproximación;
   - **faro de rodaje del avión** separado del de aterrizaje: haz ancho y corto que alumbra la calle y los bordes.
+  - **círculo segmentado** alrededor de la manga en Valle Norte (aeródromo no controlado), con las «L» que indican
+    hacia qué lado es el circuito de cada pista (por el sur: izquierda para la 27, derecha para la 09).
   En los aeropuertos reales solo se agrega el faro (las calles de rodaje se ven en la foto satelital).
 - **Tráfico visible a distancias reales («ver y evitar»)**: un avión ligero a 4 km mide menos de un píxel y la
   imagen lo perdería; se dibuja como el puntito oscuro que ve el ojo (1,5 a 3 px), más tenue con la distancia y la

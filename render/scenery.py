@@ -176,6 +176,9 @@ class Scenery:
         self.towers.append((17080.0, 3720.0, gn, 12.0))
         # señalización de rodaje: líneas y carteles de espera antes de cada pista
         self._hold_positions(mb)
+        # aeródromo no controlado (Valle Norte): círculo segmentado alrededor de la manga con indicadores de circuito
+        for ap in self.aps[1:]:
+            self._segmented_circle(mb, ap)
         # aviones estacionados: el renderizador los dibuja con los modelos 3D reales (flota variada de la escuela);
         # aquí queda la versión dibujada por código por si falta algún modelo
         t = world.ac.t
@@ -455,6 +458,29 @@ class Scenery:
                 gh = max(self.terrain.height(sp[0], sp[1]), ap.elev)
                 self.taxi_signs.append((float(sp[0]), float(sp[1]), -gh, math.atan2(away[1], away[0]),
                                         f"{left_ident}-{right_ident}", name))
+
+    def _segmented_circle(self, mb, ap):
+        """Círculo segmentado (FAA AC 150/5340-5) alrededor de la manga de viento y, por cada sentido de aterrizaje,
+        una «L»: el brazo largo paralelo a la pista y el corto hacia el lado del circuito (por el lado derecho del
+        rumbo primario: izquierda para el opuesto, derecha para el primario). Es lo que el alumno debe leer al
+        sobrevolar un aeródromo no controlado."""
+        rw = ap.runways[0]
+        c = rw.threshold + rw.dir * 250 - rw.right * (rw.width / 2 + 60)     # donde está la manga
+        z = -(ap.elev + 0.2)
+        white = (0.95, 0.95, 0.93)
+        R, nseg = 16.0, 10
+        for k in range(nseg):
+            a = 2 * math.pi * (k + 0.5) / nseg
+            p = c + np.array([math.cos(a), math.sin(a)]) * R
+            mb.box((p[0], p[1], z), (1.0, 2 * math.pi * R / nseg * 0.6, 0.35), white, yaw=a)
+        side = rw.right                                                       # lado del circuito
+        for d in (rw.dir, -rw.dir):                                           # cada sentido de aterrizaje
+            base = c - d * (R + 8.0)                                          # del lado por donde se llega
+            long_c = base
+            mb.box((long_c[0], long_c[1], z), (9.0, 1.0, 0.35), white, yaw=math.atan2(d[1], d[0]))
+            end = base - d * 4.5                                              # extremo del brazo largo (lado de llegada)
+            short_c = end + side * 2.25
+            mb.box((short_c[0], short_c[1], z), (4.5, 1.0, 0.35), white, yaw=math.atan2(side[1], side[0]))
 
     def _houses_facade(self, P, sc, yaw, cm):
         """Casas con fachada (ventanas) y techo de tejas a dos aguas."""
