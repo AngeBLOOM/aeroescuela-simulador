@@ -316,6 +316,8 @@ def step(app, frame):
             app.camera.set_mode("libre")
             app.camera.orbit_yaw, app.camera.orbit_pitch = _m.radians(yaw), _m.radians(pitch)
             app.camera.orbit_dist = dist
+        elif name == "foto":                           # Foto pro (Mayús+F12)
+            app.photo()
         elif name.startswith("calidad_"):              # calidad_alta / calidad_media / calidad_rendimiento
             app.settings["calidad"] = name[8:]
             app.apply_quality()

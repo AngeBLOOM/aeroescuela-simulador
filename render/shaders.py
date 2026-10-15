@@ -29,22 +29,44 @@ float fog_factor(vec3 wpos) {
 }
 """
 
-# Sombra del avión: mapa de profundidad visto desde el Sol (solo el avión propio, en una caja pequeña a su
-# alrededor). Fuera de la caja todo queda iluminado.
+# Sombras del Sol con dos mapas de profundidad: el del avión propio (caja pequeña a su alrededor, cada cuadro) y el
+# del escenario (hangares, edificios y árboles en ~2,4 km alrededor de la cámara; se rehace al moverse o con el Sol).
+# Fuera de las cajas todo queda iluminado.
 SHADOW_FN = """
 uniform sampler2DShadow u_shmap;
 uniform mat4 u_shmat;
 uniform float u_sh_on;
-float sun_shadow(vec3 wpos) {
-    if (u_sh_on <= 0.0) return 1.0;
-    vec4 p = u_shmat * vec4(wpos, 1.0);
-    vec3 q = p.xyz / p.w;
-    if (q.x <= 0.0 || q.x >= 1.0 || q.y <= 0.0 || q.y >= 1.0 || q.z >= 1.0) return 1.0;
-    vec2 t = 1.25 / vec2(textureSize(u_shmap, 0));
-    float s = texture(u_shmap, vec3(q.xy + vec2(-t.x, -t.y), q.z)) + texture(u_shmap, vec3(q.xy + vec2(t.x, -t.y), q.z))
-            + texture(u_shmap, vec3(q.xy + vec2(-t.x, t.y), q.z)) + texture(u_shmap, vec3(q.xy + vec2(t.x, t.y), q.z));
-    return 1.0 - u_sh_on * (1.0 - s * 0.25);
+uniform sampler2DShadow u_shmap2;
+uniform mat4 u_shmat2;
+uniform float u_sh2_on;
+uniform float u_sh2_texel;
+float pcf4(sampler2DShadow m, vec3 q, float spread) {
+    vec2 t = spread / vec2(textureSize(m, 0));
+    return 0.25 * (texture(m, vec3(q.xy + vec2(-t.x, -t.y), q.z)) + texture(m, vec3(q.xy + vec2(t.x, -t.y), q.z))
+                 + texture(m, vec3(q.xy + vec2(-t.x, t.y), q.z)) + texture(m, vec3(q.xy + vec2(t.x, t.y), q.z)));
 }
+// n: normal de la superficie (para correr el punto y que hangares y edificios no se sombreen a sí mismos)
+float sun_shadow_n(vec3 wpos, vec3 n) {
+    float s = 1.0;
+    if (u_sh_on > 0.0) {
+        vec4 p = u_shmat * vec4(wpos, 1.0);
+        vec3 q = p.xyz / p.w;
+        if (q.x > 0.0 && q.x < 1.0 && q.y > 0.0 && q.y < 1.0 && q.z < 1.0)
+            s = 1.0 - u_sh_on * (1.0 - pcf4(u_shmap, q, 1.25));
+    }
+    if (u_sh2_on > 0.0) {
+        float ndl = clamp(dot(n, u_sun), 0.0, 1.0);
+        vec3 w2 = wpos + n * (u_sh2_texel * 1.5 * sqrt(1.0 - ndl * ndl)) + u_sun * 0.2;
+        vec4 p = u_shmat2 * vec4(w2, 1.0);
+        vec3 q = p.xyz / p.w;
+        if (q.x > 0.0 && q.x < 1.0 && q.y > 0.0 && q.y < 1.0 && q.z < 1.0) {
+            float edge = smoothstep(0.0, 0.1, min(min(q.x, 1.0 - q.x), min(q.y, 1.0 - q.y)));
+            s *= 1.0 - u_sh2_on * edge * (1.0 - pcf4(u_shmap2, q, 0.9));
+        }
+    }
+    return s;
+}
+float sun_shadow(vec3 wpos) { return sun_shadow_n(wpos, u_sun); }
 """
 
 SHADOW_VS = """
@@ -274,7 +296,7 @@ void main() {
     vec3 n = normalize(v_norm);
     vec3 v = normalize(u_campos - v_pos);
     if (dot(n, v) < 0.0) n = -n;
-    float shf = sun_shadow(v_pos);
+    float shf = sun_shadow_n(v_pos, n);
     float diff = max(dot(n, u_sun), 0.0) * shf;
     vec3 h = normalize(u_sun + v);
     float spec = pow(max(dot(n, h), 0.0), 40.0) * u_spec * shf;
@@ -565,7 +587,7 @@ void main() {
 }
 """
 
-MODEL_FS = COMMON + FOG_FN + """
+MODEL_FS = COMMON + FOG_FN + SHADOW_FN + """
 uniform sampler2D u_tex;
 uniform int u_has_tex;
 uniform vec4 u_base;
@@ -585,9 +607,10 @@ void main() {
     vec3 n = normalize(v_norm);
     vec3 v = normalize(u_campos - v_pos);
     if (dot(n, v) < 0.0) n = -n;
-    float diff = max(dot(n, u_sun), 0.0);
+    float shf = sun_shadow_n(v_pos, n);             // sombra de hangares y edificios sobre el avión
+    float diff = max(dot(n, u_sun), 0.0) * shf;
     vec3 h = normalize(u_sun + v);
-    float spec = pow(max(dot(n, h), 0.0), 48.0) * u_spec * smoothstep(0.35, 0.8, dot(c.rgb, vec3(0.333)));
+    float spec = pow(max(dot(n, h), 0.0), 48.0) * u_spec * smoothstep(0.35, 0.8, dot(c.rgb, vec3(0.333))) * shf;
     vec3 base = c.rgb * u_tint.rgb;
     // rendijas, uniones y el interior quedan en penumbra (oclusión horneada al importar el modelo)
     float ao = v_ao;

@@ -348,6 +348,22 @@ class App(ScreensMixin):
         pygame.image.save(img, path)
         self.flash("Captura guardada en datos/capturas")
 
+    def photo(self):
+        """Foto pro (Mayús+F12): el paisaje y el avión limpios, sin tablero ni textos, al doble de la resolución de la
+        pantalla (4K en una pantalla Full HD) con todos los efectos. La toma el renderizador en el próximo cuadro."""
+        d = os.path.join(DATA, "capturas")
+        os.makedirs(d, exist_ok=True)
+        self.renderer.photo_request = (os.path.join(d, time.strftime("foto_%Y%m%d_%H%M%S.png")), 2)
+        self.flash("Foto pro: tomando la imagen…")
+
+    def check_photo(self):
+        res = self.renderer.photo_result
+        if res is not None:
+            self.renderer.photo_result = None
+            path, err = res
+            self.flash(f"Foto pro guardada: datos/capturas/{os.path.basename(path)}" if err is None
+                       else f"No se pudo tomar la foto: {err}")
+
     # ------------------------------------------------------------ pantalla de instrumentos (cabina física)
     INSTR_MODES = ("no", "ambiente", "unica", "segunda")
     INSTR_NAMES = {"no": "Pantalla normal", "ambiente": "Paisaje + instrumentos (sin cabina)",
@@ -1012,6 +1028,8 @@ class App(ScreensMixin):
         elif k == pygame.K_i:
             self.state = "instructor"
             self.audio.silence()
+        elif k in (pygame.K_F12, pygame.K_PRINTSCREEN) and pygame.key.get_mods() & pygame.KMOD_SHIFT:
+            self.photo()
         elif k == pygame.K_F12 or k == pygame.K_PRINTSCREEN:
             self.screenshot()
         elif k == pygame.K_F9:
@@ -1307,6 +1325,7 @@ class App(ScreensMixin):
             if self.udp is not None:
                 self.udp.update(dt, self)
             self.frame(dt, events)
+            self.check_photo()
             pygame.display.flip()
             self.latency.mark_frame()            # retardo interno: mandos leídos → imagen entregada
             self.draw_instrument_window()

@@ -89,6 +89,7 @@ KEYS = [
         ("I", "Estación del instructor"),
         ("Ctrl+R", "Reiniciar la lección"),
         ("F12", "Captura de pantalla"),
+        ("Mayús+F12", "Foto pro 4K (sin tablero)"),
     ]),
 ]
 

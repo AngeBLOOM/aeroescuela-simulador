@@ -15,6 +15,67 @@ from .cockpit3d import Cockpit3D
 from .scenery import Scenery
 
 FAR = 140000.0
+PATCH_HALF = 16              # malla fina del terreno: celdas de 100 m a cada lado del avión…
+PATCH_SUB = 8                # …divididas en 8 x 8 (12,5 m)
+PATCH_FADE = 3.0             # celdas del borde donde empalma con la malla gruesa
+PATCH_MOVE = 5               # se rehace cuando el avión se aleja tantas celdas del centro
+SH2_RAD = 1200.0             # medio lado de la caja de sombras del escenario (m)
+
+
+def _smooth(e0, e1, x):
+    t = np.clip((x - e0) / (e1 - e0), 0.0, 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def _bilinear(A, U, V):
+    """Interpola la grilla A (n x n [x k]) en las coordenadas fraccionarias U, V."""
+    n = A.shape[0]
+    i = np.clip(U.astype(int), 0, n - 2)
+    j = np.clip(V.astype(int), 0, n - 2)
+    fu = (U - i)[..., None] if A.ndim == 3 else U - i
+    fv = (V - j)[..., None] if A.ndim == 3 else V - j
+    return (A[i, j] * (1 - fu) * (1 - fv) + A[i + 1, j] * fu * (1 - fv) + A[i, j + 1] * (1 - fu) * fv
+            + A[i + 1, j + 1] * fu * fv)
+
+
+def build_terrain_patch(T, ci, cj):
+    """Malla fina del terreno alrededor de la celda (ci, cj): superficie suave con ondulaciones (la misma de la
+    física, Terrain.height) y, en el borde, la de la malla gruesa para que empalmen sin rendijas.
+    Devuelve (vértices, índices, (i0, i1, j0, j1)) o None si queda fuera de la grilla."""
+    n = T.n
+    i0, i1 = max(1, ci - PATCH_HALF), min(n - 4, ci + PATCH_HALF)
+    j0, j1 = max(1, cj - PATCH_HALF), min(n - 4, cj + PATCH_HALF)
+    if i1 - i0 < 6 or j1 - j0 < 6:
+        return None
+    mu, mv = (i1 - i0) * PATCH_SUB + 1, (j1 - j0) * PATCH_SUB + 1
+    U, V = np.meshgrid(np.linspace(i0, i1, mu), np.linspace(j0, j1, mv), indexing="ij")
+    X = -T.half + U * T.cell
+    Y = -T.half + V * T.cell
+    ht = T.height_tri_v(X, Y)
+    e = _smooth(0.0, PATCH_FADE, np.minimum(np.minimum(U - i0, i1 - U), np.minimum(V - j0, j1 - V)))
+    h = ht + (T.height_v(X, Y) - ht) * e
+    gx, gy = np.gradient(h, T.cell / PATCH_SUB)
+    nf = np.stack([-gx, -gy, -np.ones_like(h)], axis=-1)
+    nf /= np.linalg.norm(nf, axis=-1, keepdims=True)
+    # en el borde, las normales de la malla gruesa (así la luz tampoco hace costura)
+    sub = T.h[i0 - 1:i1 + 2, j0 - 1:j1 + 2]
+    cgx, cgy = np.gradient(sub, T.cell)
+    nc = np.stack([-cgx, -cgy, -np.ones_like(sub)], axis=-1)
+    nc /= np.linalg.norm(nc, axis=-1, keepdims=True)
+    nc = _bilinear(nc, U - i0 + 1, V - j0 + 1)
+    nrm = nc * (1 - e[..., None]) + nf * e[..., None]
+    nrm /= np.linalg.norm(nrm, axis=-1, keepdims=True)
+    col = _bilinear(T.colors, U, V)
+    verts = np.concatenate([np.stack([X, Y, -h], axis=-1), nrm, col], axis=-1).reshape(-1, 9).astype(np.float32)
+    a = np.arange(mu - 1)
+    b = np.arange(mv - 1)
+    I, J = np.meshgrid(a, b, indexing="ij")
+    v00 = (I * mv + J).ravel()
+    v10 = ((I + 1) * mv + J).ravel()
+    v01 = (I * mv + J + 1).ravel()
+    v11 = ((I + 1) * mv + J + 1).ravel()
+    idx = np.stack([v00, v10, v11, v00, v11, v01], axis=-1).ravel().astype(np.uint32)
+    return verts, idx, (i0, i1, j0, j1)
 
 
 def mix3(a, b, t):
@@ -71,8 +132,9 @@ class Renderer:
         self.p_shadow = ctx.program(vertex_shader=sh.SHADOW_VS, fragment_shader=sh.SHADOW_FS)
         self.p_bright = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BRIGHT_FS)
         self.p_blur = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BLUR_FS)
-        for prog in (self.p_terrain, self.p_obj, self.p_tex):
+        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model):
             prog["u_shmap"] = self.SH_UNIT          # nunca en la misma unidad que una textura normal
+            prog["u_shmap2"] = self.SH2_UNIT
         self.p_sky = ctx.program(vertex_shader=sh.SKY_VS, fragment_shader=sh.SKY_FS)
         self.p_light = ctx.program(vertex_shader=sh.LIGHT_VS, fragment_shader=sh.LIGHT_FS)
         self.p_cloud = ctx.program(vertex_shader=sh.CLOUD_VS, fragment_shader=sh.CLOUD_FS)
@@ -136,6 +198,8 @@ class Renderer:
             [-E, -E, 0, 0, 0, -1, 0, 0, 0], [E, E, 0, 0, 0, -1, 0, 0, 0], [-E, E, 0, 0, 0, -1, 0, 0, 0]], np.float32)
         self.m_water = GPUMesh(ctx, self.p_water, water)
         self.m_objects = GPUMesh(ctx, self.p_obj, self.scn.objects)
+        self._build_parked()
+        self._build_casters()
         self.runway_meshes = []
         for surf, verts in self.scn.runways:
             data = tx.surface_rgba(surf, True)
@@ -193,6 +257,13 @@ class Renderer:
         self.sh_tex = self.sh_fbo = None
         self.sh_k = 0.0
         self.set_shadow_size(2048)
+        self.photo_request = None                # (archivo, escala): Foto pro pedida para el próximo cuadro
+        self.photo_result = None
+        self._photo_target = None
+        self.patch = None
+        self._patch_job = None
+        self._patch_T = None
+        self._patch_pool = None
         self.p_comp = ctx.program(
             vertex_shader="#version 330\nin vec2 in_pos; void main(){ gl_Position = vec4(in_pos, 0.0, 1.0); }",
             fragment_shader=sh.COMP_FS)
@@ -407,6 +478,11 @@ class Renderer:
         if not self.effects:
             self._release_bloom()
         self.set_shadow_size(shadow_size)
+        if getattr(self, "vao_casters", None) is not None:      # sombras del escenario: 4096 solo en la Foto pro
+            try:
+                self._set_sh2_size(4096 if shadow_size >= 4096 else 2048)
+            except Exception as ex:
+                print("Sombras del escenario:", ex)
 
     def _release_bloom(self):
         for tex, fbo in (self.bloom or ()):
@@ -504,6 +580,185 @@ class Renderer:
                     continue
                 vao.render()
         self.sh_k = float(k)
+
+    # ------------------------------------------------------------ sombras del escenario
+    SH2_UNIT = 12
+
+    PARKED_FLEET = ("c172", "c152", "pa28w", "sr20")
+
+    def _build_parked(self):
+        """Aviones estacionados: modelos 3D reales variados (C172, C152, PA-28, SR22) apoyados en sus ruedas; si
+        falta alguno, todos se dibujan con el modelo de código."""
+        from sim.aircraft_data import AIRCRAFT
+        self.parked_real, self.m_parked = [], None
+        parked = getattr(self.scn, "parked", [])
+        if not parked:
+            return
+        fleet = [a for a in self.PARKED_FLEET if self.aircraft_model(a) is not None and a in AIRCRAFT]
+        if len(fleet) == len(self.PARKED_FLEET):
+            for k, (px, py, gh, yaw) in enumerate(parked):
+                aid = fleet[k % len(fleet)]
+                gz = max(g.pos[2] for g in AIRCRAFT[aid]().gears)
+                M = translate((px, py, -(gh + gz - 0.05))) @ axis_rotation((0, 0, 1), yaw)
+                self.parked_real.append((self.aircraft_model(aid), M))
+        elif len(self.scn.parked_code):
+            self.m_parked = GPUMesh(self.ctx, self.p_obj, self.scn.parked_code)
+
+    def _build_casters(self):
+        """Hangares, edificios, árboles y mangas: los triángulos que sobresalen del suelo (las plataformas y calles
+        de rodaje planas no dan sombra y así no se sombrean a sí mismas)."""
+        self.vao_casters = None
+        self.sh2_tex = self.sh2_fbo = None
+        self.sh2_k = 0.0
+        self._sh2_key = None
+        objs = np.asarray(self.scn.objects, np.float32)
+        if self.m_parked is not None:
+            objs = np.vstack([objs, np.asarray(self.scn.parked_code, np.float32)])
+        tri = objs.reshape(-1, 3, 9)
+        if len(tri) == 0 and not self.parked_real:
+            return
+        cen = tri[:, :, :3].mean(axis=1)
+        nz = np.abs(tri[:, :, 5].mean(axis=1))
+        T = self.world.terrain
+        above = -cen[:, 2] - T.height_v(cen[:, 0], cen[:, 1])
+        keep = ~((nz > 0.9) & (above < 1.0))
+        pos = np.ascontiguousarray(tri[keep][:, :, :3].reshape(-1, 3), np.float32)
+        if len(pos) == 0:
+            pos = np.zeros((3, 3), np.float32)             # solo aviones estacionados
+        self.vbo_casters = self.ctx.buffer(pos.tobytes())
+        self.vao_casters = self.ctx.vertex_array(self.p_shadow, [(self.vbo_casters, "3f", "in_pos")])
+        try:
+            self._set_sh2_size(2048)
+        except Exception as ex:
+            print("Sin sombras del escenario:", ex)
+            self.sh2_tex = self.sh2_fbo = None
+
+    def _set_sh2_size(self, size):
+        if self.sh2_tex is not None and self.sh2_tex.size[0] == size:
+            return
+        if self.sh2_fbo is not None:
+            self.sh2_fbo.release()
+            self.sh2_tex.release()
+        t_ = self.ctx.depth_texture((size, size))
+        t_.compare_func = "<="
+        t_.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        t_.repeat_x = t_.repeat_y = False
+        self.sh2_fbo = self.ctx.framebuffer(depth_attachment=t_)
+        self.sh2_tex = t_
+        self._sh2_key = None
+
+    def _static_shadow_pass(self, env, cam):
+        """Sombras de hangares, edificios y árboles en una caja de 2,4 km un poco por delante de la cámara. El mapa
+        se rehace solo si la cámara se movió más de 200 m o el Sol cambió de lugar."""
+        self.sh2_k = 0.0
+        if self.sh2_fbo is None or self.vao_casters is None:
+            return
+        sun = np.asarray(env["sun"], np.float64)
+        up = -sun[2]
+        k = 0.85 * env["day"] * (1.0 - 0.85 * env["overcast"]) * smoothstep(0.03, 0.16, up)
+        if k < 0.02 or env["incloud"]:
+            return
+        T = self.world.terrain
+        eye = np.asarray(cam.eye, np.float64)
+        gnd = max(T.height_tri(eye[0], eye[1]), 0.0)
+        if -eye[2] - gnd > 2500.0:                   # muy alto: las sombras del suelo ya no se distinguen
+            return
+        fwd = np.array([cam.fwd[0], cam.fwd[1]], np.float64)
+        fl = np.linalg.norm(fwd)
+        ahead = fwd / fl * SH2_RAD * 0.45 if fl > 1e-3 else np.zeros(2)
+        cx = round((eye[0] + ahead[0]) / 200.0) * 200.0
+        cy = round((eye[1] + ahead[1]) / 200.0) * 200.0
+        key = (cx, cy, tuple(np.round(sun, 3)))
+        if key != self._sh2_key:
+            self._sh2_key = key
+            c = np.array([cx, cy, -max(T.height_tri(cx, cy), 0.0)])
+            dist = 3000.0
+            upv = np.array((1.0, 0.0, 0.0) if abs(sun[0]) < 0.9 else (0.0, 1.0, 0.0))
+            V = look_dir(c + sun * dist, -sun, upv)
+            n, f = 10.0, dist + 3000.0
+            O = np.identity(4)
+            O[0, 0] = O[1, 1] = 1.0 / SH2_RAD
+            O[2, 2] = -2.0 / (f - n)
+            O[2, 3] = -(f + n) / (f - n)
+            LV = O @ V
+            B = np.array([[0.5, 0, 0, 0.5], [0, 0.5, 0, 0.5], [0, 0, 0.5, 0.5], [0, 0, 0, 1.0]])
+            self.sh2_mat = B @ LV
+            ctx = self.ctx
+            self.sh2_fbo.use()
+            ctx.scissor = None
+            ctx.viewport = (0, 0, *self.sh2_tex.size)
+            self.sh2_fbo.clear(depth=1.0)
+            self.p_shadow["u_lmvp"].write(gl_bytes(LV))
+            self.vao_casters.render()
+            for model, M in self.parked_real:            # aviones estacionados (modelos reales)
+                self.p_shadow["u_lmvp"].write(gl_bytes(LV @ M))
+                for _vao, _tex, _m, svao in model:
+                    if svao is not None:
+                        svao.render()
+        self.sh2_k = float(k)
+
+    # ------------------------------------------------------------ relieve fino alrededor del avión
+    def _update_patch(self, pos):
+        T = self.world.terrain
+        if self._patch_T is not T:
+            self._release_patch()
+            self._patch_T = T
+            self._patch_job = None
+        ci = int(round((pos[0] + T.half) / T.cell))
+        cj = int(round((pos[1] + T.half) / T.cell))
+        job = self._patch_job
+        if job is not None and job.done():
+            self._patch_job = None
+            try:
+                self._set_patch(job.result(), job.center)
+            except Exception as ex:
+                print("Malla fina del terreno:", ex)
+        p = self.patch
+        if p is not None and max(abs(ci - p["c"][0]), abs(cj - p["c"][1])) <= PATCH_MOVE:
+            return
+        if not (PATCH_HALF // 2 < ci < T.n - PATCH_HALF // 2 and PATCH_HALF // 2 < cj < T.n - PATCH_HALF // 2):
+            self._release_patch()
+            return
+        if p is None:                                 # la primera vez se arma enseguida
+            self._set_patch(build_terrain_patch(T, ci, cj), (ci, cj))
+        elif self._patch_job is None:                 # después, en segundo plano (sin tirones)
+            if self._patch_pool is None:
+                from concurrent.futures import ThreadPoolExecutor
+                self._patch_pool = ThreadPoolExecutor(max_workers=1)
+            self._patch_job = self._patch_pool.submit(build_terrain_patch, T, ci, cj)
+            self._patch_job.center = (ci, cj)
+
+    def _set_patch(self, res, center):
+        self._release_patch()
+        if res is None:
+            return
+        verts, idx, cells = res
+        self.patch = dict(mesh=GPUMesh(self.ctx, self.p_terrain, verts, index=idx), cells=cells, c=center)
+
+    def _release_patch(self):
+        if self.patch is not None:
+            self.patch["mesh"].release()
+        self.patch = None
+
+    def _draw_terrain(self):
+        """Malla gruesa sin las celdas que cubre la malla fina, y la malla fina."""
+        p = self.patch
+        if p is None:
+            self.m_terrain.render()
+            return
+        vao = self.m_terrain.vao
+        nq = self.world.terrain.n - 1
+        i0, i1, j0, j1 = p["cells"]
+        if i0 > 0:
+            vao.render(vertices=6 * i0 * nq, first=0)
+        for i in range(i0, i1):
+            if j0 > 0:
+                vao.render(vertices=6 * j0, first=6 * i * nq)
+            if j1 < nq:
+                vao.render(vertices=6 * (nq - j1), first=6 * (i * nq + j1))
+        if i1 < nq:
+            vao.render(vertices=6 * (nq - i1) * nq, first=6 * i1 * nq)
+        p["mesh"].render()
 
     def _post(self, env, proj, rot_view):
         """Resplandor de las luces y del Sol (a 1/4 de resolución) y datos del destello y la gradación."""
@@ -948,7 +1203,9 @@ void main() { f_color = texture(u_tex, v_uv); }
         else:
             pos, R = pose[0], quat_to_mat(pose[1])
         body_M = model_matrix(R, pos)
+        self._update_patch(pos)
         self._shadow_pass(env, body_M, pos, show_aircraft)
+        self._static_shadow_pass(env, cam)
         self.fbo_ms.use()
         x, y, w, h = 0, 0, self.tex_res.size[0], self.tex_res.size[1]
         viewport = (x, y, w, h)
@@ -990,10 +1247,16 @@ void main() { f_color = texture(u_tex, v_uv); }
             self._set_common(prog, view, proj, cam.eye)
         if self.sh_tex is not None:
             self.sh_tex.use(self.SH_UNIT)
-        for prog in (self.p_terrain, self.p_obj, self.p_tex):
-            prog["u_sh_on"].value = self.sh_k
-            if self.sh_k > 0.0:
+        if self.sh2_tex is not None:
+            self.sh2_tex.use(self.SH2_UNIT)
+        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model):
+            prog["u_sh_on"].value = self.sh_k if prog is not self.p_model else 0.0
+            if self.sh_k > 0.0 and prog is not self.p_model:
                 prog["u_shmat"].write(gl_bytes(self.sh_mat))
+            prog["u_sh2_on"].value = self.sh2_k
+            if self.sh2_k > 0.0:
+                prog["u_shmat2"].write(gl_bytes(self.sh2_mat))
+                prog["u_sh2_texel"].value = float(2.0 * SH2_RAD / self.sh2_tex.size[0])
         self.t_detail.use(1)
         self.p_terrain["u_detail"] = 1
         pt = self.p_terrain
@@ -1026,7 +1289,7 @@ void main() { f_color = texture(u_tex, v_uv); }
                 pt["u_water"] = 10
                 pt["u_wrect"].value = lake[1]
                 pt["u_time"].value = self.time
-        self.m_terrain.render()
+        self._draw_terrain()
         self.p_water["u_detail"] = 1
         self.p_water["u_time"].value = self.time
         self.m_water.render()
@@ -1052,6 +1315,10 @@ void main() { f_color = texture(u_tex, v_uv); }
         po["u_flat"].value = 0.0
         po["u_spec"].value = 0.15
         self.m_objects.render()
+        if self.m_parked is not None:
+            self.m_parked.render()
+        for model, M in self.parked_real:
+            self._draw_model(model, M)
 
         # mangas de viento
         wdir = math.radians(world.weather.wind_dir + 180.0)
@@ -1170,7 +1437,7 @@ void main() { f_color = texture(u_tex, v_uv); }
         if self.fbo_ms is not self.fbo_res and self.samples > 1:
             ctx.copy_framebuffer(self.fbo_res, self.fbo_ms)
         self._post(env, proj, rot_view)
-        ctx.screen.use()
+        (self._photo_target or ctx.screen).use()
         ctx.viewport = screen_vp
         ctx.scissor = screen_vp
         ctx.disable(moderngl.DEPTH_TEST)
@@ -1180,6 +1447,42 @@ void main() { f_color = texture(u_tex, v_uv); }
         self.vao_comp.render()
         ctx.enable(moderngl.DEPTH_TEST)
         ctx.scissor = None
+        if self.photo_request is not None and self._photo_target is None:
+            req, self.photo_request = self.photo_request, None
+            self._take_photo(req, cam, extra, pose, show_aircraft, cockpit)
+
+    # ------------------------------------------------------------ Foto pro
+    def _take_photo(self, req, cam, extra, pose, show_aircraft, cockpit):
+        """Vuelve a dibujar este mismo cuadro sin tablero ni textos, a 'escala' veces la resolución de la ventana,
+        con antialiasing, sombras finas y todos los efectos, y lo guarda en PNG."""
+        import pygame
+        path, scale = req
+        ctx = self.ctx
+        W, H = int(self.size[0] * scale), int(self.size[1] * scale)
+        saved = (self.rscale, self.samples, self.effects, self.sh_tex.size[0] if self.sh_tex is not None else 2048,
+                 self.last_view, self.last_proj, self.last_viewport)
+        tex = fbo = None
+        try:
+            tex = ctx.texture((W, H), 3)
+            fbo = ctx.framebuffer([tex])
+            self.set_quality(1.0, 4 if W * H <= 4.2e6 else 2)
+            self.set_effects(True, 4096)
+            self._photo_target = fbo
+            self.render(cam, (0, 0, W, H), extra=extra, pose=pose, show_aircraft=show_aircraft, dt=0.0,
+                        cockpit=cockpit)
+            img = pygame.image.frombytes(fbo.read(components=3), (W, H), "RGB", True)
+            pygame.image.save(img, path)
+            self.photo_result = (path, None)
+        except Exception as ex:
+            self.photo_result = (path, str(ex))
+        finally:
+            self._photo_target = None
+            for o in (fbo, tex):
+                if o is not None:
+                    o.release()
+            self.set_quality(saved[0], saved[1])
+            self.set_effects(saved[2], saved[3])
+            self.last_view, self.last_proj, self.last_viewport = saved[4:]
 
     def _draw_aircraft(self, body_M, inside, pose):
         po = self.p_obj

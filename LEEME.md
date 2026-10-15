@@ -62,7 +62,12 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   - destello del Sol solo cuando el disco se ve (no lo tapan el terreno, el tablero ni las nubes);
   - color según la hora (dorado al amanecer y al atardecer, azulado de noche) y borde plateado de las nubes a
     contraluz.
-  En calidad «rendimiento» se apagan los efectos de imagen y queda la sombra.
+  - **sombras de hangares, edificios y árboles** alrededor de la cámara, también sobre el avión cuando rueda por
+    la sombra de un hangar;
+  - **relieve fino alrededor del avión**: malla de 12,5 m (en vez de 100 m) con superficie suave y ondulaciones del
+    suelo; la física usa la misma superficie (las ruedas no flotan ni se hunden) y los aeródromos quedan planos;
+  - **Foto pro** (Mayús+F12): la escena limpia, sin tablero ni textos, al doble de la resolución de la pantalla.
+  En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.
 - **Salida de datos por UDP** para instrumentos, paneles y movimiento: `docs/PROTOCOLO_UDP.md`.
 - **Pruebas:** `python tools/pruebas.py` ejecuta 21 pruebas sin ventana; GitHub las ejecuta en cada pull request.
 - **Validación y documentación para la autoridad:**
@@ -397,6 +402,7 @@ controlador de ejemplo con radar, radio y frases rápidas). Prueba automática: 
 | M / N | mezcla | I | estación del instructor |
 | G | tren (Arrow) | Esc | pausa / menú |
 | Ctrl+E | arranque automático | F12 | captura de pantalla |
+| | | Mayús+F12 | **Foto pro**: paisaje y avión limpios en 4K (`datos/capturas`) |
 
 Joystick o volante de vuelo: se detecta solo; los ejes se configuran en Ajustes.
 

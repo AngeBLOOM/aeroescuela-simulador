@@ -95,6 +95,7 @@ class Scenery:
 
     # ---------------------------------------------------------------- objetos
     def _objects(self):
+        self.parked, self.parked_code = [], np.zeros((0, 9), np.float32)
         mb = geo.MeshBuilder()
         rng = self.rng
         world = self.world
@@ -150,7 +151,8 @@ class Scenery:
         self._hangar(mb, (17160.0, 3740.0, gn), 30.0, 24.0, 8.0, yaw=0.0, col=(0.8, 0.78, 0.7))
         mb.box((17080.0, 3720.0, gn - 6.0), (5, 5, 12), (0.86, 0.85, 0.82))
         mb.box((17080.0, 3720.0, gn - 13.5), (7, 7, 3), (0.12, 0.2, 0.28))
-        # aviones estacionados
+        # aviones estacionados: el renderizador los dibuja con los modelos 3D reales (flota variada de la escuela);
+        # aquí queda la versión dibujada por código por si falta algún modelo
         t = world.ac.t
         parts, _ = geo.aircraft_parts(t, accent=(0.7, 0.12, 0.1))
         static = np.vstack([parts[k][0] for k in ("body", "gear", "elevator", "rudder", "ail_l", "ail_r",
@@ -158,11 +160,13 @@ class Scenery:
         gz = max(g.pos[2] for g in t.gears)
         cols = [(1, 1, 1), (0.95, 0.95, 1.0), (1.0, 0.95, 0.85)]
         pos = []
+        self.parked = []
         for k, (px, py) in enumerate(((80.0, 205.0), (115.0, 205.0), (150.0, 205.0), (17110.0, 3860.0))):
             gh = T.height(px, py)
             pos.append((px, py, -(gh + gz - 0.05)))
-        mb.add(geo.instances(static, np.array(pos), np.ones(len(pos)), np.full(len(pos), math.radians(270.0)),
-                             np.array([cols[i % 3] for i in range(len(pos))])))
+            self.parked.append((px, py, gh, math.radians(270.0)))
+        self.parked_code = geo.instances(static, np.array(pos), np.ones(len(pos)), np.full(len(pos), math.radians(270.0)),
+                                         np.array([cols[i % 3] for i in range(len(pos))]))
         # pueblos
         house = geo.template_house()
         block = geo.template_block()
