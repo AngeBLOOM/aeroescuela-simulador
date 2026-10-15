@@ -62,6 +62,8 @@ class Scenery:
         out = []
         for ap in self.aps:
             for rw in ap.runways:
+                if not getattr(rw, "paved", True):
+                    continue                  # pasto o tierra: se ve la pista de la foto y sus balizas de borde
                 W = rw.width
                 L = rw.length
                 z = -(ap.elev + 0.09)
@@ -109,6 +111,17 @@ class Scenery:
         rng = self.rng
         world = self.world
         T = self.terrain
+        # pistas de pasto o tierra: balizas blancas de borde cada 60 m (no hay pintura ni asfalto)
+        for ap in self.aps:
+            for rw in ap.runways:
+                if getattr(rw, "paved", True):
+                    continue
+                for s_ in np.arange(0.0, rw.length + 1.0, 60.0):
+                    for sg in (-1, 1):
+                        p = rw.threshold + rw.dir * s_ + rw.right * sg * (rw.width / 2 + 1.0)
+                        g = T.height(p[0], p[1])
+                        mb.box((p[0], p[1], -(g + 0.25)), (0.4, 1.4, 0.5), (0.95, 0.95, 0.93),
+                               yaw=math.radians(rw.heading))
         # plataformas y calles de rodaje
         for ap in self.aps:
             z = -(ap.elev + 0.05)
@@ -585,6 +598,8 @@ class Scenery:
             L.append((p[0], p[1], p[2], c[0], c[1], c[2], s))
         for ap in self.aps:
             for rw in ap.runways:
+                if not getattr(rw, "lighted", True):
+                    continue                  # pista sin luces: de noche no se ve (no se puede planificar ahí)
                 z = -(ap.elev + 0.5)
                 thr = rw.threshold
                 d, r = rw.dir, rw.right

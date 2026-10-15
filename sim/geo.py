@@ -596,7 +596,8 @@ def build_location(code, data_dir, progress=None, db=None, center=None):
         for rw in ap.runways[:2]:
             for end in rw.idents:
                 f = next(freqs, None)
-                if f is not None and rw.length > 700:
+                # ILS de entrenamiento solo donde es verosímil: pista pavimentada, con luces y de 1500 m o más
+                if f is not None and rw.length >= 1500 and rw.paved and rw.lighted:
                     ils = ILS("I" + ap.ident[-3:] + end[:2], f, rw, end)
                     ils.synthetic = True
                     navaids.append(ils)
@@ -673,4 +674,17 @@ def _runway_from_row(r, proj, ap_row):
     he = (r.get("he_ident") or "").strip() or f"{round(((hdg + 180) % 360) / 10) % 36 or 36:02d}"
     rw = Runway((le, he), (float(c[0]), float(c[1])), hdg, min(length, dist + 60), min(width, 70.0))
     rw.surface = surface
+    rw.paved = surface_is_paved(surface)
+    rw.lighted = (r.get("lighted") or "1").strip() != "0"
     return rw
+
+
+UNPAVED = ("TURF", "GRS", "GRASS", "GRE", "GVL", "GRV", "GRAV", "DIRT", "EARTH", "SAND", "WATER", "CLA", "COR",
+           "SNOW", "ICE", "SOIL", "LAT", "MATS")
+
+
+def surface_is_paved(surface):
+    """¿Asfalto/concreto? Los códigos de OurAirports son libres: se miran los comienzos de pasto, tierra, grava,
+    agua, etc. Lo desconocido se toma como pavimento (como hasta ahora)."""
+    s = (surface or "").upper().strip()
+    return not any(s.startswith(k) for k in UNPAVED)

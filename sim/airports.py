@@ -13,6 +13,9 @@ class Runway:
         self.width = width
         self.ils = ils                    # (freq, ident) para el extremo primario
         self.elev = 0.0
+        self.surface = "ASP"              # superficie (código de OurAirports en los aeropuertos reales)
+        self.paved = True                 # asfalto/concreto; False: pasto, tierra, grava (se rueda como en césped)
+        self.lighted = True               # tiene luces (sin luces: de noche no se ve ni se puede aterrizar)
         h = math.radians(heading)
         self.dir = np.array([math.cos(h), math.sin(h)])
         self.right = np.array([-self.dir[1], self.dir[0]])
@@ -63,7 +66,7 @@ class Airport:
 
     def paved(self, x, y):
         for r in self.runways:
-            if r.contains(x, y):
+            if r.paved and r.contains(x, y):
                 return True
         for c, h, l, w in self.paved_rects:
             hr = math.radians(h)
