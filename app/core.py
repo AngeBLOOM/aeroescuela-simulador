@@ -43,8 +43,8 @@ DEFAULT_SETTINGS = dict(
     cabina="analog", avion="c172", mostrar_fps=False, joystick={}, ubicacion="", cabina_estilo="auto",
     calidad="auto", fluidez="auto", indicativo="EC-AES", atc=True, trafico=True,
     instructor_red=False,     # puesto del instructor por navegador web en la red local
-    edificios_3d=False,
-    fondo_instr="futurista",  # fondo de la pantalla de instrumentos: "futurista" o "negro" (tablero físico recortado)       # False: paisaje de foto satelital pura · True: con edificios 3D de OpenStreetMap
+    edificios_3d=True,        # True: edificios 3D de OpenStreetMap con fachadas · False: foto satelital pura
+    fondo_instr="futurista",  # fondo de la pantalla de instrumentos: "futurista" o "negro" (tablero físico recortado)
     atc_externo=False,        # enlace con un simulador de tránsito aéreo externo (app/atc_link.py, puerto 8770)
     atc_externo_puerto=8770,
     udp_salida=False,         # datos de vuelo por UDP para instrumentos, paneles o movimiento (app/udp_out.py)
@@ -131,7 +131,7 @@ class App(ScreensMixin):
                 self.settings["ubicacion"] = ""
         self._loading("Generando el mundo…", 0.1)
         self.world = World(self.settings.get("avion", "c172"), location=loc)
-        self.world.buildings_3d = bool(self.settings.get("edificios_3d", False))
+        self.world.buildings_3d = bool(self.settings.get("edificios_3d", True))
         self.renderer = Renderer(self.ctx, self.world, (self.W, self.H), progress=lambda m: self._loading(m, 0.5))
         self.fps_cap = 60
         self._work_avg = 12.0
@@ -680,7 +680,7 @@ class App(ScreensMixin):
     def configure_world(self):
         w = self.world
         w.atc.callsign = (self.settings.get("indicativo") or "EC-AES").upper()
-        w.buildings_3d = bool(self.settings.get("edificios_3d", False))
+        w.buildings_3d = bool(self.settings.get("edificios_3d", True))
         w.atc.enabled = bool(self.settings.get("atc", True))
         w.traffic.enabled = bool(self.settings.get("trafico", True))
         if not w.traffic.enabled:

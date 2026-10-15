@@ -73,7 +73,7 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   - **árboles con dos niveles de detalle**: de cerca, pinos de varios pisos y frondosos de copa redonda que se mecen
     con el viento; de lejos, los simples; más allá de 6,5 km no se dibujan (la bruma los tapa). Bosques tres veces
     más tupidos y aun así más livianos que antes;
-  - **fachadas con ventanas** en los edificios reales (OpenStreetMap, con «satelital + edificios 3D» en Ajustes)
+  - **fachadas con ventanas** en los edificios reales (OpenStreetMap; encendidos por defecto, Ajustes → *Paisaje*)
     y en las casas y edificios de los pueblos: pisos, ventanas que reflejan el cielo y el Sol, vidrieras en la
     planta baja, torres de vidrio, casas con techo de tejas a dos aguas y, **de noche, ventanas encendidas al
     azar**. Las dibuja el shader (sin texturas); de lejos se simplifican y no cuestan más que las paredes lisas.
@@ -302,8 +302,8 @@ El simulador genera 51 × 51 km alrededor del aeropuerto con:
 
 - **Relieve real** (AWS Terrain Tiles: SRTM/GMTED).
 - **Fotografía satelital** en tres niveles de detalle (1,2 m/píxel en 3 km alrededor de la pista, 4,8 m/píxel en 10 km
-  y 12 m/píxel en todo el escenario). Por defecto el paisaje es la **foto satelital pura**, como se ve desde el avión;
-  en Ajustes → *Paisaje* se pueden añadir edificios 3D.
+  y 12 m/píxel en todo el escenario), con los **edificios 3D de OpenStreetMap** y sus fachadas encima (en Ajustes →
+  *Paisaje* se puede volver a la foto satelital pura).
 - **Lagos, embalses y ríos anchos como agua de verdad** (contornos de OpenStreetMap): color de agua, reflejo del cielo,
   destello del sol y olas. Aterrizar en ellos es un amerizaje.
 - **Pistas reales** con su orientación, longitud, anchura y número; aeródromos vecinos; **VOR reales**.
