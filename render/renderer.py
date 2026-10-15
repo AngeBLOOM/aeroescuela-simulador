@@ -229,6 +229,9 @@ class Renderer:
         self.vbo_town = ctx.buffer(tl.tobytes() if len(tl) else np.zeros((1, 7), np.float32).tobytes())
         self.vao_town = ctx.vertex_array(self.p_light, [(self.vbo_town, "3f 3f 1f", "in_pos", "in_col", "in_size")])
         self.vbo_dyn = ctx.buffer(reserve=7 * 4 * 256, dynamic=True)
+        self.p_speck = ctx.program(vertex_shader=sh.SPECK_VS, fragment_shader=sh.SPECK_FS)
+        self.vbo_speck = ctx.buffer(reserve=5 * 4 * 64, dynamic=True)
+        self.vao_speck = ctx.vertex_array(self.p_speck, [(self.vbo_speck, "3f 1f 1f", "in_pos", "in_size", "in_alpha")])
         self.vao_dyn = ctx.vertex_array(self.p_light, [(self.vbo_dyn, "3f 3f 1f", "in_pos", "in_col", "in_size")])
 
         # avión
@@ -472,6 +475,39 @@ class Renderer:
         po["u_spec"].value = 0.15
         if "u_skin" in po:
             po["u_skin"].value = 0
+
+    def _draw_traffic_specks(self, cam, env, h_px, fovy, view, proj):
+        """Tráfico que en la imagen mide menos de ~2 píxeles: un punto oscuro de 1,5 a 3 px (como lo ve el ojo),
+        cada vez más tenue con la distancia y la bruma. De día; de noche se ven sus luces."""
+        tr = getattr(self.world, "traffic", None)
+        if tr is None or not tr.planes or env["day"] < 0.2:
+            return
+        px = h_px / (2.0 * math.tan(math.radians(fovy) / 2.0))
+        data = []
+        for p in tr.planes:
+            d = float(np.linalg.norm(p.pos - cam.eye))
+            if d < 300.0 or d > 12000.0:
+                continue
+            span = 30.0 if p.type_id in geo.JETS else 11.0
+            size_px = span / d * px
+            if size_px > 3.0:
+                continue                                  # ya se ve el modelo
+            alpha = env["day"] * (1.0 - smoothstep(4000.0, 12000.0, d)) * min(1.0, 0.45 + size_px * 0.4)
+            data.append((*p.pos, max(1.6, min(3.0, size_px * 1.4)), alpha))
+        if not data:
+            return
+        arr = np.array(data[:64], np.float32)
+        self.vbo_speck.write(arr.tobytes())
+        ps = self.p_speck
+        self._set_common(ps, view, proj, cam.eye)
+        ps["u_speck_col"].value = tuple(float(c) * 0.35 for c in env["fog_col"])
+        ctx = self.ctx
+        ctx.enable(moderngl.BLEND)
+        ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+        ctx.depth_mask = False
+        self.vao_speck.render(moderngl.POINTS, vertices=len(arr))
+        ctx.depth_mask = True
+        ctx.disable(moderngl.BLEND)
 
     # ------------------------------------------------------------ calidad gráfica
     def set_quality(self, scale, samples):
@@ -1508,8 +1544,9 @@ void main() { f_color = texture(u_tex, v_uv); }
                 po["u_flat"].value = 0.0
                 ctx.disable(moderngl.BLEND)
 
-        # tráfico
+        # tráfico (y, de lejos, el puntito que vería el piloto)
         self._draw_traffic(cam.eye)
+        self._draw_traffic_specks(cam, env, h, fovy, view, proj)
 
         # luces
         ctx.enable(moderngl.BLEND)

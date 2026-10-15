@@ -914,3 +914,36 @@ void main() {
     gl_FragDepth = log2(v_logz) * u_logc * 0.5;
 }
 """
+
+
+# ---------------------------------------------------------------- tráfico lejano: el puntito que ve el piloto
+# Un avión ligero a 4 km mide menos de un píxel y la imagen lo pierde, pero el ojo lo ve como un punto oscuro contra
+# el cielo o el suelo. Este punto (1,5 a 3 px, atenuado por la bruma) deja entrenar el «ver y evitar».
+SPECK_VS = COMMON + FOG_FN + """
+in vec3 in_pos;
+in float in_size;
+in float in_alpha;
+out float v_alpha;
+out float v_logz;
+void main() {
+    gl_Position = u_proj * u_view * vec4(in_pos, 1.0);
+    v_logz = 1.0 + gl_Position.w;
+    gl_PointSize = in_size;
+    v_alpha = in_alpha * fog_factor(in_pos);
+}
+"""
+SPECK_FS = """
+#version 330
+uniform float u_logc;
+uniform vec3 u_speck_col;
+in float v_alpha;
+in float v_logz;
+out vec4 f_color;
+void main() {
+    vec2 q = gl_PointCoord * 2.0 - 1.0;
+    float a = v_alpha * (1.0 - smoothstep(0.55, 1.0, dot(q, q)));
+    if (a < 0.01) discard;
+    f_color = vec4(u_speck_col, a);
+    gl_FragDepth = log2(v_logz) * u_logc * 0.5;
+}
+"""

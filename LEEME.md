@@ -85,6 +85,9 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   - calles de rodaje y plataforma con asfalto real; luces azules de borde;
   - **faro giratorio** blanco y verde (12 vueltas por minuto) de noche o con cielo cubierto.
   En los aeropuertos reales solo se agrega el faro (las calles de rodaje se ven en la foto satelital).
+- **Tráfico visible a distancias reales («ver y evitar»)**: un avión ligero a 4 km mide menos de un píxel y la
+  imagen lo perdería; se dibuja como el puntito oscuro que ve el ojo (1,5 a 3 px), más tenue con la distancia y la
+  bruma, hasta unos 10 km. De noche se ven sus luces.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.
 - **Salida de datos por UDP** para instrumentos, paneles y movimiento: `docs/PROTOCOLO_UDP.md`.
 - **Pruebas:** `python tools/pruebas.py` ejecuta 21 pruebas sin ventana; GitHub las ejecuta en cada pull request.
