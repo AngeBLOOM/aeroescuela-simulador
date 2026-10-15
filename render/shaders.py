@@ -799,3 +799,117 @@ void main() {
 }
 """
 
+
+
+# ---------------------------------------------------------------- fachadas con ventanas (edificios y casas)
+BLDG_VS = COMMON + """
+in vec3 in_pos;
+in vec3 in_norm;
+in vec3 in_col;
+in vec3 in_uvh;      // u a lo largo de la pared (m), v altura sobre el suelo (m), altura del edificio (m)
+in float in_style;
+out vec3 v_pos;
+out vec3 v_norm;
+out vec3 v_col;
+out vec3 v_uvh;
+out float v_style;
+out float v_logz;
+void main() {
+    v_pos = in_pos;
+    v_norm = in_norm;
+    v_col = in_col;
+    v_uvh = in_uvh;
+    v_style = in_style;
+    gl_Position = u_proj * u_view * vec4(in_pos, 1.0);
+    v_logz = 1.0 + gl_Position.w;
+}
+"""
+
+BLDG_FS = COMMON + FOG_FN + SHADOW_FN + """
+uniform float u_night;
+in vec3 v_pos;
+in vec3 v_norm;
+in vec3 v_col;
+in vec3 v_uvh;
+in float v_style;
+in float v_logz;
+out vec4 f_color;
+float hash2(vec2 p) {                                      // barato (sin senos)
+    vec3 q = fract(vec3(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
+}
+float band(float f, float a, float b, float w) {          // 1 entre a y b, con bordes suavizados de ancho w
+    return smoothstep(a - w, a + w, f) * (1.0 - smoothstep(b - w, b + w, f));
+}
+void main() {
+    vec3 n = normalize(v_norm);
+    vec3 v = normalize(u_campos - v_pos);
+    if (dot(n, v) < 0.0) n = -n;
+    float st = floor(v_style);
+    float var = fract(v_style);
+    float shf = sun_shadow_n(v_pos, n);
+    float diff = max(dot(n, u_sun), 0.0) * shf;
+    vec3 col;
+    if (st > 2.5) {
+        // techo: grano suave
+        col = v_col * (0.9 + 0.1 * hash2(floor(v_uvh.xy * 0.7))) * (u_amb + u_sun_col * diff);
+    } else {
+        float x = v_uvh.x;
+        float y = v_uvh.y;
+        float ht = v_uvh.z;
+        bool house = st < 0.5;
+        bool glassy = st > 1.5;
+        float fh = house ? 2.9 : 3.3;                          // altura de cada piso
+        float cw = house ? 3.8 : (glassy ? 2.2 : 3.0);         // ancho de cada módulo de ventana
+        float g0 = house ? 0.0 : 4.2;                          // planta baja (comercios) en los edificios
+        float wx0 = glassy ? 0.05 : (house ? 0.28 : 0.2);
+        float wy0 = glassy ? 0.06 : 0.3;
+        float wy1 = glassy ? 0.94 : 0.82;
+        vec2 cell = vec2(x / cw, (y - g0) / fh);
+        vec2 fw = max(fwidth(cell), vec2(1e-4));
+        float far = smoothstep(0.25, 0.7, max(fw.x, fw.y));    // de lejos: el promedio (sin moiré y más liviano)
+        float inside = step(0.0, y - g0) * step(y - g0, floor(max(ht - 0.6 - g0, 0.0) / fh) * fh);
+        float win = (1.0 - 2.0 * wx0) * (wy1 - wy0) * inside;
+        float r = 0.5 + 0.3 * var;
+        float slab = 1.0;
+        float spec = 0.0;
+        vec3 inner = vec3(0.055, 0.07, 0.085);
+        float fres = 0.3;
+        if (far < 0.999) {
+            vec2 f = fract(cell);
+            vec2 id = floor(cell);
+            float w1 = band(f.x, wx0, 1.0 - wx0, fw.x) * band(f.y, wy0, wy1, fw.y) * inside;
+            if (!house && y < g0 && y > 0.0) {                 // vidrieras de la planta baja
+                float sx = x / 5.0;
+                w1 = band(fract(sx), 0.08, 0.92, fw.x * cw / 5.0) * band(y, 0.45, g0 - 0.7, fw.y * fh);
+                id = vec2(floor(sx), -1.0);
+            }
+            win = mix(w1, win, far);
+            r = hash2(id + var * 17.0);
+            inner += (r > 0.8 ? vec3(0.22, 0.2, 0.17) * (1.0 - far) : vec3(0.0));   // cortinas claras
+            fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+            vec3 h = normalize(u_sun + v);
+            spec = pow(max(dot(n, h), 0.0), 90.0) * shf * (1.0 - far);
+            if (!house)
+                slab = 1.0 - 0.14 * (1.0 - smoothstep(0.0, 0.05 + fw.y, f.y)) * (1.0 - far) * step(0.0, y - g0);
+        }
+        // vidrio: refleja el cielo según el ángulo, oscuro por dentro
+        vec3 glass = mix(inner, u_fog_col * 0.95, 0.22 + 0.6 * fres);
+        if (glassy) glass = mix(glass, vec3(0.18, 0.3, 0.36), 0.35);
+        float ao = 0.62 + 0.38 * smoothstep(0.0, 3.0, y);
+        vec3 litw = v_col * slab * (u_amb * ao + u_sun_col * diff);
+        vec3 litg = glass * (u_amb * 0.6 + u_sun_col * diff * 0.3) + u_sun_col * spec * 1.3;
+        win = clamp(win, 0.0, 1.0);
+        col = mix(litw, litg, win);
+        // de noche se encienden ventanas al azar (cálidas, algunas frías de oficina); de lejos, el promedio
+        if (u_night > 0.01) {
+            float on = mix(step(0.5 + 0.2 * var, r), 0.4, far) * u_night;
+            vec3 lamp = r > 0.9 ? vec3(0.8, 0.88, 1.0) : vec3(1.0, 0.76, 0.45);
+            col += lamp * win * on * (0.45 + 0.55 * r) * mix(1.0, 0.55, far);
+        }
+    }
+    f_color = vec4(apply_fog(col, v_pos), 1.0);
+    gl_FragDepth = log2(v_logz) * u_logc * 0.5;
+}
+"""

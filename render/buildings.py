@@ -307,3 +307,122 @@ def make_texture(key):
     if key.startswith("sign:"):
         return tex_sign(key[5:])
     raise KeyError(key)
+
+
+# ---------------------------------------------------------------- fachadas (edificios y casas)
+# Vértice de 13 floats: posición, normal, color, u (metros a lo largo de la pared), v (altura sobre el suelo),
+# altura del edificio y estilo (0 casa, 1 edificio, 2 torre de vidrio, 3 techo; la parte decimal varía el aspecto).
+# Las ventanas, pisos y vidrieras las dibuja el shader (BLDG_FS) a partir de u y v.
+HOUSE, BLOCK, TOWER, ROOF = 0, 1, 2, 3
+
+
+def facade_walls(a, b, g, zb, ht, col, style):
+    """Paredes de las aristas a -> b (planta, arrays (E, 2)): g suelo (m), zb altura del pie relativa al suelo
+    (negativa para enterrarla un poco), ht altura del edificio, col (E, 3), style (E,). Devuelve (E*6, 13)."""
+    d = b - a
+    ln = np.sqrt((d ** 2).sum(1)) + 1e-9
+    nrm = np.column_stack([d[:, 1] / ln, -d[:, 0] / ln, np.zeros(len(d))])
+    E = len(a)
+    pz0 = -(g + zb)
+    pz1 = -(g + ht)
+    p00 = np.column_stack([a, pz0])
+    p10 = np.column_stack([b, pz0])
+    p11 = np.column_stack([b, pz1])
+    p01 = np.column_stack([a, pz1])
+    out = np.empty((E, 6, 13), np.float32)
+    out[..., 0:3] = np.stack([p00, p10, p11, p00, p11, p01], axis=1)
+    out[..., 3:6] = nrm[:, None, :]
+    out[..., 6:9] = col[:, None, :]
+    zero = np.zeros(E)
+    uu = np.stack([zero, ln, ln, zero, ln, zero], axis=1)
+    vv = np.stack([zb, zb, ht, zb, ht, ht], axis=1)
+    out[..., 9] = uu
+    out[..., 10] = vv
+    out[..., 11] = ht[:, None]
+    out[..., 12] = style[:, None]
+    return out.reshape(-1, 13)
+
+
+def fan_roofs(c, a, b, z, col):
+    """Techos planos en abanico desde el centro c por cada arista a -> b (z en NED). Devuelve (F*3, 13)."""
+    F = len(c)
+    out = np.empty((F, 3, 13), np.float32)
+    out[..., 0:3] = np.stack([np.column_stack([c, z]), np.column_stack([a, z]), np.column_stack([b, z])], axis=1)
+    out[..., 3:6] = np.array([0.0, 0.0, -1.0])
+    out[..., 6:9] = col[:, None, :]
+    out[..., 9:11] = out[..., 0:2]                   # en el techo, u y v son la planta (para el grano del techo)
+    out[..., 11] = 0.0
+    out[..., 12] = ROOF + 0.5
+    return out.reshape(-1, 13)
+
+
+def box_buildings(P, size, yaw, wall_col, roof_col, style, gable_frac=0.0):
+    """Edificios rectangulares (casas y bloques de los pueblos del escenario de la escuela).
+    P (m, 3) con el pie en NED, size (m, 3) = largo, ancho, alto total; gable_frac > 0: techo a dos aguas que ocupa
+    esa parte de la altura (casas). Devuelve (n, 13)."""
+    m = len(P)
+    if m == 0:
+        return np.zeros((0, 13), np.float32)
+    c, s = np.cos(yaw), np.sin(yaw)
+    hx, hy = size[:, 0] / 2, size[:, 1] / 2
+    loc = np.array([(-1, -1), (1, -1), (1, 1), (-1, 1)], float)
+    cx = loc[None, :, 0] * hx[:, None]
+    cy = loc[None, :, 1] * hy[:, None]
+    X = P[:, 0:1] + cx * c[:, None] - cy * s[:, None]
+    Y = P[:, 1:2] + cx * s[:, None] + cy * c[:, None]
+    corners = np.stack([X, Y], axis=-1)                            # (m, 4, 2)
+    a = corners.reshape(-1, 2)
+    b = np.roll(corners, -1, axis=1).reshape(-1, 2)
+    g = np.repeat(-P[:, 2], 4)
+    wall_h = size[:, 2] * (1.0 - gable_frac)
+    ht = np.repeat(wall_h, 4)
+    parts = [facade_walls(a, b, g, np.full(len(a), -0.6), ht, np.repeat(wall_col, 4, axis=0),
+                          np.repeat(style, 4))]
+    ztop = -(-P[:, 2] + wall_h)
+    if gable_frac <= 0.0:
+        cen = P[:, 0:2]
+        parts.append(fan_roofs(np.repeat(cen, 4, axis=0), a, b, np.repeat(ztop, 4), np.repeat(roof_col, 4, axis=0)))
+    else:
+        # dos aguas a lo largo del lado mayor local x: cumbrera en y = 0, con un pequeño alero
+        rise = size[:, 2] * gable_frac
+        ov = 0.4
+        zr = ztop - rise
+        def W(lx, ly):
+            return np.stack([P[:, 0] + lx * c - ly * s, P[:, 1] + lx * s + ly * c], axis=-1)
+        out = []
+        for sy in (-1, 1):
+            e0 = W(-hx - ov, sy * (hy + ov))
+            e1 = W(hx + ov, sy * (hy + ov))
+            r1 = W(hx + ov, 0 * hy)
+            r0 = W(-hx - ov, 0 * hy)
+            ze = ztop + 0.4 * ov                                   # el alero baja un poco
+            q = np.stack([np.column_stack([e0, ze]), np.column_stack([e1, ze]), np.column_stack([r1, zr]),
+                          np.column_stack([e0, ze]), np.column_stack([r1, zr]), np.column_stack([r0, zr])], axis=1)
+            nloc = np.stack([np.zeros(m), sy * rise, -(hy + ov)], axis=-1)
+            nloc /= np.linalg.norm(nloc, axis=1, keepdims=True)
+            nw = np.stack([-nloc[:, 1] * s, nloc[:, 1] * c, nloc[:, 2]], axis=-1)
+            o = np.empty((m, 6, 13), np.float32)
+            o[..., 0:3] = q
+            o[..., 3:6] = nw[:, None, :]
+            o[..., 6:9] = roof_col[:, None, :]
+            o[..., 9:11] = q[..., 0:2]
+            o[..., 11] = 0.0
+            o[..., 12] = ROOF + 0.2
+            out.append(o.reshape(-1, 13))
+        # hastial triangular (pared, sin ventanas: queda sobre la altura de los pisos)
+        for sx in (-1, 1):
+            t0 = W(sx * hx, -hy)
+            t1 = W(sx * hx, hy)
+            tt = W(sx * hx, 0 * hy)
+            tri = np.stack([np.column_stack([t0, ztop]), np.column_stack([t1, ztop]), np.column_stack([tt, zr])], axis=1)
+            o = np.empty((m, 3, 13), np.float32)
+            o[..., 0:3] = tri
+            o[..., 3:6] = np.stack([sx * c, sx * s, np.zeros(m)], axis=-1)[:, None, :]
+            o[..., 6:9] = wall_col[:, None, :]
+            o[..., 9] = 0.0
+            o[..., 10] = wall_h[:, None] + 1.0
+            o[..., 11] = wall_h[:, None]
+            o[..., 12] = style[:, None]
+            out.append(o.reshape(-1, 13))
+        parts += out
+    return np.vstack(parts).astype(np.float32)

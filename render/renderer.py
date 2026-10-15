@@ -131,10 +131,11 @@ class Renderer:
         self.p_model = ctx.program(vertex_shader=sh.MODEL_VS, fragment_shader=sh.MODEL_FS)
         self.p_shadow = ctx.program(vertex_shader=sh.SHADOW_VS, fragment_shader=sh.SHADOW_FS)
         self.p_tree = ctx.program(vertex_shader=sh.TREE_VS, fragment_shader=sh.TREE_FS)
+        self.p_bldg = ctx.program(vertex_shader=sh.BLDG_VS, fragment_shader=sh.BLDG_FS)
         self.p_shadow_tree = ctx.program(vertex_shader=sh.SHADOW_TREE_VS, fragment_shader=sh.SHADOW_FS)
         self.p_bright = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BRIGHT_FS)
         self.p_blur = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BLUR_FS)
-        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree):
+        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg):
             prog["u_shmap"] = self.SH_UNIT          # nunca en la misma unidad que una textura normal
             prog["u_shmap2"] = self.SH2_UNIT
         self.p_sky = ctx.program(vertex_shader=sh.SKY_VS, fragment_shader=sh.SKY_FS)
@@ -200,6 +201,11 @@ class Renderer:
             [-E, -E, 0, 0, 0, -1, 0, 0, 0], [E, E, 0, 0, 0, -1, 0, 0, 0], [-E, E, 0, 0, 0, -1, 0, 0, 0]], np.float32)
         self.m_water = GPUMesh(ctx, self.p_water, water)
         self.m_objects = GPUMesh(ctx, self.p_obj, self.scn.objects)
+        bm = getattr(self.scn, "buildings_mesh", None)
+        self.m_bldg = None
+        if bm is not None and len(bm):
+            self.m_bldg = GPUMesh(ctx, self.p_bldg, bm, fmt="3f 3f 3f 3f 1f",
+                                  attrs=("in_pos", "in_norm", "in_col", "in_uvh", "in_style"))
         self._build_parked()
         self._build_buildings()
         self._build_trees()
@@ -720,6 +726,9 @@ class Renderer:
         objs = np.asarray(self.scn.objects, np.float32)
         if self.m_parked is not None:
             objs = np.vstack([objs, np.asarray(self.scn.parked_code, np.float32)])
+        bm = getattr(self.scn, "buildings_mesh", None)
+        if bm is not None and len(bm):                   # edificios con fachada: dan sombra igual
+            objs = np.vstack([objs, np.asarray(bm, np.float32)[:, :9]])
         tri = objs.reshape(-1, 3, 9)
         if len(tri) == 0 and not self.parked_real and not self.buildings_model and not self.tree_vaos:
             return
@@ -1358,14 +1367,14 @@ void main() { f_color = texture(u_tex, v_uv); }
         ctx.enable(moderngl.DEPTH_TEST)
 
         # terreno y agua
-        for prog in (self.p_terrain, self.p_water, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_light,
-                     self.p_cloud):
+        for prog in (self.p_terrain, self.p_water, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg,
+                     self.p_light, self.p_cloud):
             self._set_common(prog, view, proj, cam.eye)
         if self.sh_tex is not None:
             self.sh_tex.use(self.SH_UNIT)
         if self.sh2_tex is not None:
             self.sh2_tex.use(self.SH2_UNIT)
-        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree):
+        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg):
             prog["u_sh_on"].value = self.sh_k if prog is not self.p_model else 0.0
             if self.sh_k > 0.0 and prog is not self.p_model:
                 prog["u_shmat"].write(gl_bytes(self.sh_mat))
@@ -1437,6 +1446,9 @@ void main() { f_color = texture(u_tex, v_uv); }
             self._draw_model(model, M)
         if self.buildings_model:
             self._draw_model(self.buildings_model, np.identity(4))
+        if self.m_bldg is not None:                      # edificios y casas con fachada
+            self.p_bldg["u_night"].value = float(env["night"])
+            self.m_bldg.render()
         self._draw_trees()
 
         # mangas de viento

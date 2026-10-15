@@ -3,6 +3,7 @@ import math
 
 import numpy as np
 
+from . import buildings as bl
 from . import geometry as geo
 from . import textures as tx
 
@@ -23,7 +24,9 @@ class Scenery:
         self.terrain = world.terrain
         self.rng = np.random.default_rng(rng_seed)
         self.terrain_vertices, self.terrain_indices = self._terrain_mesh()
+        self._bparts = []                                  # edificios y casas con fachada (render/buildings.py)
         self.objects = self._objects()
+        self.buildings_mesh = np.vstack(self._bparts).astype(np.float32) if self._bparts else None
         self.runways = self._runways()
         self.lights_static, self.light_groups, self.papis, self.rabbits = self._lights()
         self.windsocks = self._windsocks()
@@ -169,8 +172,6 @@ class Scenery:
         self.parked_code = geo.instances(static, np.array(pos), np.ones(len(pos)), np.full(len(pos), math.radians(270.0)),
                                          np.array([cols[i % 3] for i in range(len(pos))]))
         # pueblos
-        house = geo.template_house()
-        block = geo.template_block()
         for (tx_, ty_, rad, nh, nb) in TOWNS:
             pts = self._town_points(tx_, ty_, rad, nh)
             if len(pts):
@@ -179,7 +180,7 @@ class Scenery:
                 sc = np.column_stack([rng.uniform(8, 16, len(pts)), rng.uniform(7, 12, len(pts)), rng.uniform(5, 8, len(pts))])
                 yaw = np.round(rng.uniform(0, 4, len(pts))) * math.pi / 2 + 0.2
                 cm = rng.uniform(0.85, 1.1, (len(pts), 3))
-                mb.add(geo.instances(house, P, sc, yaw, cm))
+                self._houses_facade(P, sc, yaw, cm)
                 self._houses = getattr(self, "_houses", []) + [P]
             if nb:
                 pts = self._town_points(tx_, ty_, rad * 0.35, nb)
@@ -188,7 +189,9 @@ class Scenery:
                 sc = np.column_stack([rng.uniform(18, 30, nb), rng.uniform(18, 30, nb), rng.uniform(12, 38, nb)])
                 yaw = np.full(nb, 0.2)
                 cm = rng.uniform(0.8, 1.1, (nb, 3))
-                mb.add(geo.instances(block, P, sc, yaw, cm))
+                style = np.where(sc[:, 2] > 28, bl.TOWER, bl.BLOCK) + rng.uniform(0.1, 0.9, nb)
+                self._bparts.append(bl.box_buildings(P, sc, yaw, np.array([0.78, 0.78, 0.76]) * cm,
+                                                     np.array([0.45, 0.45, 0.47]) * cm, style))
         # granjas dispersas
         fx = rng.uniform(-18000, 18000, 600)
         fy = rng.uniform(-18000, 12000, 600)
@@ -201,7 +204,7 @@ class Scenery:
             P = np.array(keep)
             m = len(P)
             sc = np.column_stack([rng.uniform(9, 20, m), rng.uniform(7, 12, m), rng.uniform(5, 9, m)])
-            mb.add(geo.instances(house, P, sc, rng.uniform(0, math.pi, m), rng.uniform(0.85, 1.1, (m, 3))))
+            self._houses_facade(P, sc, rng.uniform(0, math.pi, m), rng.uniform(0.85, 1.1, (m, 3)))
         # árboles en bosques (cerca de los aeródromos y a lo largo del valle)
         self._trees()
         # carreteras
@@ -252,7 +255,7 @@ class Scenery:
     def _real_buildings(self, mb, loc):
         T = self.terrain
         runways = [rw for ap in self.aps for rw in ap.runways]
-        A, B, ZB, ZT, WC = [], [], [], [], []          # paredes (por arista)
+        A, B, G, HT, STY, WC = [], [], [], [], [], []   # paredes (por arista)
         RC, RA, RB, RZ, RCOL = [], [], [], [], []      # tejados (abanicos)
         lights = []
         count = 0
@@ -291,8 +294,10 @@ class Scenery:
             b = np.roll(poly, -1, axis=0)
             A.append(poly)
             B.append(b)
-            ZB.append(np.full(k, -(g - 1.0)))
-            ZT.append(np.full(k, -(g + ht)))
+            G.append(np.full(k, g))
+            HT.append(np.full(k, ht))
+            kind = (bl.TOWER if r01 > 0.5 else bl.BLOCK) if major else (bl.BLOCK if (area > 700 or ht > 9) else bl.HOUSE)
+            STY.append(np.full(k, kind + 0.1 + 0.8 * ((hsh >> 3) % 97) / 97.0))
             WC.append(np.repeat(wall[None], k, axis=0))
             RC.append(np.repeat(np.array([[cn, ce]]), k, axis=0))
             RA.append(poly)
@@ -305,39 +310,10 @@ class Scenery:
         self._real_lights = lights
         if not count:
             return
-        a = np.vstack(A)
-        b = np.vstack(B)
-        zb = np.concatenate(ZB)
-        zt = np.concatenate(ZT)
-        wc = np.vstack(WC)
-        d = b - a
-        ln = np.sqrt((d ** 2).sum(1)) + 1e-9
-        nrm = np.column_stack([d[:, 1] / ln, -d[:, 0] / ln, np.zeros(len(d))])
-        shade = (0.82 + 0.18 * np.abs(d[:, 0] / ln))[:, None]
-        col = wc * shade
-        p00 = np.column_stack([a, zb])
-        p10 = np.column_stack([b, zb])
-        p11 = np.column_stack([b, zt])
-        p01 = np.column_stack([a, zt])
-        walls = np.stack([p00, p10, p11, p00, p11, p01], axis=1)          # (E, 6, 3)
-        E = len(a)
-        wv = np.empty((E, 6, 9), np.float32)
-        wv[..., 0:3] = walls
-        wv[..., 3:6] = nrm[:, None, :]
-        wv[..., 6:9] = col[:, None, :]
-        mb.add(wv.reshape(-1, 9))
-        rc = np.vstack(RC)
-        ra = np.vstack(RA)
-        rb = np.vstack(RB)
-        rz = np.concatenate(RZ)
-        rcol = np.vstack(RCOL)
-        tri = np.stack([np.column_stack([rc, rz]), np.column_stack([ra, rz]), np.column_stack([rb, rz])], axis=1)
-        F = len(rc)
-        rv = np.empty((F, 3, 9), np.float32)
-        rv[..., 0:3] = tri
-        rv[..., 3:6] = np.array([0.0, 0.0, -1.0])
-        rv[..., 6:9] = rcol[:, None, :]
-        mb.add(rv.reshape(-1, 9))
+        # paredes con fachada (ventanas por piso, vidrieras abajo) y techos planos
+        self._bparts.append(bl.facade_walls(np.vstack(A), np.vstack(B), np.concatenate(G), np.full(sum(map(len, A)), -1.0),
+                                            np.concatenate(HT), np.vstack(WC), np.concatenate(STY)))
+        self._bparts.append(bl.fan_roofs(np.vstack(RC), np.vstack(RA), np.vstack(RB), np.concatenate(RZ), np.vstack(RCOL)))
         print(f"  edificios 3D: {count}")
 
     def _real_trees(self, mb, loc):
@@ -391,6 +367,12 @@ class Scenery:
         sc[half:] *= 0.9
         self._add_trees(X, sc, rng.uniform(0, 6.28, m), cm, kind)
         print(f"  árboles: {m}")
+
+    def _houses_facade(self, P, sc, yaw, cm):
+        """Casas con fachada (ventanas) y techo de tejas a dos aguas."""
+        style = np.full(len(P), float(bl.HOUSE)) + self.rng.uniform(0.1, 0.9, len(P))
+        self._bparts.append(bl.box_buildings(P, sc, yaw, np.array([0.9, 0.87, 0.8]) * cm,
+                                             np.array([0.62, 0.30, 0.22]) * cm, style, gable_frac=0.3))
 
     def _hangar(self, mb, base, ln, wd, ht, yaw, col, sign=None):
         """Anota el hangar para el renderizador (chapa ondulada, portones, techo a dos aguas, letrero)."""

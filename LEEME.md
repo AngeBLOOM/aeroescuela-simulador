@@ -72,7 +72,11 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
     por el programa, `render/buildings.py`);
   - **árboles con dos niveles de detalle**: de cerca, pinos de varios pisos y frondosos de copa redonda que se mecen
     con el viento; de lejos, los simples; más allá de 6,5 km no se dibujan (la bruma los tapa). Bosques tres veces
-    más tupidos y aun así más livianos que antes.
+    más tupidos y aun así más livianos que antes;
+  - **fachadas con ventanas** en los edificios reales (OpenStreetMap, con «satelital + edificios 3D» en Ajustes)
+    y en las casas y edificios de los pueblos: pisos, ventanas que reflejan el cielo y el Sol, vidrieras en la
+    planta baja, torres de vidrio, casas con techo de tejas a dos aguas y, **de noche, ventanas encendidas al
+    azar**. Las dibuja el shader (sin texturas); de lejos se simplifican y no cuestan más que las paredes lisas.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.
 - **Salida de datos por UDP** para instrumentos, paneles y movimiento: `docs/PROTOCOLO_UDP.md`.
 - **Pruebas:** `python tools/pruebas.py` ejecuta 21 pruebas sin ventana; GitHub las ejecuta en cada pull request.
