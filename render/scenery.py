@@ -628,6 +628,22 @@ class Scenery:
                     for i, ang in enumerate(angles):
                         p = thr_e + de * 300 - re * (W / 2 + 15 + i * 9)
                         papis.append((p[0], p[1], -(ap.elev + 0.8), ang))
+        # REIL en los extremos sin luces de aproximación (escenario de la escuela; en los aeropuertos reales no hay
+        # dato de cuáles las tienen)
+        self.reils = []
+        if self.world.is_school:
+            for ap in self.aps:
+                for rw in ap.runways:
+                    with_als = {nv.end_ident for nv in self.world.navaids if nv.kind == "ILS" and nv.runway is rw
+                                and nv.end_ident in ("36", "27")}
+                    for ident in rw.idents:
+                        if ident in with_als:
+                            continue
+                        thr_e, _h, de = rw.end(ident)
+                        re = np.array([-de[1], de[0]])
+                        for sg in (-1, 1):
+                            p = thr_e - de * 3.0 + re * sg * (rw.width / 2 + 12.0)
+                            self.reils.append((float(p[0]), float(p[1]), -(ap.elev + 1.0)))
         # luces azules de borde de calles de rodaje y plataforma (cada 30 m, sin las del cruce con la pista)
         for ap in self.aps:
             z = -(ap.elev + 0.4)

@@ -1239,14 +1239,15 @@ void main() { f_color = texture(u_tex, v_uv); }
         """Intensidad, posición y dirección del foco de aterrizaje (solo se nota de noche o con poca luz)."""
         ac = self.world.ac
         s = ac.sys
-        on = bool(s.lights.get("landing") or s.lights.get("taxi")) and s.electric_ok
-        k = clamp(env["night"] * 1.0 + (1.0 - env["day"]) * 0.3, 0.0, 1.0) if on else 0.0
-        if k <= 0.0:
-            return 0.0, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)
+        dark = clamp(env["night"] * 1.0 + (1.0 - env["day"]) * 0.3, 0.0, 1.0) if s.electric_ok else 0.0
+        kl = dark if s.lights.get("landing") else 0.0
+        kt = dark if s.lights.get("taxi") else 0.0
         R = ac.R
         p = ac.pos + R @ np.array([1.2, 0.0, 0.4])
         d = R @ np.array([math.cos(math.radians(5.0)), 0.0, math.sin(math.radians(5.0))])
-        return float(k), tuple(float(v) for v in p), tuple(float(v) for v in d / np.linalg.norm(d))
+        dt_ = R @ np.array([math.cos(math.radians(11.0)), 0.0, math.sin(math.radians(11.0))])   # rodaje: más abajo
+        return (float(kl), tuple(float(v) for v in p), tuple(float(v) for v in d / np.linalg.norm(d)),
+                float(kt), tuple(float(v) for v in dt_ / np.linalg.norm(dt_)))
 
     def _storm_vaos(self):
         """Cumulonimbo (columna + yunque) y cortina de lluvia, centrados en el origen; se desplazan con u_offset."""
@@ -1453,6 +1454,8 @@ void main() { f_color = texture(u_tex, v_uv); }
                 prog["u_ll_on"].value = ll[0]
                 prog["u_ll_pos"].value = ll[1]
                 prog["u_ll_dir"].value = ll[2]
+                prog["u_tl_on"].value = ll[3]
+                prog["u_tl_dir"].value = ll[4]
         if "u_night" in pt:
             pt["u_night"].value = float(env["night"])
         lake = getattr(self, "t_lake", None)
@@ -1754,6 +1757,11 @@ void main() { f_color = texture(u_tex, v_uv); }
                     L.append((x, y, z, iw, iw, iw * 0.95, 7.0))
                 if ig > 0.03:
                     L.append((x, y, z, 0.1 * ig, ig, 0.35 * ig, 7.0))
+        # REIL: dos destellos blancos sincronizados a los lados del umbral (dos por segundo), de noche o con poca luz
+        if getattr(self.scn, "reils", None) and (self.env.get("night", 0.0) > 0.2 or self.env.get("overcast", 0.0) > 0.7):
+            if (self.time % 0.5) < 0.05:
+                for (x, y, z) in self.scn.reils:
+                    L.append((x, y, z, 1.0, 1.0, 1.0, 10.0))
         # luces de destello secuencial ("conejo")
         if self.scn.rabbits:
             ph = (self.time * 2.0) % 1.0

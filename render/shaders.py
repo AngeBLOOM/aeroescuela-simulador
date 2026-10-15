@@ -131,13 +131,18 @@ uniform float u_night;
 uniform float u_ll_on;
 uniform vec3 u_ll_pos;
 uniform vec3 u_ll_dir;
+uniform float u_tl_on;
+uniform vec3 u_tl_dir;
 float landing_light(vec3 p) {
-    // foco de aterrizaje del avión: cono estrecho que se debilita con la distancia
-    if (u_ll_on < 0.01) return 0.0;
+    // focos del avión: el de aterrizaje es un cono estrecho y largo; el de rodaje, ancho y corto (alumbra la calle
+    // y los bordes al girar)
+    if (u_ll_on < 0.01 && u_tl_on < 0.01) return 0.0;
     vec3 L = p - u_ll_pos;
     float dl = length(L);
-    float c = dot(L / max(dl, 0.01), u_ll_dir);
-    return u_ll_on * smoothstep(0.935, 0.985, c) * 2.4 / (1.0 + pow(dl / 170.0, 2.0));
+    vec3 Ln = L / max(dl, 0.01);
+    float land = u_ll_on * smoothstep(0.935, 0.985, dot(Ln, u_ll_dir)) * 2.4 / (1.0 + pow(dl / 170.0, 2.0));
+    float taxi = u_tl_on * smoothstep(0.78, 0.93, dot(Ln, u_tl_dir)) * 1.6 / (1.0 + pow(dl / 55.0, 2.0));
+    return land + taxi;
 }
 in vec3 v_pos;
 in vec3 v_norm;
@@ -358,13 +363,18 @@ uniform vec4 u_tint;
 uniform float u_ll_on;
 uniform vec3 u_ll_pos;
 uniform vec3 u_ll_dir;
+uniform float u_tl_on;
+uniform vec3 u_tl_dir;
 float landing_light(vec3 p) {
-    // foco de aterrizaje del avión: cono estrecho que se debilita con la distancia
-    if (u_ll_on < 0.01) return 0.0;
+    // focos del avión: el de aterrizaje es un cono estrecho y largo; el de rodaje, ancho y corto (alumbra la calle
+    // y los bordes al girar)
+    if (u_ll_on < 0.01 && u_tl_on < 0.01) return 0.0;
     vec3 L = p - u_ll_pos;
     float dl = length(L);
-    float c = dot(L / max(dl, 0.01), u_ll_dir);
-    return u_ll_on * smoothstep(0.935, 0.985, c) * 2.4 / (1.0 + pow(dl / 170.0, 2.0));
+    vec3 Ln = L / max(dl, 0.01);
+    float land = u_ll_on * smoothstep(0.935, 0.985, dot(Ln, u_ll_dir)) * 2.4 / (1.0 + pow(dl / 170.0, 2.0));
+    float taxi = u_tl_on * smoothstep(0.78, 0.93, dot(Ln, u_tl_dir)) * 1.6 / (1.0 + pow(dl / 55.0, 2.0));
+    return land + taxi;
 }
 in vec3 v_pos;
 in vec2 v_uv;
