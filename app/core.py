@@ -267,8 +267,11 @@ class App(ScreensMixin):
         return q
 
     def apply_quality(self):
-        scale, samples = self.QUALITY[self.quality_level()]
+        q = self.quality_level()
+        scale, samples = self.QUALITY[q]
         self.renderer.set_quality(scale, samples)
+        # efectos de imagen y sombra fina salvo en «rendimiento» (tarjetas muy modestas)
+        self.renderer.set_effects(q != "rendimiento", 2048 if q == "alta" else 1024)
 
     def save_settings(self):
         try:

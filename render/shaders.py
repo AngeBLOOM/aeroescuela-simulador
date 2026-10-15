@@ -29,6 +29,35 @@ float fog_factor(vec3 wpos) {
 }
 """
 
+# Sombra del avión: mapa de profundidad visto desde el Sol (solo el avión propio, en una caja pequeña a su
+# alrededor). Fuera de la caja todo queda iluminado.
+SHADOW_FN = """
+uniform sampler2DShadow u_shmap;
+uniform mat4 u_shmat;
+uniform float u_sh_on;
+float sun_shadow(vec3 wpos) {
+    if (u_sh_on <= 0.0) return 1.0;
+    vec4 p = u_shmat * vec4(wpos, 1.0);
+    vec3 q = p.xyz / p.w;
+    if (q.x <= 0.0 || q.x >= 1.0 || q.y <= 0.0 || q.y >= 1.0 || q.z >= 1.0) return 1.0;
+    vec2 t = 1.25 / vec2(textureSize(u_shmap, 0));
+    float s = texture(u_shmap, vec3(q.xy + vec2(-t.x, -t.y), q.z)) + texture(u_shmap, vec3(q.xy + vec2(t.x, -t.y), q.z))
+            + texture(u_shmap, vec3(q.xy + vec2(-t.x, t.y), q.z)) + texture(u_shmap, vec3(q.xy + vec2(t.x, t.y), q.z));
+    return 1.0 - u_sh_on * (1.0 - s * 0.25);
+}
+"""
+
+SHADOW_VS = """
+#version 330
+uniform mat4 u_lmvp;
+in vec3 in_pos;
+void main() { gl_Position = u_lmvp * vec4(in_pos, 1.0); }
+"""
+SHADOW_FS = """
+#version 330
+void main() { }
+"""
+
 # ---------------------------------------------------------------- terreno
 TERRAIN_VS = COMMON + """
 in vec3 in_pos;
@@ -47,7 +76,7 @@ void main() {
 }
 """
 
-TERRAIN_FS = COMMON + FOG_FN + """
+TERRAIN_FS = COMMON + FOG_FN + SHADOW_FN + """
 uniform sampler2D u_detail;
 uniform sampler2D u_grass;
 uniform int u_grass_on;
@@ -102,6 +131,7 @@ vec2 rect_d(vec2 d, vec4 r) {
 void main() {
     vec3 n = normalize(v_norm);
     float diff = max(dot(n, u_sun), 0.0);
+    float shf = sun_shadow(v_pos);
     vec2 uv = v_pos.xy;
     float dist = length(v_pos - u_campos);
     // derivadas calculadas una sola vez: así cada textura se lee solo donde aporta algo (dentro de un if)
@@ -130,7 +160,7 @@ void main() {
         if (w2 > 0.0)
             c = mix(c, textureGrad(u_sat2, uv2, rect_d(dx, u_rect2), rect_d(dy, u_rect2)).rgb, w2);
         c = pow(c, vec3(1.08)) * (0.93 + 0.14 * nd);
-        lit = c * (u_amb * 1.25 + u_sun_col * (0.32 + 0.45 * diff));
+        lit = c * (u_amb * 1.25 + u_sun_col * (0.32 + 0.45 * diff) * mix(0.3, 1.0, shf));
         alb = c;
         if (u_night > 0.01) {
             // zonas urbanas de la foto (grises claros, poco verdes): de noche se encienden las calles
@@ -144,7 +174,7 @@ void main() {
         float d4 = textureGrad(u_detail, uv / 1913.0, dx / 1913.0, dy / 1913.0).r;
         float n1 = mix(d1, 0.5, smoothstep(2500.0, 9000.0, dist));
         vec3 col = v_col * (0.84 + 0.32 * n1) * (0.86 + 0.28 * d2) * (0.9 + 0.2 * d4) * (0.86 + 0.28 * nd);
-        lit = col * (u_amb + u_sun_col * diff);
+        lit = col * (u_amb + u_sun_col * diff * shf);
         alb = col;
     }
     if (u_grass_on == 1 && dist < 450.0) {
@@ -227,7 +257,7 @@ void main() {
 }
 """
 
-OBJECT_FS = COMMON + FOG_FN + """
+OBJECT_FS = COMMON + FOG_FN + SHADOW_FN + """
 uniform vec4 u_tint;
 uniform float u_flat;
 uniform float u_spec;
@@ -244,9 +274,10 @@ void main() {
     vec3 n = normalize(v_norm);
     vec3 v = normalize(u_campos - v_pos);
     if (dot(n, v) < 0.0) n = -n;
-    float diff = max(dot(n, u_sun), 0.0);
+    float shf = sun_shadow(v_pos);
+    float diff = max(dot(n, u_sun), 0.0) * shf;
     vec3 h = normalize(u_sun + v);
-    float spec = pow(max(dot(n, h), 0.0), 40.0) * u_spec;
+    float spec = pow(max(dot(n, h), 0.0), 40.0) * u_spec * shf;
     vec3 base = v_col * u_tint.rgb;
     if (u_skin == 1) {
         vec3 w = abs(normalize(v_lnorm));
@@ -282,7 +313,7 @@ void main() {
 }
 """
 
-TEX_FS = COMMON + FOG_FN + """
+TEX_FS = COMMON + FOG_FN + SHADOW_FN + """
 uniform sampler2D u_tex;
 uniform sampler2D u_detail;
 uniform sampler2D u_asph;
@@ -317,7 +348,7 @@ void main() {
         float paint = smoothstep(0.35, 0.7, dot(t.rgb, vec3(0.333)));
         base = t.rgb * mix(asph, mix(vec3(1.0), asph, 0.45), paint) * (0.95 + 0.1 * d2);
     }
-    float diff = max(-u_sun.z, 0.0);
+    float diff = max(-u_sun.z, 0.0) * sun_shadow(v_pos);
     vec3 lit = base * (u_amb + u_sun_col * diff + landing_light(v_pos));
     f_color = vec4(apply_fog(lit, v_pos), t.a);
     gl_FragDepth = log2(v_logz) * u_logc * 0.5;
@@ -478,6 +509,10 @@ void main() {
     if (a < 0.01) discard;
     vec3 col = tx.rgb * mix(0.72, 1.0, clamp(v_shade, 0.0, 1.0));
     col = col * (u_amb * 0.95 + u_sun_col * 0.75) * u_dark;
+    // a contraluz del Sol: los bordes finos brillan (borde plateado) y el centro grueso se oscurece
+    float toward = pow(max(dot(normalize(v_pos - u_campos), u_sun), 0.0), 6.0) * smoothstep(-0.05, 0.1, -u_sun.z);
+    float thin = 1.0 - smoothstep(0.15, 0.85, tx.a);
+    col = col * (1.0 - 0.22 * toward * (1.0 - thin)) + u_sun_col * toward * (0.18 + 0.85 * thin) * u_dark;
     float f = fog_factor(v_pos);
     col = mix(u_fog_col, col, f);
     f_color = vec4(col * a, a);
@@ -513,15 +548,18 @@ uniform mat4 u_model;
 in vec3 in_pos;
 in vec3 in_norm;
 in vec2 in_uv;
+in float in_ao;
 out vec3 v_pos;
 out vec3 v_norm;
 out vec2 v_uv;
+out float v_ao;
 out float v_logz;
 void main() {
     vec4 wp = u_model * vec4(in_pos, 1.0);
     v_pos = wp.xyz;
     v_norm = mat3(u_model) * in_norm;
     v_uv = in_uv;
+    v_ao = in_ao;
     gl_Position = u_proj * u_view * wp;
     v_logz = 1.0 + gl_Position.w;
 }
@@ -537,6 +575,7 @@ uniform vec4 u_tint;
 in vec3 v_pos;
 in vec3 v_norm;
 in vec2 v_uv;
+in float v_ao;
 in float v_logz;
 out vec4 f_color;
 void main() {
@@ -550,9 +589,120 @@ void main() {
     vec3 h = normalize(u_sun + v);
     float spec = pow(max(dot(n, h), 0.0), 48.0) * u_spec * smoothstep(0.35, 0.8, dot(c.rgb, vec3(0.333)));
     vec3 base = c.rgb * u_tint.rgb;
-    vec3 lit = base * (u_amb + u_sun_col * diff) + u_sun_col * spec;
+    // rendijas, uniones y el interior quedan en penumbra (oclusión horneada al importar el modelo)
+    float ao = v_ao;
+    vec3 lit = base * (u_amb * ao + u_sun_col * diff * mix(1.0, ao, 0.45)) + u_sun_col * spec * ao;
     f_color = vec4(apply_fog(lit, v_pos), c.a * u_tint.a);
     gl_FragDepth = log2(v_logz) * u_logc * 0.5;
+}
+"""
+
+
+# ---------------------------------------------------------------- imagen final (posproceso)
+# Resplandor: se extraen las zonas muy claras a 1/4 de resolución y se difuminan en dos pasadas.
+POST_VS = """
+#version 330
+in vec2 in_pos;
+out vec2 v_uv;
+void main() { v_uv = in_pos * 0.5 + 0.5; gl_Position = vec4(in_pos, 0.0, 1.0); }
+"""
+
+BRIGHT_FS = """
+#version 330
+uniform sampler2D u_tex;
+uniform vec2 u_texel;
+uniform float u_thr;
+in vec2 v_uv;
+out vec4 f_color;
+vec3 pick(vec2 uv) {
+    vec3 c = texture(u_tex, uv).rgb;
+    float m = max(max(c.r, c.g), c.b);
+    return c * smoothstep(u_thr, u_thr + 0.18, m);
+}
+void main() {
+    // cuatro lecturas bilineales cubren el bloque de 4x4 píxeles de la imagen completa
+    vec2 o = u_texel;
+    vec3 c = pick(v_uv + vec2(-o.x, -o.y)) + pick(v_uv + vec2(o.x, -o.y)) + pick(v_uv + vec2(-o.x, o.y)) + pick(v_uv + o);
+    f_color = vec4(c * 0.25, 1.0);
+}
+"""
+
+BLUR_FS = """
+#version 330
+uniform sampler2D u_tex;
+uniform vec2 u_dir;
+in vec2 v_uv;
+out vec4 f_color;
+void main() {
+    // gaussiana de 9 muestras con 5 lecturas bilineales
+    vec3 c = texture(u_tex, v_uv).rgb * 0.2270;
+    c += (texture(u_tex, v_uv + u_dir * 1.3846).rgb + texture(u_tex, v_uv - u_dir * 1.3846).rgb) * 0.3162;
+    c += (texture(u_tex, v_uv + u_dir * 3.2308).rgb + texture(u_tex, v_uv - u_dir * 3.2308).rgb) * 0.0703;
+    f_color = vec4(c, 1.0);
+}
+"""
+
+COMP_FS = """
+#version 330
+uniform sampler2D u_tex;
+uniform sampler2D u_bloom;
+uniform vec4 u_vp;
+uniform float u_fx;          // 0: imagen tal cual (pantallas de carga); 1: con efectos
+uniform float u_bloom_k;
+uniform vec3 u_grade;        // tono de la luz según la hora (cálido al amanecer y al atardecer, frío de noche)
+uniform float u_contrast;
+uniform float u_sat;
+uniform vec3 u_sun_uv;       // posición del Sol en la imagen (x, y) y fuerza del destello (z)
+uniform float u_aspect;
+out vec4 c;
+float sun_seen(vec2 p) {
+    vec3 s = texture(u_tex, p).rgb;
+    return smoothstep(0.9, 0.985, min(min(s.r, s.g), s.b));
+}
+void main() {
+    vec2 uv = (gl_FragCoord.xy - u_vp.xy) / u_vp.zw;
+    vec3 col = texture(u_tex, uv).rgb;
+    if (u_fx < 0.5) { c = vec4(col, 1.0); return; }
+    col += texture(u_bloom, uv).rgb * u_bloom_k;
+    // destello del Sol: solo si el disco se ve (no lo tapan el terreno, el tablero ni las nubes)
+    if (u_sun_uv.z > 0.0) {
+        vec2 sp = u_sun_uv.xy;
+        vec2 e = vec2(0.006, 0.006 * u_aspect);
+        float vis = (sun_seen(sp) + sun_seen(sp + vec2(e.x, 0.0)) + sun_seen(sp - vec2(e.x, 0.0))
+                   + sun_seen(sp + vec2(0.0, e.y)) + sun_seen(sp - vec2(0.0, e.y))) * 0.2;
+        float k = u_sun_uv.z * vis;
+        if (k > 0.001) {
+            vec2 d = (uv - sp) * vec2(u_aspect, 1.0);
+            float r = length(d);
+            vec3 sc = vec3(1.0, 0.9, 0.75);
+            col += sc * (0.05 * exp(-r * 18.0) + 0.18 * exp(-r * 70.0)) * k;              // halo
+            col += sc * exp(-abs(d.y) * 260.0) * exp(-abs(d.x) * 3.2) * 0.22 * k;       // raya horizontal
+            vec2 axis = vec2(0.5) - sp;                                                // fantasmas hacia el centro
+            for (int i = 0; i < 4; i++) {
+                float t = (i == 0) ? 0.55 : (i == 1) ? 1.0 : (i == 2) ? 1.45 : 1.9;
+                float rad = (i == 0) ? 0.035 : (i == 1) ? 0.018 : (i == 2) ? 0.06 : 0.026;
+                vec3 gc = (i == 0) ? vec3(0.35, 0.55, 1.0) : (i == 1) ? vec3(1.0, 0.7, 0.35)
+                        : (i == 2) ? vec3(0.45, 1.0, 0.6) : vec3(0.8, 0.5, 1.0);
+                vec2 gp = sp + axis * t;
+                float gr = length((uv - gp) * vec2(u_aspect, 1.0));
+                col += gc * smoothstep(rad, rad * 0.55, gr) * 0.05 * k;
+            }
+        }
+    }
+    // gradación de color: tono de la hora, contraste suave en S y algo más de saturación
+    col *= u_grade;
+    // hombro suave: lo que pasa de 0,8 se comprime hacia el blanco en vez de recortarse (el Sol y los blancos
+    // de la pista no forman manchas planas)
+    vec3 over = max(col - 0.8, 0.0);
+    col = min(col, 0.8) + 0.2 * (1.0 - exp(-over / 0.2));
+    col = mix(col, col * col * (3.0 - 2.0 * col), u_contrast * (1.0 - smoothstep(0.55, 0.95, max(max(col.r, col.g), col.b))));
+    float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+    col = mix(vec3(l), col, u_sat);
+    // viñeta muy leve y un poco de ruido para que los degradados del cielo no hagan escalones
+    vec2 q = uv - 0.5;
+    col *= 1.0 - 0.16 * dot(q, q) * 2.0;
+    col += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
+    c = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 """
 

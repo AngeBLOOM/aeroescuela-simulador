@@ -68,6 +68,11 @@ class Renderer:
         self.p_obj = ctx.program(vertex_shader=sh.OBJECT_VS, fragment_shader=sh.OBJECT_FS)
         self.p_tex = ctx.program(vertex_shader=sh.TEX_VS, fragment_shader=sh.TEX_FS)
         self.p_model = ctx.program(vertex_shader=sh.MODEL_VS, fragment_shader=sh.MODEL_FS)
+        self.p_shadow = ctx.program(vertex_shader=sh.SHADOW_VS, fragment_shader=sh.SHADOW_FS)
+        self.p_bright = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BRIGHT_FS)
+        self.p_blur = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BLUR_FS)
+        for prog in (self.p_terrain, self.p_obj, self.p_tex):
+            prog["u_shmap"] = self.SH_UNIT          # nunca en la misma unidad que una textura normal
         self.p_sky = ctx.program(vertex_shader=sh.SKY_VS, fragment_shader=sh.SKY_FS)
         self.p_light = ctx.program(vertex_shader=sh.LIGHT_VS, fragment_shader=sh.LIGHT_FS)
         self.p_cloud = ctx.program(vertex_shader=sh.CLOUD_VS, fragment_shader=sh.CLOUD_FS)
@@ -96,6 +101,8 @@ class Renderer:
         quad = np.array([-1, -1, 3, -1, -1, 3], dtype="f4")
         self.vbo_tri = ctx.buffer(quad.tobytes())
         self.vao_sky = ctx.vertex_array(self.p_sky, [(self.vbo_tri, "2f", "in_pos")])
+        self.vao_bright = ctx.vertex_array(self.p_bright, [(self.vbo_tri, "2f", "in_pos")])
+        self.vao_blur = ctx.vertex_array(self.p_blur, [(self.vbo_tri, "2f", "in_pos")])
         quad2 = np.array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1], dtype="f4")
         self.vbo_quad = ctx.buffer(quad2.tobytes())
         self.vao_overlay = ctx.vertex_array(self.p_overlay, [(self.vbo_quad, "2f", "in_pos")])
@@ -181,10 +188,14 @@ class Renderer:
         self.rscale = 1.0
         self.samples = 4
         self.fbo_ms = self.fbo_res = self.tex_res = None
+        self.bloom = None                        # [(textura, fbo), (textura, fbo)] a 1/4 de resolución
+        self.effects = True                      # resplandor, destello del Sol y gradación de color
+        self.sh_tex = self.sh_fbo = None
+        self.sh_k = 0.0
+        self.set_shadow_size(2048)
         self.p_comp = ctx.program(
             vertex_shader="#version 330\nin vec2 in_pos; void main(){ gl_Position = vec4(in_pos, 0.0, 1.0); }",
-            fragment_shader="#version 330\nuniform sampler2D u_tex; uniform vec2 u_screen; out vec4 c;"
-                            "uniform vec4 u_vp; void main(){ c = vec4(texture(u_tex, (gl_FragCoord.xy - u_vp.xy) / u_vp.zw).rgb, 1.0); }")
+            fragment_shader=sh.COMP_FS)
         self.vao_comp = ctx.vertex_array(self.p_comp, [(self.vbo_tri, "2f", "in_pos")])
         self.cockpit = Cockpit3D(ctx, self._photo_texture)
         self.last_view = self.last_proj = None
@@ -247,7 +258,7 @@ class Renderer:
 
     def aircraft_model(self, type_id):
         """Modelo 3D real del avión (convertido con tools/importar_modelo.py) o None si no hay: entonces se usa el
-        dibujado por código. Lista de (vao, textura, material), primero los opacos."""
+        dibujado por código. Lista de (vao, textura, material, vao de sombra), primero los opacos."""
         if not hasattr(self, "_models"):
             self._models = {}
         mid = self.MODEL_ALIAS.get(type_id, type_id)
@@ -264,9 +275,16 @@ class Renderer:
                 meta = json.loads(str(z["meta"]))
                 model, texs = [], {}
                 for k, m in enumerate(meta):
-                    vbo = self.ctx.buffer(np.ascontiguousarray(z[f"v{k}"], np.float32).tobytes())
+                    v = np.ascontiguousarray(z[f"v{k}"], np.float32)
+                    if v.shape[1] == 8:                   # sin oclusión horneada: todo a la luz
+                        v = np.hstack([v, np.ones((len(v), 1), np.float32)])
+                    vbo = self.ctx.buffer(np.ascontiguousarray(v).tobytes())
                     ibo = self.ctx.buffer(np.ascontiguousarray(z[f"i{k}"], np.uint32).tobytes())
-                    vao = self.ctx.vertex_array(self.p_model, [(vbo, "3f 3f 2f", "in_pos", "in_norm", "in_uv")], ibo)
+                    vao = self.ctx.vertex_array(self.p_model, [(vbo, "3f 3f 2f 1f", "in_pos", "in_norm", "in_uv", "in_ao")],
+                                                ibo)
+                    # los vidrios (transparentes de verdad) no dan sombra
+                    solid = not m.get("blend") or m["color"][3] >= 0.6
+                    svao = self.ctx.vertex_array(self.p_shadow, [(vbo, "3f 24x", "in_pos")], ibo) if solid else None
                     tex = None
                     if m.get("tex"):
                         if m["tex"] not in texs:
@@ -277,7 +295,7 @@ class Renderer:
                             t_.anisotropy = 8.0
                             texs[m["tex"]] = t_
                         tex = texs[m["tex"]]
-                    model.append((vao, tex, m))
+                    model.append((vao, tex, m, svao))
                 model.sort(key=lambda it: it[2].get("blend", False))
             except Exception as ex:                       # archivo dañado: se sigue con el avión de código
                 print("Modelo", mid, "no se pudo cargar:", ex)
@@ -291,7 +309,7 @@ class Renderer:
         pm["u_spec"].value = 0.45
         pm["u_tint"].value = (1.0, 1.0, 1.0, float(alpha))
         blending = False
-        for vao, tex, m in model:
+        for vao, tex, m, _svao in model:
             if m.get("blend") and not blending:          # los transparentes (vidrios) al final, sin escribir profundidad
                 blending = True
                 self.ctx.enable(moderngl.BLEND)
@@ -381,6 +399,166 @@ class Renderer:
             if o is not None:
                 o.release()
         self.fbo_ms = self.fbo_res = self.tex_res = None
+        self._release_bloom()
+
+    def set_effects(self, on, shadow_size=2048):
+        """Efectos de imagen (resplandor, destello del Sol, gradación) y resolución de la sombra del avión."""
+        self.effects = bool(on)
+        if not self.effects:
+            self._release_bloom()
+        self.set_shadow_size(shadow_size)
+
+    def _release_bloom(self):
+        for tex, fbo in (self.bloom or ()):
+            fbo.release()
+            tex.release()
+        self.bloom = None
+
+    def _ensure_bloom(self):
+        sw, sh_ = self.tex_res.size
+        size = (max(8, sw // 4), max(8, sh_ // 4))
+        if self.bloom is not None and self.bloom[0][0].size == size:
+            return
+        self._release_bloom()
+        self.bloom = []
+        for _ in range(2):
+            t_ = self.ctx.texture(size, 4)
+            t_.filter = (moderngl.LINEAR, moderngl.LINEAR)
+            t_.repeat_x = t_.repeat_y = False
+            self.bloom.append((t_, self.ctx.framebuffer([t_])))
+
+    # ------------------------------------------------------------ sombra del avión (mapa de sombras)
+    SH_UNIT = 11
+    SHADOW_CODE_PARTS = ("body", "gear", "elevator", "rudder", "ail_l", "ail_r", "flap_l", "flap_r")
+
+    def set_shadow_size(self, size):
+        size = int(size)
+        if self.sh_tex is not None and self.sh_tex.size == (size, size):
+            return
+        if self.sh_fbo is not None:
+            self.sh_fbo.release()
+            self.sh_tex.release()
+        self.sh_tex = self.sh_fbo = None
+        try:
+            t_ = self.ctx.depth_texture((size, size))
+            t_.compare_func = "<="
+            t_.filter = (moderngl.LINEAR, moderngl.LINEAR)
+            t_.repeat_x = t_.repeat_y = False
+            self.sh_fbo = self.ctx.framebuffer(depth_attachment=t_)
+            self.sh_tex = t_
+        except Exception as ex:                  # sin mapa de sombras: queda la sombra plana de antes
+            print("Sin mapa de sombras:", ex)
+
+    def _code_shadow_vaos(self):
+        if getattr(self, "_sh_code_for", None) is not self.ac_meshes:
+            for vao in getattr(self, "_sh_code", {}).values():
+                vao.release()
+            self._sh_code = {name: self.ctx.vertex_array(self.p_shadow, [(m.vbo, "3f 24x", "in_pos")], m.ibo)
+                             for name, (m, _p, _a) in self.ac_meshes.items() if name in self.SHADOW_CODE_PARTS}
+            self._sh_code_for = self.ac_meshes
+        return self._sh_code
+
+    def _shadow_pass(self, env, body_M, pos, show_aircraft):
+        """Dibuja la profundidad del avión vista desde el Sol. La sombra se ve sobre el terreno, las pistas y los
+        hangares con la silueta real del modelo; se desvanece con la altura, de noche y con cielo cubierto."""
+        self.sh_k = 0.0
+        if not show_aircraft or self.sh_fbo is None:
+            return
+        w = self.world
+        sun = np.asarray(env["sun"], np.float64)
+        up = -sun[2]
+        gh = max(w.terrain.height(pos[0], pos[1]), 0.0)
+        hgt = -pos[2] - gh
+        k = 0.85 * env["day"] * (1.0 - 0.85 * env["overcast"]) * smoothstep(0.03, 0.16, up) \
+            * (1.0 - smoothstep(250.0, 700.0, hgt))
+        if k < 0.02 or env["incloud"]:
+            return
+        t = w.ac.t
+        rad = 0.6 * max(t.b, 8.0) + 0.8                 # caja que contiene al avión, vista desde el Sol
+        reach = min(max(hgt, 0.0) / max(up, 0.03) + 2.0 * rad + 10.0, 6000.0)
+        eye = np.asarray(pos, np.float64) + sun * (rad + 2.0)
+        upv = np.array((1.0, 0.0, 0.0) if abs(sun[0]) < 0.9 else (0.0, 1.0, 0.0))
+        V = look_dir(eye, -sun, upv)
+        n, f = 0.1, rad + 2.0 + reach
+        O = np.identity(4)
+        O[0, 0] = O[1, 1] = 1.0 / rad
+        O[2, 2] = -2.0 / (f - n)
+        O[2, 3] = -(f + n) / (f - n)
+        LV = O @ V
+        B = np.array([[0.5, 0, 0, 0.5], [0, 0.5, 0, 0.5], [0, 0, 0.5, 0.5], [0, 0, 0, 1.0]])
+        self.sh_mat = B @ LV
+        ctx = self.ctx
+        self.sh_fbo.use()
+        ctx.scissor = None
+        ctx.viewport = (0, 0, *self.sh_tex.size)
+        self.sh_fbo.clear(depth=1.0)
+        self.p_shadow["u_lmvp"].write(gl_bytes(LV @ body_M))
+        real = self.aircraft_model(t.id)
+        if real is not None:
+            for _vao, _tex, _m, svao in real:
+                if svao is not None:
+                    svao.render()
+        else:
+            for name, vao in self._code_shadow_vaos().items():
+                if name == "gear" and w.ac.sys.gear_pos < 0.5:
+                    continue
+                vao.render()
+        self.sh_k = float(k)
+
+    def _post(self, env, proj, rot_view):
+        """Resplandor de las luces y del Sol (a 1/4 de resolución) y datos del destello y la gradación."""
+        ctx = self.ctx
+        pc = self.p_comp
+        if not self.effects:
+            pc["u_fx"].value = 0.0
+            return
+        night, day = float(env["night"]), float(env["day"])
+        self._ensure_bloom()
+        (t0, f0), (t1, f1) = self.bloom
+        bw, bh = t0.size
+        sw, sh_ = self.tex_res.size
+        ctx.disable(moderngl.DEPTH_TEST)
+        ctx.scissor = None
+        ctx.viewport = (0, 0, bw, bh)
+        f0.use()
+        self.tex_res.use(0)
+        pb = self.p_bright
+        pb["u_tex"] = 0
+        pb["u_texel"].value = (1.0 / sw, 1.0 / sh_)
+        pb["u_thr"].value = float(lerp(0.94, 0.68, night))
+        self.vao_bright.render()
+        pl = self.p_blur
+        pl["u_tex"] = 0
+        for _ in range(2):
+            f1.use()
+            t0.use(0)
+            pl["u_dir"].value = (1.0 / bw, 0.0)
+            self.vao_blur.render()
+            f0.use()
+            t1.use(0)
+            pl["u_dir"].value = (0.0, 1.0 / bh)
+            self.vao_blur.render()
+        pc["u_fx"].value = 1.0
+        pc["u_bloom"] = 1
+        pc["u_bloom_k"].value = float(lerp(0.12, 0.6, night) * (0.6 if env["incloud"] else 1.0))
+        # tono de la luz: dorado con el Sol bajo, neutro a mediodía, azulado de noche
+        dusk = float(env.get("dusk", 0.0)) * (1.0 - env["overcast"])
+        g = mix3((1.0, 1.0, 1.0), (1.08, 0.99, 0.86), dusk * 0.85)
+        g = mix3(g, (0.9, 0.97, 1.1), night * 0.75)
+        pc["u_grade"].value = tuple(float(c) for c in g)
+        pc["u_contrast"].value = float(lerp(0.12, 0.06, night) * (1.0 - 0.4 * env["overcast"]))
+        pc["u_sat"].value = float(lerp(1.08, 1.0, max(night, env["overcast"])))
+        sun = np.asarray(env["sun"], np.float64)
+        clip = proj @ rot_view @ np.array([sun[0], sun[1], sun[2], 0.0])
+        flare = 0.0
+        sx = sy = -1.0
+        if clip[3] > 1e-6 and not env["incloud"]:
+            sx, sy = clip[0] / clip[3] * 0.5 + 0.5, clip[1] / clip[3] * 0.5 + 0.5
+            edge = min(sx, 1.0 - sx, sy, 1.0 - sy)
+            flare = day * (1.0 - env["overcast"]) * smoothstep(-0.02, 0.05, -sun[2]) * smoothstep(-0.02, 0.06, edge)
+        pc["u_sun_uv"].value = (float(sx), float(sy), float(flare))
+        pc["u_aspect"].value = float(sw / max(sh_, 1))
+        t0.use(1)
 
     def _ensure_fbo(self, W=None, H=None):
         """Búfer de dibujo del tamaño de la vista 3D (no de toda la ventana): con la franja de instrumentos
@@ -613,7 +791,7 @@ void main() { f_color = texture(u_tex, v_uv); }
         dens = 1.987 / vis + 1.0 / 400000.0
         ground = mix3(hor, (0.25, 0.3, 0.25), 0.3)
         self.env = dict(sun=sun, sun_col=sun_col, amb=amb, zen=zen, hor=hor, fog_col=fog_col, fog=dens,
-                        night=night, day=day, overcast=ov, incloud=incloud, ground=ground,
+                        night=night, day=day, dusk=dusk, overcast=ov, incloud=incloud, ground=ground,
                         moon=moon, moon_k=mk, moon_on=(1.0 - ov) * smoothstep(-1.0, 1.0, me) * (0.25 + 0.75 * night))
         return self.env
 
@@ -764,12 +942,18 @@ void main() { f_color = texture(u_tex, v_uv); }
             self.cockpit.configure(ac.t)
         screen_vp = viewport
         self._ensure_fbo(viewport[2], viewport[3])
+        env = self.environment(-cam.eye[2])
+        if pose is None:
+            pos, R = ac.pos, ac.R
+        else:
+            pos, R = pose[0], quat_to_mat(pose[1])
+        body_M = model_matrix(R, pos)
+        self._shadow_pass(env, body_M, pos, show_aircraft)
         self.fbo_ms.use()
         x, y, w, h = 0, 0, self.tex_res.size[0], self.tex_res.size[1]
         viewport = (x, y, w, h)
         ctx.viewport = viewport
         ctx.scissor = viewport
-        env = self.environment(-cam.eye[2])
         ctx.clear(*env["hor"], 1.0, depth=1.0)
         aspect = w / max(h, 1)
         fovy = cam.fov
@@ -804,6 +988,12 @@ void main() { f_color = texture(u_tex, v_uv); }
         # terreno y agua
         for prog in (self.p_terrain, self.p_water, self.p_obj, self.p_tex, self.p_model, self.p_light, self.p_cloud):
             self._set_common(prog, view, proj, cam.eye)
+        if self.sh_tex is not None:
+            self.sh_tex.use(self.SH_UNIT)
+        for prog in (self.p_terrain, self.p_obj, self.p_tex):
+            prog["u_sh_on"].value = self.sh_k
+            if self.sh_k > 0.0:
+                prog["u_shmat"].write(gl_bytes(self.sh_mat))
         self.t_detail.use(1)
         self.p_terrain["u_detail"] = 1
         pt = self.p_terrain
@@ -885,20 +1075,16 @@ void main() { f_color = texture(u_tex, v_uv); }
         po["u_flat"].value = 0.0
         po["u_tint"].value = (1.0, 1.0, 1.0, 1.0)
 
-        # avión
-        if pose is None:
-            pos, R = ac.pos, ac.R
-        else:
-            pos, R = pose[0], quat_to_mat(pose[1])
-        body_M = model_matrix(R, pos)
+        # avión (sin sombra sobre sí mismo)
+        po["u_sh_on"].value = 0.0
         inside = cam.mode == "cabina"
         self._cab3d = cockpit is not None
         if show_aircraft:
             self._draw_aircraft(body_M, inside, pose)
-            # sombra plana sobre el terreno
+            # sombra plana sobre el terreno, solo si la tarjeta no tiene mapa de sombras
             gh = max(world.terrain.height(pos[0], pos[1]), 0.0)
             hgt = -pos[2] - gh
-            if hgt < 400 and env["day"] > 0.2:
+            if self.sh_fbo is None and hgt < 400 and env["day"] > 0.2:
                 ctx.enable(moderngl.BLEND)
                 ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
                 S = np.identity(4)
@@ -983,6 +1169,7 @@ void main() { f_color = texture(u_tex, v_uv); }
         # resolver el antialiasing y componer en la ventana
         if self.fbo_ms is not self.fbo_res and self.samples > 1:
             ctx.copy_framebuffer(self.fbo_res, self.fbo_ms)
+        self._post(env, proj, rot_view)
         ctx.screen.use()
         ctx.viewport = screen_vp
         ctx.scissor = screen_vp

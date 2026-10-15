@@ -54,6 +54,15 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   - humedad;
   - fallas nuevas.
 - **Lecciones nuevas:** hielo en el carburador y barrena.
+- **Gráficos:**
+  - **sombra real del avión** con la silueta del modelo 3D, según la hora del Sol, sobre el terreno, la pista y los
+    hangares (ayuda a juzgar la altura en el aterrizaje; se desvanece con la altura, de noche y con cielo cubierto);
+  - penumbra horneada en los modelos 3D (uniones, ruedas, interior) sin costo en vuelo;
+  - resplandor de las luces de pista, estroboscópicos y ciudades de noche;
+  - destello del Sol solo cuando el disco se ve (no lo tapan el terreno, el tablero ni las nubes);
+  - color según la hora (dorado al amanecer y al atardecer, azulado de noche) y borde plateado de las nubes a
+    contraluz.
+  En calidad «rendimiento» se apagan los efectos de imagen y queda la sombra.
 - **Salida de datos por UDP** para instrumentos, paneles y movimiento: `docs/PROTOCOLO_UDP.md`.
 - **Pruebas:** `python tools/pruebas.py` ejecuta 21 pruebas sin ventana; GitHub las ejecuta en cada pull request.
 - **Validación y documentación para la autoridad:**
@@ -294,8 +303,9 @@ propio del simulador. Para cambiar o agregar uno, descargue el modelo en **glTF 
     python tools/importar_modelo.py c172 Descargas/free_cessna_172sp.glb quitar=remove_before_flight,Concrete
 
 El conversor lo pone en los ejes del avión, lo escala a la envergadura real, apoya las ruedas a la altura del tren,
-reduce las texturas y guarda el crédito del autor (`invertir` si queda al revés; `quitar=` para piezas que no deben
-verse en vuelo, como amarres). El avión que no tenga modelo se dibuja por código. El DA40 descargado traía la cúpula
+reduce las texturas, hornea la penumbra de rendijas y uniones y guarda el crédito del autor (`invertir` si queda al
+revés; `quitar=` para piezas que no deben verse en vuelo, como amarres). `python tools/importar_modelo.py hornear`
+vuelve a calcular la penumbra de los ya convertidos. El avión que no tenga modelo se dibuja por código. El DA40 descargado traía la cúpula
 abierta, así que por ahora sigue con el de código.
 
 ## Cabina física: pantalla solo de instrumentos

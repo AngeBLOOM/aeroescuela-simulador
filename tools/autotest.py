@@ -310,6 +310,15 @@ def step(app, frame):
         elif name == "barra":
             app.settings["pantalla_instr"] = "ambiente"
             app.start_lesson(LB['circuito'])
+        elif name.startswith("libre_"):                # libre_<rumbo>_<elevación>_<distancia>: cámara en órbita
+            import math as _m
+            yaw, pitch, dist = (float(x) for x in name[6:].split("_"))
+            app.camera.set_mode("libre")
+            app.camera.orbit_yaw, app.camera.orbit_pitch = _m.radians(yaw), _m.radians(pitch)
+            app.camera.orbit_dist = dist
+        elif name.startswith("calidad_"):              # calidad_alta / calidad_media / calidad_rendimiento
+            app.settings["calidad"] = name[8:]
+            app.apply_quality()
     if name == "barra" and f < 88:
         import time as _t
         app._mouse_t = _t.time()
