@@ -52,6 +52,10 @@ uniform sampler2DShadow u_shmap2;
 uniform mat4 u_shmat2;
 uniform float u_sh2_on;
 uniform float u_sh2_texel;
+uniform sampler2D u_cloudmap;   // cobertura de nubes vista desde arriba (a la altura de la base)
+uniform float u_cloud_on;       // fuerza de las sombras de nubes (0 con cielo cubierto o de noche)
+uniform float u_cloud_alt;      // altura de la base (m)
+uniform vec4 u_cloud_rect;      // x0, y0, lado (m)
 float pcf4(sampler2DShadow m, vec3 q, float spread) {
     vec2 t = spread / vec2(textureSize(m, 0));
     return 0.25 * (texture(m, vec3(q.xy + vec2(-t.x, -t.y), q.z)) + texture(m, vec3(q.xy + vec2(t.x, -t.y), q.z))
@@ -74,6 +78,16 @@ float sun_shadow_n(vec3 wpos, vec3 n) {
         if (q.x > 0.0 && q.x < 1.0 && q.y > 0.0 && q.y < 1.0 && q.z < 1.0) {
             float edge = smoothstep(0.0, 0.1, min(min(q.x, 1.0 - q.x), min(q.y, 1.0 - q.y)));
             s *= 1.0 - u_sh2_on * edge * (1.0 - pcf4(u_shmap2, q, 0.9));
+        }
+    }
+    if (u_cloud_on > 0.0 && -u_sun.z > 0.05) {
+        // sombra de las nubes: se sube por la dirección del Sol hasta la altura de la base y se mira la cobertura
+        float up = (u_cloud_alt + wpos.z) / (-u_sun.z);
+        if (up > 0.0) {
+            vec2 q = wpos.xy + u_sun.xy * up;
+            vec2 uv = (q - u_cloud_rect.xy) / u_cloud_rect.z;
+            if (uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0)
+                s *= 1.0 - u_cloud_on * texture(u_cloudmap, uv).r;
         }
     }
     return s;

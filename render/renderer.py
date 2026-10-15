@@ -136,6 +136,7 @@ class Renderer:
         self.p_bright = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BRIGHT_FS)
         self.p_blur = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BLUR_FS)
         for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg):
+            prog["u_cloudmap"] = self.CLOUD_UNIT
             prog["u_shmap"] = self.SH_UNIT          # nunca en la misma unidad que una textura normal
             prog["u_shmap2"] = self.SH2_UNIT
         self.p_sky = ctx.program(vertex_shader=sh.SKY_VS, fragment_shader=sh.SKY_FS)
@@ -273,6 +274,8 @@ class Renderer:
         self.photo_request = None                # (archivo, escala): Foto pro pedida para el próximo cuadro
         self.photo_result = None
         self._photo_target = None
+        self.cloud_shadow_k = 0.0
+        self.cloud_shadow_alt = 0.0
         self.patch = None
         self._patch_job = None
         self._patch_T = None
@@ -1310,6 +1313,39 @@ void main() { f_color = texture(u_tex, v_uv); }
         pc["u_offset"].value = (0.0, 0.0, 0.0)
         pc["u_dark"].value = 1.0
 
+    # ------------------------------------------------------------ sombras de las nubes sobre el suelo
+    CLOUD_UNIT = 13
+    CLOUD_RECT = (-34000.0, -34000.0, 68000.0, 0.0)
+    CLOUD_RES = 1024
+
+    def _cloud_coverage(self, inst):
+        """Cobertura de las nubes vista desde arriba (0..1) en una grilla de 66 m: una mancha suave por cada copo."""
+        n = self.CLOUD_RES
+        x0, y0, side = self.CLOUD_RECT[:3]
+        k = n / side
+        cov = np.zeros((n, n), np.float32)
+        for (px, py, _z, size, _sh, _v) in inst:
+            r = size * 1.0 * k                       # el copo se ve de unos 2 tamaños de ancho
+            ci, cj = (px - x0) * k, (py - y0) * k
+            i0, i1 = int(max(ci - r - 1, 0)), int(min(ci + r + 2, n))
+            j0, j1 = int(max(cj - r - 1, 0)), int(min(cj + r + 2, n))
+            if i0 >= i1 or j0 >= j1:
+                continue
+            I, J = np.meshgrid(np.arange(i0, i1), np.arange(j0, j1), indexing="ij")
+            d2 = ((I - ci) ** 2 + (J - cj) ** 2) / max(r * r, 1e-6)
+            blob = np.clip(1.0 - d2, 0.0, 1.0) ** 1.5
+            cov[i0:i1, j0:j1] = 1.0 - (1.0 - cov[i0:i1, j0:j1]) * (1.0 - blob * 0.9)
+        return cov
+
+    def _update_cloud_shadows(self, env):
+        w = self.world.weather
+        k = 0.55 * env["day"] * (1.0 - env["overcast"]) * smoothstep(0.05, 0.2, -float(env["sun"][2]))
+        self.cloud_shadow_k = float(k) if (getattr(self, "t_cloudmap", None) is not None and w.cloud_cover > 0.02
+                                          and w.cloud_cover < 0.85) else 0.0
+        self.cloud_shadow_alt = float(w.cloud_base_ft * 0.3048)
+        if getattr(self, "t_cloudmap", None) is not None:
+            self.t_cloudmap.use(self.CLOUD_UNIT)
+
     def _update_clouds(self):
         w = self.world.weather
         key = (round(w.cloud_cover, 2), round(w.cloud_base_ft), round(w.cloud_top_ft))
@@ -1322,15 +1358,19 @@ void main() { f_color = texture(u_tex, v_uv); }
         top = max(w.cloud_top_ft * 0.3048, base + 150)
         inst = []
         if cov > 0.02:
-            n_cl = int(cov * 420) if cov < 0.85 else 260
-            cx = rng.uniform(-30000, 30000, n_cl)
-            cy = rng.uniform(-30000, 30000, n_cl)
+            # cúmulos en grupos: vistos desde arriba cubren más o menos la fracción del METAR (FEW, SCT, BKN), así el
+            # cielo y las sombras en el suelo corresponden a lo que se informa
+            scattered = cov < 0.85
+            n_cl = int(cov * 900) if scattered else 260
+            half = 26000.0 if scattered else 30000.0
+            cx = rng.uniform(-half, half, n_cl)
+            cy = rng.uniform(-half, half, n_cl)
             for i in range(n_cl):
-                k = rng.integers(2, 5)
-                ext = rng.uniform(500, 1200) * (0.6 + cov)
+                k = rng.integers(3, 7) if scattered else rng.integers(2, 5)
+                ext = rng.uniform(600, 1400) * (0.6 + cov)
                 for j in range(k):
-                    px = cx[i] + rng.normal(0, ext * 0.4)
-                    py = cy[i] + rng.normal(0, ext * 0.4)
+                    px = cx[i] + rng.normal(0, ext * 0.45)
+                    py = cy[i] + rng.normal(0, ext * 0.45)
                     hz = base + (top - base) * rng.uniform(0.1, 0.6) ** 1.4
                     size = rng.uniform(380, 820) * (0.7 + 0.6 * (hz - base) / (top - base + 1))
                     shade = 0.35 + 0.65 * (hz - base) / (top - base + 1)
@@ -1350,6 +1390,17 @@ void main() { f_color = texture(u_tex, v_uv); }
             self.vbo_cloud_inst.release()
             self.vao_cloud = None
         self.n_clouds = len(inst)
+        # mapa de cobertura para las sombras de las nubes (con cielo cubierto no hace falta: la luz es difusa)
+        if getattr(self, "t_cloudmap", None) is not None:
+            self.t_cloudmap.release()
+            self.t_cloudmap = None
+        if inst and cov < 0.85:
+            cmap = self._cloud_coverage(inst)
+            # filas = x (norte), columnas = y (este): la textura se lee con uv = (x, y)
+            self.t_cloudmap = self.ctx.texture((self.CLOUD_RES, self.CLOUD_RES), 1,
+                                               np.ascontiguousarray((cmap.T * 255).astype(np.uint8)).tobytes())
+            self.t_cloudmap.build_mipmaps()
+            self.t_cloudmap.repeat_x = self.t_cloudmap.repeat_y = False
         if self.n_clouds:
             arr = np.array(inst, np.float32)
             self.vbo_cloud_inst = self.ctx.buffer(arr.tobytes())
@@ -1424,10 +1475,15 @@ void main() { f_color = texture(u_tex, v_uv); }
             self.sh_tex.use(self.SH_UNIT)
         if self.sh2_tex is not None:
             self.sh2_tex.use(self.SH2_UNIT)
+        self._update_cloud_shadows(env)
         for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg):
             prog["u_sh_on"].value = self.sh_k if prog is not self.p_model else 0.0
             if self.sh_k > 0.0 and prog is not self.p_model:
                 prog["u_shmat"].write(gl_bytes(self.sh_mat))
+            prog["u_cloud_on"].value = self.cloud_shadow_k
+            if self.cloud_shadow_k > 0.0:
+                prog["u_cloud_alt"].value = self.cloud_shadow_alt
+                prog["u_cloud_rect"].value = self.CLOUD_RECT
             prog["u_sh2_on"].value = self.sh2_k
             if self.sh2_k > 0.0:
                 prog["u_shmat2"].write(gl_bytes(self.sh2_mat))
