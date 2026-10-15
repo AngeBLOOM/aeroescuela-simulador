@@ -292,7 +292,7 @@ def material(mat):
     if mat.startswith("wall:"):
         col = tuple(float(v) for v in mat[5:].split(",")) + (1.0,)
         return col, "corrugated", False
-    if mat.startswith("sign:"):
+    if mat.startswith("sign:") or mat.startswith("tsign:"):
         return (1.0, 1.0, 1.0, 1.0), mat, False
     return MATERIALS[mat]
 
@@ -306,6 +306,9 @@ def make_texture(key):
         return tex_concrete()
     if key.startswith("sign:"):
         return tex_sign(key[5:])
+    if key.startswith("tsign:"):
+        mand, loc = key[6:].split("|")
+        return tex_taxi_sign(mand, loc)
     raise KeyError(key)
 
 
@@ -426,3 +429,56 @@ def box_buildings(P, size, yaw, wall_col, roof_col, style, gable_frac=0.0):
             out.append(o.reshape(-1, 13))
         parts += out
     return np.vstack(parts).astype(np.float32)
+
+
+# ---------------------------------------------------------------- carteles de rodaje (OACI / FAA)
+def tex_taxi_sign(mand, loc, w=512, h=128):
+    """Cartel de posición de espera: parte roja con los números de pista en blanco (obligatorio) y, al lado, el de
+    posición: fondo negro, letra y borde amarillos. Fila 0 = abajo."""
+    import pygame
+    if not pygame.font.get_init():
+        pygame.font.init()
+    surf = pygame.Surface((w, h))
+    wm = int(w * 0.68)
+    surf.fill((196, 22, 28), (0, 0, wm, h))
+    surf.fill((12, 12, 12), (wm, 0, w - wm, h))
+    pygame.draw.rect(surf, (240, 200, 30), (wm + 10, 10, w - wm - 20, h - 20), 5)
+    font = pygame.font.SysFont("arial,helvetica,dejavusans", int(h * 0.64), bold=True)
+    t = font.render(mand, True, (250, 250, 250))
+    surf.blit(t, ((wm - t.get_width()) // 2, (h - t.get_height()) // 2))
+    t = font.render(loc, True, (240, 200, 30))
+    surf.blit(t, (wm + (w - wm - t.get_width()) // 2, (h - t.get_height()) // 2))
+    arr = pygame.surfarray.array3d(surf).transpose(1, 0, 2)[::-1]
+    out = np.empty((h, w, 4), np.uint8)
+    out[..., :3] = arr
+    out[..., 3] = 255
+    return out
+
+
+def add_taxi_sign(tm, x, y, gz, yaw, mand, loc):
+    """Cartel sobre dos patas, de cara a quien rueda hacia la pista (yaw = hacia dónde mira la cara)."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    fx, fy = c, s                                 # normal de la cara (hacia el piloto que se acerca)
+    rx, ry = -s, c                                # a lo largo del cartel
+    wdt, hgt, th, z0 = 2.4, 0.75, 0.25, 0.35
+    key = f"tsign:{mand}|{loc}"
+
+    def P(u, t, h):
+        return (x + rx * u + fx * t, y + ry * u + fy * t, gz - h)
+    # cara delantera (se lee de frente) y trasera (se lee desde atrás)
+    tm.quad(key, P(-wdt / 2, th / 2, z0), P(wdt / 2, th / 2, z0), P(wdt / 2, th / 2, z0 + hgt), P(-wdt / 2, th / 2, z0 + hgt),
+            [(1, 0), (0, 0), (0, 1), (1, 1)])
+    tm.quad(key, P(wdt / 2, -th / 2, z0), P(-wdt / 2, -th / 2, z0), P(-wdt / 2, -th / 2, z0 + hgt), P(wdt / 2, -th / 2, z0 + hgt),
+            [(1, 0), (0, 0), (0, 1), (1, 1)])
+    # cantos y techo del cartel
+    for (u0, u1) in ((-wdt / 2, -wdt / 2), (wdt / 2, wdt / 2)):
+        tm.quad("signframe", P(u0, -th / 2, z0), P(u1, th / 2, z0), P(u1, th / 2, z0 + hgt), P(u0, -th / 2, z0 + hgt),
+                [(0, 0), (1, 0), (1, 1), (0, 1)])
+    tm.quad("signframe", P(-wdt / 2, -th / 2, z0 + hgt), P(wdt / 2, -th / 2, z0 + hgt), P(wdt / 2, th / 2, z0 + hgt),
+            P(-wdt / 2, th / 2, z0 + hgt), [(0, 0), (1, 0), (1, 1), (0, 1)])
+    for u in (-wdt * 0.32, wdt * 0.32):            # patas
+        tm.quad("signframe", P(u - 0.04, 0, 0.0), P(u + 0.04, 0, 0.0), P(u + 0.04, 0, z0), P(u - 0.04, 0, z0),
+                [(0, 0), (1, 0), (1, 1), (0, 1)], (0.6, 0.6, 1.0, 1.0))
+
+
+MATERIALS["signframe"] = ((0.2, 0.2, 0.21, 1.0), None, False)

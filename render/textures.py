@@ -161,6 +161,14 @@ def runway_end_texture(number, width_m, ppm_w=8.5, length_m=420.0, ppm_l=5.0, td
     return surf
 
 
+def taxiway_texture():
+    """Calles de rodaje y plataformas: asfalto algo más claro y gastado que la pista (el detalle lo pone la textura
+    de asfalto del shader)."""
+    surf = pygame.Surface((16, 16))
+    surf.fill((66, 66, 67))
+    return surf
+
+
 def runway_mid_texture(width_m, ppm_w=8.5, length_m=50.0, ppm_l=5.0):
     W = int(width_m * ppm_w)
     H = int(length_m * ppm_l)

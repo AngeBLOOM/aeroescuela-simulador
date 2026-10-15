@@ -594,6 +594,7 @@ uniform vec4 u_base;
 uniform float u_cutoff;
 uniform float u_spec;
 uniform vec4 u_tint;
+uniform float u_emis;
 in vec3 v_pos;
 in vec3 v_norm;
 in vec2 v_uv;
@@ -614,7 +615,7 @@ void main() {
     vec3 base = c.rgb * u_tint.rgb;
     // rendijas, uniones y el interior quedan en penumbra (oclusión horneada al importar el modelo)
     float ao = v_ao;
-    vec3 lit = base * (u_amb * ao + u_sun_col * diff * mix(1.0, ao, 0.45)) + u_sun_col * spec * ao;
+    vec3 lit = base * (u_amb * ao + u_sun_col * diff * mix(1.0, ao, 0.45)) + u_sun_col * spec * ao + base * u_emis;
     f_color = vec4(apply_fog(lit, v_pos), c.a * u_tint.a);
     gl_FragDepth = log2(v_logz) * u_logc * 0.5;
 }

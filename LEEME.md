@@ -77,6 +77,14 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
     y en las casas y edificios de los pueblos: pisos, ventanas que reflejan el cielo y el Sol, vidrieras en la
     planta baja, torres de vidrio, casas con techo de tejas a dos aguas y, **de noche, ventanas encendidas al
     azar**. Las dibuja el shader (sin texturas); de lejos se simplifican y no cuestan más que las paredes lisas.
+- **Señalización del aeródromo (OACI / FAA)**, pensada para practicar el rodaje y evitar incursiones en pista:
+  - líneas de espera antes de cada pista (dos continuas del lado de la calle, dos discontinuas del lado de la
+    pista) a 60 m del eje si la pista tiene ILS y a 30 m si es visual;
+  - cartel rojo de posición de espera con los números de pista ordenados como los ve el piloto (el de la
+    izquierda corresponde al extremo de la izquierda) y cartel negro con el nombre de la calle; iluminados de noche;
+  - calles de rodaje y plataforma con asfalto real; luces azules de borde;
+  - **faro giratorio** blanco y verde (12 vueltas por minuto) de noche o con cielo cubierto.
+  En los aeropuertos reales solo se agrega el faro (las calles de rodaje se ven en la foto satelital).
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.
 - **Salida de datos por UDP** para instrumentos, paneles y movimiento: `docs/PROTOCOLO_UDP.md`.
 - **Pruebas:** `python tools/pruebas.py` ejecuta 21 pruebas sin ventana; GitHub las ejecuta en cada pull request.

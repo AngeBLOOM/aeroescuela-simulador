@@ -397,6 +397,7 @@ class Renderer:
                 self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
                 self.ctx.depth_mask = False
             pm["u_base"].value = tuple(float(c) for c in m["color"])
+            pm["u_emis"].value = float(m.get("emis", 0.0)) * float(self.env.get("night", 0.0))
             pm["u_cutoff"].value = float(m.get("cutoff", 0.0))
             if tex is not None:
                 tex.use(9)
@@ -602,13 +603,16 @@ class Renderer:
         self.buildings_model = None
         hs = getattr(self.scn, "hangars", [])
         tw = getattr(self.scn, "towers", [])
-        if not hs and not tw:
+        signs = getattr(self.scn, "taxi_signs", [])
+        if not hs and not tw and not signs:
             return
         tm = bl.TexMesh()
         for (x, y, gz, ln, wd, ht, yaw, col, sign) in hs:
             bl.add_hangar(tm, x, y, gz, ln, wd, ht, yaw, ",".join(f"{c:.3f}" for c in col), sign)
         for (x, y, gz, h) in tw:
             bl.add_tower(tm, x, y, gz, h)
+        for (x, y, gz, yaw, mand, loc) in signs:
+            bl.add_taxi_sign(tm, x, y, gz, yaw, mand, loc)
         ctx = self.ctx
         texs, model = {}, []
         for mat, arr in tm.arrays().items():
@@ -626,7 +630,10 @@ class Renderer:
             vbo = ctx.buffer(np.ascontiguousarray(arr, np.float32).tobytes())
             vao = ctx.vertex_array(self.p_model, [(vbo, "3f 3f 2f 1f", "in_pos", "in_norm", "in_uv", "in_ao")])
             svao = None if blend else ctx.vertex_array(self.p_shadow, [(vbo, "3f 24x", "in_pos")])
-            model.append((vao, tex, dict(color=list(col), blend=blend, cutoff=0.0), svao))
+            meta = dict(color=list(col), blend=blend, cutoff=0.0)
+            if mat.startswith("tsign:"):
+                meta["emis"] = 0.85                      # los carteles de rodaje tienen luz propia de noche
+            model.append((vao, tex, meta, svao))
         model.sort(key=lambda it: it[2]["blend"])
         self.buildings_model = model
 
@@ -1692,6 +1699,17 @@ void main() { f_color = texture(u_tex, v_uv); }
             el = math.degrees(math.atan2(hz, math.hypot(dx, dy)))
             col = (1.0, 1.0, 1.0) if el > ang else (1.0, 0.08, 0.05)
             L.append((x, y, z, *col, 4.5))
+        # faro giratorio del aeródromo: dos haces opuestos (blanco y verde) que giran 12 veces por minuto; se ve un
+        # destello cuando el haz pasa por el observador. Encendido de noche o con poca visibilidad
+        if getattr(self.scn, "beacons", None) and (self.env.get("night", 0.0) > 0.25 or self.env.get("overcast", 0.0) > 0.7):
+            th = self.time * 2.0 * math.pi * 12.0 / 60.0
+            for (x, y, z) in self.scn.beacons:
+                a = math.cos(math.atan2(cam.eye[1] - y, cam.eye[0] - x) - th)
+                iw, ig = max(a, 0.0) ** 40, max(-a, 0.0) ** 40
+                if iw > 0.03:
+                    L.append((x, y, z, iw, iw, iw * 0.95, 7.0))
+                if ig > 0.03:
+                    L.append((x, y, z, 0.1 * ig, ig, 0.35 * ig, 7.0))
         # luces de destello secuencial ("conejo")
         if self.scn.rabbits:
             ph = (self.time * 2.0) % 1.0

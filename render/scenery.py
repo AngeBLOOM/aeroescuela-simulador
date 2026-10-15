@@ -94,12 +94,16 @@ class Scenery:
                 out.append((end_a, np.array(va, np.float32)))
                 out.append((end_b, np.array(vb, np.float32)))
                 out.append((mid, np.array(vm, np.float32)))
+        if self._paved:
+            out.append((tx.taxiway_texture(), np.array(self._paved, np.float32)))
         return out
 
     # ---------------------------------------------------------------- objetos
     def _objects(self):
         self.parked, self.parked_code = [], np.zeros((0, 9), np.float32)
         self.hangars, self.towers = [], []                # los dibuja el renderizador con detalle (render/buildings.py)
+        self.taxi_signs = []                              # carteles de posición de espera (x, y, z, rumbo, texto, calle)
+        self._paved = []                                  # plataformas y calles de rodaje (pos + uv)
         self.trees = None                                 # árboles: instancias con dos niveles de detalle
         mb = geo.MeshBuilder()
         rng = self.rng
@@ -115,8 +119,10 @@ class Scenery:
                 c = np.array(c)
                 corners = [c - d * ln / 2 - rt * wd / 2, c + d * ln / 2 - rt * wd / 2,
                            c + d * ln / 2 + rt * wd / 2, c - d * ln / 2 + rt * wd / 2]
-                pts = [(p[0], p[1], z) for p in corners]
-                mb.quad(*pts, (0.36, 0.36, 0.37))
+                # superficie con la misma textura de asfalto que la pista (la dibuja el renderizador con ella)
+                uv = [(float(p[0]) / 8.0, float(p[1]) / 8.0) for p in corners]
+                for i in (0, 1, 2, 0, 2, 3):
+                    self._paved.append((corners[i][0], corners[i][1], z, *uv[i]))
                 # línea central amarilla a lo largo del lado mayor
                 if ln >= wd:
                     a_, b_ = c - d * ln / 2, c + d * ln / 2
@@ -155,6 +161,8 @@ class Scenery:
         self._hangar(mb, (17160.0, 3800.0, gn), 35.0, 28.0, 9.0, yaw=0.0, col=(0.72, 0.74, 0.76), sign="VALLE NORTE")
         self._hangar(mb, (17160.0, 3740.0, gn), 30.0, 24.0, 8.0, yaw=0.0, col=(0.8, 0.78, 0.7))
         self.towers.append((17080.0, 3720.0, gn, 12.0))
+        # señalización de rodaje: líneas y carteles de espera antes de cada pista
+        self._hold_positions(mb)
         # aviones estacionados: el renderizador los dibuja con los modelos 3D reales (flota variada de la escuela);
         # aquí queda la versión dibujada por código por si falta algún modelo
         t = world.ac.t
@@ -368,6 +376,73 @@ class Scenery:
         self._add_trees(X, sc, rng.uniform(0, 6.28, m), cm, kind)
         print(f"  árboles: {m}")
 
+    # ---------------------------------------------------------------- señalización de rodaje (OACI / FAA)
+    def _ils_runway(self, rw):
+        return any(nv.kind == "ILS" and nv.runway is rw for nv in self.world.navaids)
+
+    def _hold_points(self, ap):
+        """Puntos de espera de cada calle de rodaje que llega a una pista: (punto, dirección que se aleja de la pista,
+        ancho de la calle, pista, nombre de la calle). Distancia al eje según la OACI: 60 m si la pista tiene
+        aproximación de precisión (ILS), 30 m si es visual (aeronaves de clave 1)."""
+        out = []
+        names = iter("ABCDEFGH")
+        for (c, h, ln, wd) in ap.taxi:
+            c = np.asarray(c, float)
+            hr = math.radians(h)
+            d = np.array([math.cos(hr), math.sin(hr)])
+            axis, L, W = (d, ln, wd) if ln >= wd else (np.array([-d[1], d[0]]), wd, ln)
+            for rw in ap.runways:
+                if abs(float(axis @ rw.dir)) > 0.5:          # calle paralela a la pista: no llega a ella
+                    continue
+                ends = [c + axis * L / 2, c - axis * L / 2]
+                lat = [abs(float((e - rw.center) @ rw.right)) for e in ends]
+                k = int(np.argmin(lat))
+                if lat[k] > rw.width / 2 + 8.0 or abs(float((ends[k] - rw.center) @ rw.dir)) > rw.length / 2:
+                    continue
+                away = (ends[1 - k] - ends[k]) / L
+                if float(away @ rw.right) * float((c - rw.center) @ rw.right) < 0:
+                    away = -away
+                D = 60.0 if self._ils_runway(rw) else 30.0
+                far = abs(float((ends[1 - k] - rw.center) @ rw.right))
+                D = min(D, far - 4.0)
+                # punto sobre el eje de la calle a D metros del eje de la pista
+                s0 = float((ends[k] - rw.center) @ rw.right)
+                sgn = 1.0 if float(away @ rw.right) > 0 else -1.0
+                t = (sgn * D - s0) / float(away @ rw.right)
+                out.append((ends[k] + away * t, away, W, rw, next(names)))
+        return out
+
+    def _hold_positions(self, mb):
+        """Líneas de espera (dos continuas del lado de la calle, dos discontinuas del lado de la pista, amarillas de
+        15 cm) y el cartel rojo de posición de espera con los números de pista a la izquierda del piloto, junto al
+        cartel negro con el nombre de la calle."""
+        yellow = (0.86, 0.68, 0.12)
+        for ap in self.aps:
+            z = -(ap.elev + 0.075)
+            for (P, away, W, rw, name) in self._hold_points(ap):
+                across = np.array([-away[1], away[0]])
+                half = W / 2 - 0.3
+                # 30 cm por línea y 30 cm de separación: desde la altura del ojo del piloto se ven como en la realidad
+                for off, solid in ((-0.9, False), (-0.3, False), (0.3, True), (0.9, True)):
+                    base = P + away * off
+                    if solid:
+                        segs = [(-half, half)]
+                    else:
+                        segs = [(u, min(u + 0.9, half)) for u in np.arange(-half, half, 1.8)]
+                    for u0, u1 in segs:
+                        a0, a1 = base + across * u0, base + across * u1
+                        w = away * 0.15
+                        mb.quad((*(a0 - w), z), (*(a1 - w), z), (*(a1 + w), z), (*(a0 + w), z), yellow)
+                # el piloto rueda hacia la pista (mirando -away): a su izquierda está across (giro antihorario)
+                f = -away
+                left = np.array([f[1], -f[0]])
+                left_ident = rw.idents[1] if float(rw.dir @ left) > 0 else rw.idents[0]
+                right_ident = rw.idents[0] if left_ident == rw.idents[1] else rw.idents[1]
+                sp = P + away * 1.0 + left * (W / 2 + 4.0)
+                gh = max(self.terrain.height(sp[0], sp[1]), ap.elev)
+                self.taxi_signs.append((float(sp[0]), float(sp[1]), -gh, math.atan2(away[1], away[0]),
+                                        f"{left_ident}-{right_ident}", name))
+
     def _houses_facade(self, P, sc, yaw, cm):
         """Casas con fachada (ventanas) y techo de tejas a dos aguas."""
         style = np.full(len(P), float(bl.HOUSE)) + self.rng.uniform(0.1, 0.9, len(P))
@@ -553,7 +628,42 @@ class Scenery:
                     for i, ang in enumerate(angles):
                         p = thr_e + de * 300 - re * (W / 2 + 15 + i * 9)
                         papis.append((p[0], p[1], -(ap.elev + 0.8), ang))
+        # luces azules de borde de calles de rodaje y plataforma (cada 30 m, sin las del cruce con la pista)
+        for ap in self.aps:
+            z = -(ap.elev + 0.4)
+            for (c, h, ln, wd) in ap.paved_rects:
+                c = np.asarray(c, float)
+                hr = math.radians(h)
+                d = np.array([math.cos(hr), math.sin(hr)])
+                r = np.array([-d[1], d[0]])
+                for sgn in (-1, 1):
+                    for u in np.arange(-ln / 2, ln / 2 + 0.1, 30.0):
+                        p = c + d * u + r * sgn * (wd / 2 + 1.0)
+                        q = c + d * u + r * sgn * (wd / 2 + 3.0)
+                        if ap.paved(q[0], q[1]) or any(rw.contains(p[0], p[1], 12.0) for rw in ap.runways):
+                            continue                 # borde interior (cruce con otra calle) o junto a la pista
+                        add((p[0], p[1], z), (0.12, 0.3, 1.0), 2.4)
+        self.beacons = self._beacon_points()
         return np.array(L, np.float32), groups, papis, rabbits
+
+    def _beacon_points(self):
+        """Faro giratorio del aeródromo (blanco y verde): sobre la torre si hay; si no, cerca del punto de referencia,
+        apartado de las pistas."""
+        out = []
+        for ap in self.aps:
+            tw = [t for t in getattr(self, "towers", []) if math.hypot(t[0] - ap.ref[0], t[1] - ap.ref[1]) < 1500]
+            if tw:
+                x, y, gz, h = tw[0]
+                out.append((x, y, gz - h - 5.2))
+                continue
+            p = np.asarray(ap.ref, float).copy()
+            for rw in ap.runways:
+                lat = float((p - rw.center) @ rw.right)
+                if abs(lat) < 180.0 and abs(float((p - rw.center) @ rw.dir)) < rw.length / 2 + 200:
+                    p = p + rw.right * ((180.0 if lat >= 0 else -180.0) - lat)
+            g = max(self.terrain.height(p[0], p[1]), ap.elev)
+            out.append((float(p[0]), float(p[1]), -(g + 15.0)))
+        return out
 
     def _windsocks(self):
         out = []
