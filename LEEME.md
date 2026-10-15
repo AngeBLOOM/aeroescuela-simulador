@@ -96,7 +96,12 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   capa de nubes la visibilidad es pareja. Los cúmulos, vistos desde arriba, cubren más o menos la fracción del
   METAR (FEW, SCT, BKN) y con sol **proyectan su sombra sobre el suelo**, los edificios, los árboles y el avión.
 - **Pista mojada**: con lluvia el pavimento se oscurece, se espeja (refleja el cielo cuanto más rasante se mira y el
-  brillo del Sol) y aparecen charcos; la pintura sigue viéndose. Se seca de a poco cuando para de llover.
+  brillo del Sol) y aparecen charcos; la pintura sigue viéndose. Es la misma humedad que informa el ATIS y que usa
+  el frenado. De noche, las luces de pista se reflejan en el pavimento como estelas hacia el piloto.
+- **Niebla de valle (radiación)**: con aire casi saturado (temperatura − rocío ≤ 2 °C, se ajusta con la humedad
+  del instructor), viento flojo y entre la madrugada y unas horas después del amanecer, los valles se llenan de
+  niebla en parches y los cerros quedan despejados. El METAR y el ATIS la informan (FG con menos de 1000 m, BR
+  mientras se disipa).
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.
 - **Salida de datos por UDP** para instrumentos, paneles y movimiento: `docs/PROTOCOLO_UDP.md`.
 - **Pruebas:** `python tools/pruebas.py` ejecuta 21 pruebas sin ventana; GitHub las ejecuta en cada pull request.

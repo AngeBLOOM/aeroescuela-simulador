@@ -673,8 +673,7 @@ class ATC:
         hh = int(wx.hour) % 24
         mm = int((wx.hour % 1) * 60) // 10 * 10
         hora = f"{hh:02d}{mm:02d}"
-        from .atmosphere import rain_visibility
-        vis_m = min(wx.visibility_m, rain_visibility(wx.rain))
+        vis_m, fogwx = wx.metar_visibility()
         vis = "10 kilómetros o más" if vis_m >= 10000 else f"{int(vis_m // 100 * 100)} metros"
         fen = ""
         if getattr(wx, "storm", False):
@@ -687,6 +686,8 @@ class ATC:
                 fen += "Se aproxima al aeródromo. " if (dn * wx.storm_vn + de * wx.storm_ve) < 0 else ""
         elif wx.rain > 0.02:
             fen = ("Llovizna. " if wx.rain < 0.35 else "Lluvia moderada. " if wx.rain < 0.75 else "Lluvia fuerte. ")
+        if fogwx:
+            fen += "Niebla. " if fogwx.strip() == "FG" else "Neblina. "
         if getattr(w.atmo, "wet", 0.0) > 0.3:
             fen += "Pista mojada, acción de frenado media. "
         cov = wx.cloud_cover

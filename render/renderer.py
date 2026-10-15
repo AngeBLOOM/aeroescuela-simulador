@@ -225,6 +225,9 @@ class Renderer:
         self.light_data = self.scn.lights_static.copy()
         self.vbo_lights = ctx.buffer(self.light_data.tobytes())
         self.vao_lights = ctx.vertex_array(self.p_light, [(self.vbo_lights, "3f 3f 1f", "in_pos", "in_col", "in_size")])
+        self.vbo_refl = ctx.buffer(reserve=7 * 4 * 3000, dynamic=True)
+        self.vao_refl = ctx.vertex_array(self.p_light, [(self.vbo_refl, "3f 3f 1f", "in_pos", "in_col", "in_size")])
+        self.n_refl = 0
         tl = self.scn.town_lights
         self.n_town = len(tl)
         self.vbo_town = ctx.buffer(tl.tobytes() if len(tl) else np.zeros((1, 7), np.float32).tobytes())
@@ -1214,7 +1217,13 @@ void main() { f_color = texture(u_tex, v_uv); }
             fog_col = mix3((0.08, 0.08, 0.1), (0.78, 0.8, 0.82), day)
         dens = 1.987 / vis + 1.0 / 400000.0
         ground = mix3(hor, (0.25, 0.3, 0.25), 0.3)
-        self.env = dict(sun=sun, sun_col=sun_col, amb=amb, zen=zen, hor=hor, fog_col=fog_col, fog=dens,
+        # niebla de valle (la misma que informa el METAR): capa sobre el aeródromo base, blanca y con la luz del día
+        gk, gtop, gvis = w.ground_fog()
+        home_elev = float(getattr(getattr(self.world, "home", None), "elev", 0.0) or 0.0)
+        sun_up = max(-float(sun[2]), 0.0)
+        gcol = tuple(min(0.88, a * 1.35 + s_ * 0.5 * (0.3 + sun_up)) for a, s_ in zip(amb, sun_col))
+        self.env = dict(gfog=(3.0 / gvis if gk > 0 else 0.0), gfog_top=home_elev + gtop, gfog_col=gcol,
+                        sun=sun, sun_col=sun_col, amb=amb, zen=zen, hor=hor, fog_col=fog_col, fog=dens,
                         fog_base=float(getattr(getattr(self.world, "home", None), "elev", 0.0) or 0.0),
                         fog_scale=(1.0e6 if incloud else 1400.0 + 1600.0 * rain),
                         night=night, day=day, dusk=dusk, overcast=ov, incloud=incloud, ground=ground,
@@ -1234,6 +1243,11 @@ void main() { f_color = texture(u_tex, v_uv); }
         if "u_fog_base" in prog:
             prog["u_fog_base"].value = float(env.get("fog_base", 0.0))
             prog["u_fog_scale"].value = float(env.get("fog_scale", 1400.0))
+        if "u_gfog" in prog:
+            prog["u_gfog"].value = float(env.get("gfog", 0.0))
+            prog["u_gfog_top"].value = float(env.get("gfog_top", -1e6))
+        if "u_gfog_col" in prog:
+            prog["u_gfog_col"].value = tuple(float(c) for c in env.get("gfog_col", (0.8, 0.8, 0.8)))
         if "u_logc" in prog:
             prog["u_logc"].value = 2.0 / math.log2(FAR + 1.0)
 
@@ -1536,12 +1550,10 @@ void main() { f_color = texture(u_tex, v_uv); }
             self.p_tex["u_asph"] = 6
             self.p_tex["u_asph_on"].value = 1
             self.p_tex["u_asph_gain"].value = float(self.asph_gain)
-        # pista mojada: se moja con la lluvia y se seca de a poco (unos minutos) cuando para
-        rain = float(getattr(world.atmo, "rain_here", 0.0))
-        wet = getattr(self, "_wet", 0.0)
-        wet = min(1.0, wet + dt * rain * 0.2) if rain > 0.02 else max(0.0, wet - dt / 240.0)
+        # pista mojada: la misma que calcula la atmósfera (la que informa el ATIS y la que usa el frenado)
+        wet = float(getattr(world.atmo, "wet", 0.0))
         self._wet = wet
-        self.p_tex["u_wet"].value = float(wet)
+        self.p_tex["u_wet"].value = wet
         for tex, m in self.runway_meshes:
             tex.use(0)
             self.p_tex["u_tex"] = 0
@@ -1633,6 +1645,9 @@ void main() { f_color = texture(u_tex, v_uv); }
         self.vao_lights.render(moderngl.POINTS)
         if self.n_dyn:
             self.vao_dyn.render(moderngl.POINTS, vertices=self.n_dyn)
+        self._wet_reflections(cam, env)
+        if self.n_refl:
+            self.vao_refl.render(moderngl.POINTS, vertices=self.n_refl)
         if self.n_town and env["night"] > 0.3:
             pl["u_bright"].value = float(env["night"])
             self.vao_town.render(moderngl.POINTS)
@@ -1798,6 +1813,55 @@ void main() { f_color = texture(u_tex, v_uv); }
         po["u_spec"].value = 0.15
         if "u_skin" in po:
             po["u_skin"].value = 0
+
+    def _wet_reflections(self, cam, env):
+        """Pista mojada de noche: cada luz de pista se refleja en el pavimento entre ella y el piloto, estirada hacia él
+        en una estela (como en una aproximación nocturna con lluvia)."""
+        self.n_refl = 0
+        wet = float(getattr(self, "_wet", 0.0))
+        if wet < 0.05 or max(env["night"], env["overcast"] * 0.6) < 0.25:
+            return
+        L = self.light_data
+        eye = np.asarray(cam.eye, np.float64)
+        d = L[:, :2] - eye[:2]
+        dist = np.hypot(d[:, 0], d[:, 1])
+        sel = (dist < 2500.0) & (dist > 3.0)
+        if not sel.any():
+            return
+        Ls = L[sel].astype(np.float64)
+        zg = Ls[:, 2] + 0.4                                   # el suelo, unos 40 cm bajo la luz
+        hl = 0.4
+        he = np.maximum(zg - eye[2], 0.3)                     # altura del ojo sobre ese suelo
+        Lg = Ls[:, :2]
+        to_eye = eye[:2] - Lg
+        de = np.maximum(np.hypot(to_eye[:, 0], to_eye[:, 1]), 1e-3)
+        u = to_eye / de[:, None]
+        Rp = Lg + to_eye * (hl / (hl + he))[:, None]           # punto donde se ve el reflejo
+        ok = np.zeros(len(Rp), bool)
+        for ap in self.scn.aps:
+            for rw in ap.runways:
+                rel = Rp - rw.center
+                a = rel @ rw.dir
+                b = rel @ rw.right
+                ok |= (np.abs(a) <= rw.length / 2 + 20.0) & (np.abs(b) <= rw.width / 2 + 0.5)
+        if not ok.any():
+            return
+        Rp, u, Ls, zg = Rp[ok], u[ok], Ls[ok], zg[ok]
+        dr = np.hypot(*(eye[:2] - Rp).T)
+        ln = np.clip(dr * 0.06, 2.0, 45.0)
+        out = []
+        for k in range(5):
+            P = Rp + u * (ln * k / 4.0)[:, None]
+            f = 0.42 * wet * (1.0 - k / 5.0) ** 1.3
+            arr = np.empty((len(P), 7), np.float32)
+            arr[:, 0:2] = P
+            arr[:, 2] = zg - 0.08
+            arr[:, 3:6] = Ls[:, 3:6] * f
+            arr[:, 6] = Ls[:, 6] * 0.7
+            out.append(arr)
+        data = np.vstack(out)[:3000]
+        self.vbo_refl.write(np.ascontiguousarray(data).tobytes())
+        self.n_refl = len(data)
 
     def _update_dynamic_lights(self, cam, pos, R, show_aircraft):
         world = self.world

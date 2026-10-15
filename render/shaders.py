@@ -32,12 +32,39 @@ float fog_depth(vec3 wpos) {
     float avg = abs(dh) > 1.0 ? (e0 - exp(-h1 / H)) * H / dh : e0;
     return d * u_fog_density * (0.22 + 0.78 * avg);
 }
+uniform float u_gfog;          // niebla de valle: densidad (1/m) dentro de la capa (0 = no hay)
+uniform float u_gfog_top;      // altura del tope de la capa (m)
+uniform vec3 u_gfog_col;
+float gfog_hash(vec2 p) {
+    vec3 q = fract(vec3(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
+}
+// transmisión a través de la capa de niebla de valle: solo cuenta el tramo del rayo por debajo del tope, con
+// parches (más espesa en unos lugares que en otros)
+float gfog_trans(vec3 wpos) {
+    if (u_gfog <= 0.0) return 1.0;
+    float a0 = -u_campos.z;
+    float a1 = -wpos.z;
+    float lo = min(a0, a1);
+    float hi = max(a0, a1);
+    if (lo >= u_gfog_top) return 1.0;
+    float frac = hi <= u_gfog_top ? 1.0 : (u_gfog_top - lo) / max(hi - lo, 0.01);
+    vec2 g = wpos.xy / 900.0;
+    vec2 i = floor(g);
+    vec2 f = fract(g);
+    f = f * f * (3.0 - 2.0 * f);
+    float nz = mix(mix(gfog_hash(i), gfog_hash(i + vec2(1, 0)), f.x), mix(gfog_hash(i + vec2(0, 1)), gfog_hash(i + vec2(1, 1)), f.x), f.y);
+    float d = length(wpos - u_campos);
+    return exp(-d * frac * u_gfog * (0.6 + 0.4 * nz));
+}
 vec3 apply_fog(vec3 col, vec3 wpos) {
+    col = mix(u_gfog_col, col, gfog_trans(wpos));
     float f = exp(-pow(fog_depth(wpos), 1.6));
     return mix(u_fog_col, col, clamp(f, 0.0, 1.0));
 }
 float fog_factor(vec3 wpos) {
-    return clamp(exp(-pow(fog_depth(wpos), 1.6)), 0.0, 1.0);
+    return clamp(exp(-pow(fog_depth(wpos), 1.6)), 0.0, 1.0) * gfog_trans(wpos);
 }
 """
 
@@ -500,7 +527,7 @@ void main() {
 """
 
 # ---------------------------------------------------------------- luces puntuales
-LIGHT_VS = COMMON + """
+LIGHT_VS = COMMON + FOG_FN + """
 uniform float u_px;
 uniform float u_bright;
 in vec3 in_pos;
@@ -516,7 +543,7 @@ void main() {
     vec3 p = in_pos + tocam / max(d, 0.001) * min(10.0, d * 0.4);
     gl_Position = u_proj * u_view * vec4(p, 1.0);
     v_logz = 1.0 + gl_Position.w;
-    v_fog = clamp(exp(-pow(d * u_fog_density * 0.55, 1.6)), 0.0, 1.0);
+    v_fog = clamp(exp(-pow(d * u_fog_density * 0.55, 1.6)), 0.0, 1.0) * mix(1.0, gfog_trans(in_pos), 0.85);
     float s = in_size * u_px / max(gl_Position.w, 0.1);
     float ps = clamp(s * 2.2, 3.4, 20.0);
     gl_PointSize = ps * mix(0.6, 1.0, u_bright);
