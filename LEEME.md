@@ -66,7 +66,13 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
     la sombra de un hangar;
   - **relieve fino alrededor del avión**: malla de 12,5 m (en vez de 100 m) con superficie suave y ondulaciones del
     suelo; la física usa la misma superficie (las ruedas no flotan ni se hunden) y los aeródromos quedan planos;
-  - **Foto pro** (Mayús+F12): la escena limpia, sin tablero ni textos, al doble de la resolución de la pantalla.
+  - **Foto pro** (Mayús+F12): la escena limpia, sin tablero ni textos, al doble de la resolución de la pantalla;
+  - **hangares con detalle**: chapa ondulada, portones corredizos con ventanas, techo a dos aguas con alero y
+    canaleta, losa de concreto y letrero; **torre de control** con cabina de vidrio y balcón (texturas generadas
+    por el programa, `render/buildings.py`);
+  - **árboles con dos niveles de detalle**: de cerca, pinos de varios pisos y frondosos de copa redonda que se mecen
+    con el viento; de lejos, los simples; más allá de 6,5 km no se dibujan (la bruma los tapa). Bosques tres veces
+    más tupidos y aun así más livianos que antes.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.
 - **Salida de datos por UDP** para instrumentos, paneles y movimiento: `docs/PROTOCOLO_UDP.md`.
 - **Pruebas:** `python tools/pruebas.py` ejecuta 21 pruebas sin ventana; GitHub las ejecuta en cada pull request.

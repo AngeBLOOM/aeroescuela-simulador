@@ -96,6 +96,8 @@ class Scenery:
     # ---------------------------------------------------------------- objetos
     def _objects(self):
         self.parked, self.parked_code = [], np.zeros((0, 9), np.float32)
+        self.hangars, self.towers = [], []                # los dibuja el renderizador con detalle (render/buildings.py)
+        self.trees = None                                 # árboles: instancias con dos niveles de detalle
         mb = geo.MeshBuilder()
         rng = self.rng
         world = self.world
@@ -138,19 +140,18 @@ class Scenery:
         # edificios del aeródromo principal
         ge = -esc.elev
         for i, hx in enumerate((50.0, 130.0, 210.0)):
-            self._hangar(mb, (hx, 262.0, ge), 45.0, 34.0, 11.0, yaw=0.0, col=[(0.75, 0.76, 0.78), (0.62, 0.66, 0.70), (0.80, 0.78, 0.72)][i])
-        mb.box((-60.0, 215.0, ge - 8.0), (7, 7, 16), (0.86, 0.85, 0.82))          # torre
-        mb.box((-60.0, 215.0, ge - 18.0), (10, 10, 4), (0.12, 0.2, 0.28))
+            self._hangar(mb, (hx, 262.0, ge), 45.0, 34.0, 11.0, yaw=0.0, col=[(0.75, 0.76, 0.78), (0.62, 0.66, 0.70), (0.80, 0.78, 0.72)][i],
+                         sign=("AEROESCUELA", "HANGAR 2", "HANGAR 3")[i])
+        self.towers.append((-60.0, 215.0, ge, 16.0))                                # torre
         mb.box((-60.0, 215.0, ge - 20.3), (11, 11, 0.6), (0.4, 0.4, 0.42))
         mb.box((310.0, 160.0, ge - 3.5), (34, 22, 7), (0.88, 0.86, 0.8))         # terminal
         mb.box((310.0, 160.0, ge - 7.2), (36, 24, 0.5), (0.5, 0.5, 0.52))
         mb.box((290.0, 98.0, ge - 1.5), (6, 3, 3), (0.85, 0.2, 0.15))             # surtidor
         # aeródromo norte
         gn = -vnt.elev
-        self._hangar(mb, (17160.0, 3800.0, gn), 35.0, 28.0, 9.0, yaw=0.0, col=(0.72, 0.74, 0.76))
+        self._hangar(mb, (17160.0, 3800.0, gn), 35.0, 28.0, 9.0, yaw=0.0, col=(0.72, 0.74, 0.76), sign="VALLE NORTE")
         self._hangar(mb, (17160.0, 3740.0, gn), 30.0, 24.0, 8.0, yaw=0.0, col=(0.8, 0.78, 0.7))
-        mb.box((17080.0, 3720.0, gn - 6.0), (5, 5, 12), (0.86, 0.85, 0.82))
-        mb.box((17080.0, 3720.0, gn - 13.5), (7, 7, 3), (0.12, 0.2, 0.28))
+        self.towers.append((17080.0, 3720.0, gn, 12.0))
         # aviones estacionados: el renderizador los dibuja con los modelos 3D reales (flota variada de la escuela);
         # aquí queda la versión dibujada por código por si falta algún modelo
         t = world.ac.t
@@ -202,7 +203,7 @@ class Scenery:
             sc = np.column_stack([rng.uniform(9, 20, m), rng.uniform(7, 12, m), rng.uniform(5, 9, m)])
             mb.add(geo.instances(house, P, sc, rng.uniform(0, math.pi, m), rng.uniform(0.85, 1.1, (m, 3))))
         # árboles en bosques (cerca de los aeródromos y a lo largo del valle)
-        mb.add(self._trees())
+        self._trees()
         # carreteras
         roads = [
             [(-3600, -3200), (-2600, -1500), (-900, -200), (120, 330)],
@@ -385,11 +386,18 @@ class Scenery:
         sc = rng.uniform(8, 17, m)
         cm = rng.uniform(0.8, 1.15, (m, 3)) * np.array([1.0, 1.0, 0.9])
         half = m // 2
-        mb.add(geo.instances(geo.template_tree(1), X[:half], sc[:half], rng.uniform(0, 6.28, half), cm[:half]))
-        mb.add(geo.instances(geo.template_tree(0), X[half:], sc[half:] * 0.9, rng.uniform(0, 6.28, m - half), cm[half:]))
+        kind = np.zeros(m, np.int32)
+        kind[:half] = 1
+        sc[half:] *= 0.9
+        self._add_trees(X, sc, rng.uniform(0, 6.28, m), cm, kind)
         print(f"  árboles: {m}")
 
-    def _hangar(self, mb, base, ln, wd, ht, yaw, col):
+    def _hangar(self, mb, base, ln, wd, ht, yaw, col, sign=None):
+        """Anota el hangar para el renderizador (chapa ondulada, portones, techo a dos aguas, letrero)."""
+        x, y, gz = base
+        self.hangars.append((x, y, gz, ln, wd, ht, yaw, tuple(col), sign))
+
+    def _hangar_simple(self, mb, base, ln, wd, ht, yaw, col):
         x, y, gz = base
         mb.box((x, y, gz - ht / 2), (ln, wd, ht), col, yaw=yaw)
         # techo a dos aguas bajo
@@ -433,11 +441,12 @@ class Scenery:
         near |= np.hypot(X + 3600, Y + 3200) < 6000
         mask &= near
         ii, jj = np.nonzero(mask)
-        if len(ii) > 9000:
-            sel = rng.choice(len(ii), 9000, replace=False)
+        if len(ii) > 8000:
+            sel = rng.choice(len(ii), 8000, replace=False)
             ii, jj = ii[sel], jj[sel]
-        x = X[ii, jj] + rng.uniform(-45, 45, len(ii))
-        y = Y[ii, jj] + rng.uniform(-45, 45, len(ii))
+        ii, jj = np.repeat(ii, 3), np.repeat(jj, 3)                  # bosques tupidos: tres árboles por celda
+        x = X[ii, jj] + rng.uniform(-50, 50, len(ii))
+        y = Y[ii, jj] + rng.uniform(-50, 50, len(ii))
         keep = np.ones(len(x), bool)
         for ap in self.aps:
             for rw in ap.runways:
@@ -452,9 +461,18 @@ class Scenery:
         half = m // 2
         sc = rng.uniform(9, 19, m)
         cm = rng.uniform(0.8, 1.15, (m, 3)) * np.array([1.0, 1.0, 0.9])
-        a = geo.instances(geo.template_tree(0), P[:half], sc[:half], rng.uniform(0, 6.28, half), cm[:half])
-        b = geo.instances(geo.template_tree(1), P[half:], sc[half:] * 0.8, rng.uniform(0, 6.28, m - half), cm[half:])
-        return np.vstack([a, b])
+        kind = np.zeros(m, np.int32)
+        kind[half:] = 1
+        sc[half:] *= 0.8
+        self._add_trees(P, sc, rng.uniform(0, 6.28, m), cm, kind)
+
+    def _add_trees(self, P, sc, yaw, cm, kind):
+        new = dict(P=np.asarray(P, np.float32), s=np.asarray(sc, np.float32), yaw=np.asarray(yaw, np.float32),
+                   col=np.asarray(cm, np.float32), kind=np.asarray(kind, np.int32))
+        if self.trees is None:
+            self.trees = new
+        else:
+            self.trees = {k: np.concatenate([self.trees[k], new[k]]) for k in new}
 
     def _road(self, mb, pts):
         T = self.terrain

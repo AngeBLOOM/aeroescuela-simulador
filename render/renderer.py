@@ -130,9 +130,11 @@ class Renderer:
         self.p_tex = ctx.program(vertex_shader=sh.TEX_VS, fragment_shader=sh.TEX_FS)
         self.p_model = ctx.program(vertex_shader=sh.MODEL_VS, fragment_shader=sh.MODEL_FS)
         self.p_shadow = ctx.program(vertex_shader=sh.SHADOW_VS, fragment_shader=sh.SHADOW_FS)
+        self.p_tree = ctx.program(vertex_shader=sh.TREE_VS, fragment_shader=sh.TREE_FS)
+        self.p_shadow_tree = ctx.program(vertex_shader=sh.SHADOW_TREE_VS, fragment_shader=sh.SHADOW_FS)
         self.p_bright = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BRIGHT_FS)
         self.p_blur = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BLUR_FS)
-        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model):
+        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree):
             prog["u_shmap"] = self.SH_UNIT          # nunca en la misma unidad que una textura normal
             prog["u_shmap2"] = self.SH2_UNIT
         self.p_sky = ctx.program(vertex_shader=sh.SKY_VS, fragment_shader=sh.SKY_FS)
@@ -199,6 +201,8 @@ class Renderer:
         self.m_water = GPUMesh(ctx, self.p_water, water)
         self.m_objects = GPUMesh(ctx, self.p_obj, self.scn.objects)
         self._build_parked()
+        self._build_buildings()
+        self._build_trees()
         self._build_casters()
         self.runway_meshes = []
         for surf, verts in self.scn.runways:
@@ -584,6 +588,108 @@ class Renderer:
     # ------------------------------------------------------------ sombras del escenario
     SH2_UNIT = 12
 
+    # ------------------------------------------------------------ hangares y torres con detalle
+    def _build_buildings(self):
+        """Hangares (chapa ondulada, portones, techo a dos aguas, letrero) y torres de control, con texturas
+        generadas y penumbra; se dibujan como un modelo más (mismo sombreado y sombras que los aviones)."""
+        from . import buildings as bl
+        self.buildings_model = None
+        hs = getattr(self.scn, "hangars", [])
+        tw = getattr(self.scn, "towers", [])
+        if not hs and not tw:
+            return
+        tm = bl.TexMesh()
+        for (x, y, gz, ln, wd, ht, yaw, col, sign) in hs:
+            bl.add_hangar(tm, x, y, gz, ln, wd, ht, yaw, ",".join(f"{c:.3f}" for c in col), sign)
+        for (x, y, gz, h) in tw:
+            bl.add_tower(tm, x, y, gz, h)
+        ctx = self.ctx
+        texs, model = {}, []
+        for mat, arr in tm.arrays().items():
+            col, tkey, blend = bl.material(mat)
+            tex = None
+            if tkey:
+                if tkey not in texs:
+                    img = np.ascontiguousarray(bl.make_texture(tkey))
+                    t_ = ctx.texture((img.shape[1], img.shape[0]), 4, img.tobytes())
+                    t_.build_mipmaps()
+                    t_.repeat_x = t_.repeat_y = not tkey.startswith("sign:")
+                    t_.anisotropy = 8.0
+                    texs[tkey] = t_
+                tex = texs[tkey]
+            vbo = ctx.buffer(np.ascontiguousarray(arr, np.float32).tobytes())
+            vao = ctx.vertex_array(self.p_model, [(vbo, "3f 3f 2f 1f", "in_pos", "in_norm", "in_uv", "in_ao")])
+            svao = None if blend else ctx.vertex_array(self.p_shadow, [(vbo, "3f 24x", "in_pos")])
+            model.append((vao, tex, dict(color=list(col), blend=blend, cutoff=0.0), svao))
+        model.sort(key=lambda it: it[2]["blend"])
+        self.buildings_model = model
+
+    # ------------------------------------------------------------ árboles: dos niveles de detalle
+    TREE_NEAR = 1200.0           # de cerca, el árbol detallado…
+    TREE_NEAR_MAX = 1800         # …para los más cercanos (como mucho)
+    TREE_REFRESH = 120.0         # se reparte de nuevo cuando la cámara se mueve tanto
+    TREE_FAR = 6500.0            # más lejos la bruma los tapa: no se dibujan
+
+    def _build_trees(self):
+        self.tree_vaos = {}
+        self.tree_inst = None
+        tr = getattr(self.scn, "trees", None)
+        if tr is None or len(tr["P"]) == 0:
+            return
+        inst = np.zeros((len(tr["P"]), 8), np.float32)
+        inst[:, 0:3] = tr["P"]
+        inst[:, 3] = tr["s"]
+        inst[:, 4] = tr["yaw"]
+        inst[:, 5:8] = tr["col"]
+        self.tree_inst = inst
+        self.tree_kind = tr["kind"]
+        ctx = self.ctx
+        for lod in (0, 1):
+            for k in (0, 1):
+                tpl = geo.template_tree_detail(k) if lod == 0 else geo.template_tree(k)
+                tvbo = ctx.buffer(np.ascontiguousarray(tpl, np.float32).tobytes())
+                nk = max(1, int((self.tree_kind == k).sum()))
+                ibuf = ctx.buffer(reserve=nk * 32)
+                vao = ctx.vertex_array(self.p_tree, [(tvbo, "3f 3f 3f", "in_pos", "in_norm", "in_col"),
+                                                     (ibuf, "3f 1f 1f 3f/i", "i_pos", "i_scale", "i_yaw", "i_col")])
+                svao = ctx.vertex_array(self.p_shadow_tree, [(tvbo, "3f 24x", "in_pos"),
+                                                             (ibuf, "3f 1f 1f 12x/i", "i_pos", "i_scale", "i_yaw")])
+                self.tree_vaos[(lod, k)] = [vao, svao, ibuf, 0, len(tpl)]
+        self._tree_ref = None
+
+    def _update_trees(self, eye):
+        if self.tree_inst is None:
+            return
+        ref = self._tree_ref
+        if ref is not None and math.hypot(eye[0] - ref[0], eye[1] - ref[1]) < self.TREE_REFRESH:
+            return
+        self._tree_ref = (float(eye[0]), float(eye[1]))
+        P = self.tree_inst
+        d2 = (P[:, 0] - eye[0]) ** 2 + (P[:, 1] - eye[1]) ** 2
+        near = d2 < self.TREE_NEAR ** 2
+        if near.sum() > self.TREE_NEAR_MAX:
+            near = d2 < np.partition(d2, self.TREE_NEAR_MAX)[self.TREE_NEAR_MAX]
+        far = d2 < self.TREE_FAR ** 2
+        for k in (0, 1):
+            mk = self.tree_kind == k
+            for lod, sel in ((0, near & mk), (1, ~near & far & mk)):
+                ent = self.tree_vaos[(lod, k)]
+                data = P[sel]
+                if len(data):
+                    ent[2].write(np.ascontiguousarray(data).tobytes())
+                ent[3] = len(data)
+        self._sh2_key = None                         # las sombras de los árboles se rehacen con el reparto nuevo
+
+    def _draw_trees(self):
+        if not self.tree_vaos:
+            return
+        pt = self.p_tree
+        pt["u_time"].value = float(self.time)
+        pt["u_wind"].value = float(0.3 + min(self.world.weather.wind_kt, 30.0) / 15.0)
+        for vao, _svao, _ib, n, _nv in self.tree_vaos.values():
+            if n:
+                vao.render(instances=n)
+
     PARKED_FLEET = ("c172", "c152", "pa28w", "sr20")
 
     def _build_parked(self):
@@ -615,7 +721,7 @@ class Renderer:
         if self.m_parked is not None:
             objs = np.vstack([objs, np.asarray(self.scn.parked_code, np.float32)])
         tri = objs.reshape(-1, 3, 9)
-        if len(tri) == 0 and not self.parked_real:
+        if len(tri) == 0 and not self.parked_real and not self.buildings_model and not self.tree_vaos:
             return
         cen = tri[:, :, :3].mean(axis=1)
         nz = np.abs(tri[:, :, 5].mean(axis=1))
@@ -690,6 +796,14 @@ class Renderer:
             self.sh2_fbo.clear(depth=1.0)
             self.p_shadow["u_lmvp"].write(gl_bytes(LV))
             self.vao_casters.render()
+            for _vao, _tex, _m, svao in (self.buildings_model or ()):    # hangares y torres
+                if svao is not None:
+                    svao.render()
+            if self.tree_vaos:                           # árboles (instancias)
+                self.p_shadow_tree["u_lmvp"].write(gl_bytes(LV))
+                for _vao, svao, _ib, n, _nv in self.tree_vaos.values():
+                    if n:
+                        svao.render(instances=n)
             for model, M in self.parked_real:            # aviones estacionados (modelos reales)
                 self.p_shadow["u_lmvp"].write(gl_bytes(LV @ M))
                 for _vao, _tex, _m, svao in model:
@@ -1204,6 +1318,7 @@ void main() { f_color = texture(u_tex, v_uv); }
             pos, R = pose[0], quat_to_mat(pose[1])
         body_M = model_matrix(R, pos)
         self._update_patch(pos)
+        self._update_trees(cam.eye)
         self._shadow_pass(env, body_M, pos, show_aircraft)
         self._static_shadow_pass(env, cam)
         self.fbo_ms.use()
@@ -1243,13 +1358,14 @@ void main() { f_color = texture(u_tex, v_uv); }
         ctx.enable(moderngl.DEPTH_TEST)
 
         # terreno y agua
-        for prog in (self.p_terrain, self.p_water, self.p_obj, self.p_tex, self.p_model, self.p_light, self.p_cloud):
+        for prog in (self.p_terrain, self.p_water, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_light,
+                     self.p_cloud):
             self._set_common(prog, view, proj, cam.eye)
         if self.sh_tex is not None:
             self.sh_tex.use(self.SH_UNIT)
         if self.sh2_tex is not None:
             self.sh2_tex.use(self.SH2_UNIT)
-        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model):
+        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree):
             prog["u_sh_on"].value = self.sh_k if prog is not self.p_model else 0.0
             if self.sh_k > 0.0 and prog is not self.p_model:
                 prog["u_shmat"].write(gl_bytes(self.sh_mat))
@@ -1319,6 +1435,9 @@ void main() { f_color = texture(u_tex, v_uv); }
             self.m_parked.render()
         for model, M in self.parked_real:
             self._draw_model(model, M)
+        if self.buildings_model:
+            self._draw_model(self.buildings_model, np.identity(4))
+        self._draw_trees()
 
         # mangas de viento
         wdir = math.radians(world.weather.wind_dir + 180.0)

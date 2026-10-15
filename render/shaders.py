@@ -729,3 +729,73 @@ void main() {
 }
 """
 
+
+# ---------------------------------------------------------------- árboles (instancias con dos niveles de detalle)
+TREE_VS = COMMON + """
+uniform float u_time;
+uniform float u_wind;
+in vec3 in_pos;
+in vec3 in_norm;
+in vec3 in_col;
+in vec3 i_pos;
+in float i_scale;
+in float i_yaw;
+in vec3 i_col;
+out vec3 v_pos;
+out vec3 v_norm;
+out vec3 v_col;
+out float v_h;
+out float v_logz;
+void main() {
+    float c = cos(i_yaw), s = sin(i_yaw);
+    vec3 p = in_pos * i_scale;
+    p = vec3(c * p.x - s * p.y, s * p.x + c * p.y, p.z);
+    // la copa se mece con el viento (la base queda quieta)
+    float hf = clamp(-in_pos.z, 0.0, 1.0);
+    float ph = i_pos.x * 0.07 + i_pos.y * 0.05;
+    p.xy += vec2(sin(u_time * 1.6 + ph), cos(u_time * 1.2 + ph * 1.3)) * u_wind * hf * hf * i_scale * 0.012;
+    vec3 wp = i_pos + p;
+    v_pos = wp;
+    v_norm = vec3(c * in_norm.x - s * in_norm.y, s * in_norm.x + c * in_norm.y, in_norm.z);
+    v_col = in_col * i_col;
+    v_h = hf;
+    gl_Position = u_proj * u_view * vec4(wp, 1.0);
+    v_logz = 1.0 + gl_Position.w;
+}
+"""
+
+TREE_FS = COMMON + FOG_FN + SHADOW_FN + """
+in vec3 v_pos;
+in vec3 v_norm;
+in vec3 v_col;
+in float v_h;
+in float v_logz;
+out vec4 f_color;
+void main() {
+    vec3 n = normalize(v_norm);
+    vec3 v = normalize(u_campos - v_pos);
+    float shf = sun_shadow_n(v_pos, n);
+    // follaje: luz envolvente (la cara en sombra no queda negra) y algo de luz que atraviesa las hojas a contraluz
+    float wrap = max((dot(n, u_sun) + 0.4) / 1.4, 0.0);
+    float back = pow(max(dot(-v, u_sun), 0.0), 4.0) * 0.3;
+    vec3 lit = v_col * (u_amb * (0.7 + 0.3 * v_h) + u_sun_col * (wrap * 0.9 + back) * shf);
+    f_color = vec4(apply_fog(lit, v_pos), 1.0);
+    gl_FragDepth = log2(v_logz) * u_logc * 0.5;
+}
+"""
+
+SHADOW_TREE_VS = """
+#version 330
+uniform mat4 u_lmvp;
+in vec3 in_pos;
+in vec3 i_pos;
+in float i_scale;
+in float i_yaw;
+void main() {
+    float c = cos(i_yaw), s = sin(i_yaw);
+    vec3 p = in_pos * i_scale;
+    p = vec3(c * p.x - s * p.y, s * p.x + c * p.y, p.z);
+    gl_Position = u_lmvp * vec4(i_pos + p, 1.0);
+}
+"""
+
