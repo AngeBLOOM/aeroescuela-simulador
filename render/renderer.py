@@ -1223,6 +1223,7 @@ void main() { f_color = texture(u_tex, v_uv); }
         sun_up = max(-float(sun[2]), 0.0)
         gcol = tuple(min(0.88, a * 1.35 + s_ * 0.5 * (0.3 + sun_up)) for a, s_ in zip(amb, sun_col))
         self.env = dict(gfog=(3.0 / gvis if gk > 0 else 0.0), gfog_top=home_elev + gtop, gfog_col=gcol,
+                        fog_glow=(0.0 if incloud else 0.22 * (1.0 - ov * 0.8)),
                         sun=sun, sun_col=sun_col, amb=amb, zen=zen, hor=hor, fog_col=fog_col, fog=dens,
                         fog_base=float(getattr(getattr(self.world, "home", None), "elev", 0.0) or 0.0),
                         fog_scale=(1.0e6 if incloud else 1400.0 + 1600.0 * rain),
@@ -1243,6 +1244,8 @@ void main() { f_color = texture(u_tex, v_uv); }
         if "u_fog_base" in prog:
             prog["u_fog_base"].value = float(env.get("fog_base", 0.0))
             prog["u_fog_scale"].value = float(env.get("fog_scale", 1400.0))
+        if "u_fog_glow" in prog:
+            prog["u_fog_glow"].value = float(env.get("fog_glow", 0.0))
         if "u_gfog" in prog:
             prog["u_gfog"].value = float(env.get("gfog", 0.0))
             prog["u_gfog_top"].value = float(env.get("gfog_top", -1e6))
@@ -1589,7 +1592,9 @@ void main() { f_color = texture(u_tex, v_uv); }
             self.m_pole.render()
             M = translate((p[0], p[1], p[2] - 6.8)) @ axis_rotation((0, 0, 1), wdir) @ axis_rotation((0, 1, 0), -droop)
             po["u_model"].write(gl_bytes(M))
+            po["u_flat"].value = float(min(0.85, env["night"] * 0.95))   # de noche la ilumina su reflector
             self.m_sock.render()
+            po["u_flat"].value = 0.0
 
         # aros/guías de la misión
         for ring in extra.get("rings", []):

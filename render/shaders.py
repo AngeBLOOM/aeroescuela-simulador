@@ -58,10 +58,18 @@ float gfog_trans(vec3 wpos) {
     float d = length(wpos - u_campos);
     return exp(-d * frac * u_gfog * (0.6 + 0.4 * nz));
 }
+uniform float u_fog_glow;      // brillo de la bruma hacia el Sol (el mismo halo que el cielo)
+// color de la bruma según hacia dónde se mira: más clara y cálida hacia el Sol (luz dispersada hacia adelante),
+// igual que el cielo junto al horizonte, así el terreno lejano y el cielo empalman sin corte
+vec3 fog_color(vec3 wpos) {
+    vec3 vd = normalize(wpos - u_campos);
+    float sd = max(dot(vd, u_sun), 0.0);
+    return u_fog_col + u_sun_col * (pow(sd, 10.0) * u_fog_glow);
+}
 vec3 apply_fog(vec3 col, vec3 wpos) {
     col = mix(u_gfog_col, col, gfog_trans(wpos));
     float f = exp(-pow(fog_depth(wpos), 1.6));
-    return mix(u_fog_col, col, clamp(f, 0.0, 1.0));
+    return mix(fog_color(wpos), col, clamp(f, 0.0, 1.0));
 }
 float fog_factor(vec3 wpos) {
     return clamp(exp(-pow(fog_depth(wpos), 1.6)), 0.0, 1.0) * gfog_trans(wpos);
@@ -618,7 +626,7 @@ void main() {
     float thin = 1.0 - smoothstep(0.15, 0.85, tx.a);
     col = col * (1.0 - 0.22 * toward * (1.0 - thin)) + u_sun_col * toward * (0.18 + 0.85 * thin) * u_dark;
     float f = fog_factor(v_pos);
-    col = mix(u_fog_col, col, f);
+    col = mix(fog_color(v_pos), col, f);
     f_color = vec4(col * a, a);
     gl_FragDepth = log2(v_logz) * u_logc * 0.5;
 }

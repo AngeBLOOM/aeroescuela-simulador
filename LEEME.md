@@ -109,6 +109,8 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   del instructor), viento flojo y entre la madrugada y unas horas después del amanecer, los valles se llenan de
   niebla en parches y los cerros quedan despejados. El METAR y el ATIS la informan (FG con menos de 1000 m, BR
   mientras se disipa).
+- **Bruma iluminada por el Sol**: mirando hacia el Sol la bruma del horizonte brilla como el cielo (luz dispersada
+  hacia adelante) y el terreno lejano empalma con el cielo sin corte. **Manga de viento iluminada** de noche.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.
 - **Salida de datos por UDP** para instrumentos, paneles y movimiento: `docs/PROTOCOLO_UDP.md`.
 - **Pruebas:** `python tools/pruebas.py` ejecuta 21 pruebas sin ventana; GitHub las ejecuta en cada pull request.
