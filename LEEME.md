@@ -88,6 +88,10 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
 - **Tráfico visible a distancias reales («ver y evitar»)**: un avión ligero a 4 km mide menos de un píxel y la
   imagen lo perdería; se dibuja como el puntito oscuro que ve el ojo (1,5 a 3 px), más tenue con la distancia y la
   bruma, hasta unos 10 km. De noche se ven sus luces.
+- **Nubes y bruma para practicar los mínimos VFR**: las nubes tienen la base plana y gris a la altura informada
+  (antes asomaban hasta 500 m por debajo del techo del METAR) y la bruma se concentra cerca del suelo: abajo la
+  visibilidad es la del METAR, al subir mejora y desde arriba se ve la capa de bruma en el horizonte. Dentro de una
+  capa de nubes la visibilidad es pareja.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.
 - **Salida de datos por UDP** para instrumentos, paneles y movimiento: `docs/PROTOCOLO_UDP.md`.
 - **Pruebas:** `python tools/pruebas.py` ejecuta 21 pruebas sin ventana; GitHub las ejecuta en cada pull request.

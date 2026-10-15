@@ -1212,6 +1212,8 @@ void main() { f_color = texture(u_tex, v_uv); }
         dens = 1.987 / vis + 1.0 / 400000.0
         ground = mix3(hor, (0.25, 0.3, 0.25), 0.3)
         self.env = dict(sun=sun, sun_col=sun_col, amb=amb, zen=zen, hor=hor, fog_col=fog_col, fog=dens,
+                        fog_base=float(getattr(getattr(self.world, "home", None), "elev", 0.0) or 0.0),
+                        fog_scale=(1.0e6 if incloud else 1400.0 + 1600.0 * rain),
                         night=night, day=day, dusk=dusk, overcast=ov, incloud=incloud, ground=ground,
                         moon=moon, moon_k=mk, moon_on=(1.0 - ov) * smoothstep(-1.0, 1.0, me) * (0.25 + 0.75 * night))
         return self.env
@@ -1226,6 +1228,9 @@ void main() { f_color = texture(u_tex, v_uv); }
                 prog[name].value = tuple(float(x) for x in val)
         if "u_fog_density" in prog:
             prog["u_fog_density"].value = float(env["fog"])
+        if "u_fog_base" in prog:
+            prog["u_fog_base"].value = float(env.get("fog_base", 0.0))
+            prog["u_fog_scale"].value = float(env.get("fog_scale", 1400.0))
         if "u_logc" in prog:
             prog["u_logc"].value = 2.0 / math.log2(FAR + 1.0)
 
@@ -1294,6 +1299,7 @@ void main() { f_color = texture(u_tex, v_uv); }
         pc["u_nvar"].value = float(self.n_cloud_var)
         pc["u_offset"].value = (float(w.storm_n), float(w.storm_e), 0.0)
         pc["u_alpha"].value = 0.55
+        pc["u_cbase"].value = -1.0e6
         pc["u_dark"].value = 0.42
         shaft.render(instances=n_s, vertices=6)
         pc["u_alpha"].value = 0.97
@@ -1597,6 +1603,7 @@ void main() { f_color = texture(u_tex, v_uv); }
             pc["u_nvar"].value = float(self.n_cloud_var)
             pc["u_offset"].value = (0.0, 0.0, 0.0)
             pc["u_dark"].value = 1.0
+            pc["u_cbase"].value = float(w.cloud_base_ft * 0.3048)
             self.vao_cloud.render(instances=self.n_clouds, vertices=6)
         if w.storm:
             self._draw_storm(cam, env)

@@ -18,14 +18,26 @@ uniform float u_logc;
 """
 
 FOG_FN = """
-vec3 apply_fog(vec3 col, vec3 wpos) {
+uniform float u_fog_base;     // altura (m) donde empieza la capa de bruma (el suelo del valle)
+uniform float u_fog_scale;    // la bruma se reduce a la mitad cada ~0,7 de esta altura
+// bruma por altura: densa cerca del suelo y más limpia arriba (se integra a lo largo del rayo). A la altura del
+// suelo la visibilidad es la del METAR; al subir mejora y desde arriba se ve la capa de bruma en el horizonte
+float fog_depth(vec3 wpos) {
     float d = length(wpos - u_campos);
-    float f = exp(-pow(d * u_fog_density, 1.6));
+    float h0 = max(-u_campos.z - u_fog_base, 0.0);
+    float h1 = max(-wpos.z - u_fog_base, 0.0);
+    float H = max(u_fog_scale, 1.0);
+    float e0 = exp(-h0 / H);
+    float dh = h1 - h0;
+    float avg = abs(dh) > 1.0 ? (e0 - exp(-h1 / H)) * H / dh : e0;
+    return d * u_fog_density * (0.22 + 0.78 * avg);
+}
+vec3 apply_fog(vec3 col, vec3 wpos) {
+    float f = exp(-pow(fog_depth(wpos), 1.6));
     return mix(u_fog_col, col, clamp(f, 0.0, 1.0));
 }
 float fog_factor(vec3 wpos) {
-    float d = length(wpos - u_campos);
-    return clamp(exp(-pow(d * u_fog_density, 1.6)), 0.0, 1.0);
+    return clamp(exp(-pow(fog_depth(wpos), 1.6)), 0.0, 1.0);
 }
 """
 
@@ -516,6 +528,7 @@ void main() {
 
 CLOUD_FS = COMMON + FOG_FN + """
 uniform sampler2D u_tex;
+uniform float u_cbase;        // base de las nubes (m); muy negativa = sin recorte (cumulonimbo)
 uniform float u_alpha;
 uniform float u_dark;
 in vec2 v_uv;
@@ -528,9 +541,13 @@ void main() {
     float a = tx.a * u_alpha;
     float dc = length(v_pos - u_campos);
     a *= smoothstep(30.0, 300.0, dc);
+    // base plana: nada de nube por debajo de la base informada (la del METAR)
+    float alt = -v_pos.z;
+    a *= smoothstep(u_cbase - 10.0, u_cbase + 90.0, alt);
     if (a < 0.01) discard;
     vec3 col = tx.rgb * mix(0.72, 1.0, clamp(v_shade, 0.0, 1.0));
     col = col * (u_amb * 0.95 + u_sun_col * 0.75) * u_dark;
+    col *= mix(0.68, 1.0, smoothstep(u_cbase, u_cbase + 250.0, alt));     // la base, más gris y oscura
     // a contraluz del Sol: los bordes finos brillan (borde plateado) y el centro grueso se oscurece
     float toward = pow(max(dot(normalize(v_pos - u_campos), u_sun), 0.0), 6.0) * smoothstep(-0.05, 0.1, -u_sun.z);
     float thin = 1.0 - smoothstep(0.15, 0.85, tx.a);
