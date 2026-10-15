@@ -1148,7 +1148,16 @@ void main() { f_color = texture(u_tex, v_uv); }
         ctx.enable(moderngl.DEPTH_TEST)
 
     # ------------------------------------------------------------ entorno
-    def environment(self, cam_alt):
+    def _puff_inside(self, eye):
+        """0..1: cuánto está la cámara dentro de un cúmulo suelto (1 = en pleno blanco)."""
+        P = getattr(self, "_cloud_np", None)
+        if P is None or eye is None or not len(P):
+            return 0.0
+        d = np.sqrt(((P[:, :3] - np.asarray(eye, np.float32)) ** 2).sum(axis=1)) / (P[:, 3] * 0.7)
+        m = float(d.min())
+        return 0.0 if m >= 1.0 else float(smoothstep(1.0, 0.45, m))
+
+    def environment(self, cam_alt, eye=None):
         w = self.world.weather
         hour = w.hour % 24
         # Sol y Luna reales para la fecha, la hora local y el lugar del escenario
@@ -1212,9 +1221,19 @@ void main() { f_color = texture(u_tex, v_uv); }
         vis = max(atmo.visibility() if hasattr(atmo, "visibility") else w.visibility_m, 200.0)
         incloud = w.cloud_cover > 0.8 and base < cam_alt < top
         fog_col = hor
+        # dentro de la nube: gris de día, oscuro de noche y, al amanecer o al atardecer, con el tono del Sol
+        cloud_in = mix3((0.07, 0.07, 0.09), (0.8, 0.82, 0.85), day)
+        cloud_in = mix3(cloud_in, tuple(min(1.0, c * 1.05) for c in sun_col), dusk * 0.22)
         if incloud:
             vis = 70.0
-            fog_col = mix3((0.08, 0.08, 0.1), (0.78, 0.8, 0.82), day)
+            fog_col = cloud_in
+        # atravesar un cúmulo suelto: se queda en blanco unos segundos (entrada inadvertida en nube)
+        puff = 0.0 if (incloud or w.cloud_cover >= 0.85 or cam_alt < base) else self._puff_inside(eye)
+        if puff > 0.0:
+            vis = min(vis, 60.0 / max(puff, 1e-3) ** 1.5)
+            fog_col = mix3(fog_col, cloud_in, puff)
+            ov = max(ov, puff * 0.8)
+        self.in_puff = puff
         dens = 1.987 / vis + 1.0 / 400000.0
         ground = mix3(hor, (0.25, 0.3, 0.25), 0.3)
         # niebla de valle (la misma que informa el METAR): capa sobre el aeródromo base, blanca y con la luz del día
@@ -1226,8 +1245,8 @@ void main() { f_color = texture(u_tex, v_uv); }
                         fog_glow=(0.0 if incloud else 0.22 * (1.0 - ov * 0.8)),
                         sun=sun, sun_col=sun_col, amb=amb, zen=zen, hor=hor, fog_col=fog_col, fog=dens,
                         fog_base=float(getattr(getattr(self.world, "home", None), "elev", 0.0) or 0.0),
-                        fog_scale=(1.0e6 if incloud else 1400.0 + 1600.0 * rain),
-                        night=night, day=day, dusk=dusk, overcast=ov, incloud=incloud, ground=ground,
+                        fog_scale=(1.0e6 if (incloud or puff > 0.3) else 1400.0 + 1600.0 * rain),
+                        night=night, day=day, dusk=dusk, overcast=ov, incloud=incloud, ground=ground, puff=puff,
                         moon=moon, moon_k=mk, moon_on=(1.0 - ov) * smoothstep(-1.0, 1.0, me) * (0.25 + 0.75 * night))
         return self.env
 
@@ -1407,6 +1426,7 @@ void main() { f_color = texture(u_tex, v_uv); }
             self.vbo_cloud_inst.release()
             self.vao_cloud = None
         self.n_clouds = len(inst)
+        self._cloud_np = np.array([(i[0], i[1], i[2], i[3]) for i in inst], np.float32) if inst and cov < 0.85 else None
         # mapa de cobertura para las sombras de las nubes (con cielo cubierto no hace falta: la luz es difusa)
         if getattr(self, "t_cloudmap", None) is not None:
             self.t_cloudmap.release()
@@ -1438,7 +1458,7 @@ void main() { f_color = texture(u_tex, v_uv); }
             self.cockpit.configure(ac.t)
         screen_vp = viewport
         self._ensure_fbo(viewport[2], viewport[3])
-        env = self.environment(-cam.eye[2])
+        env = self.environment(-cam.eye[2], cam.eye)
         if pose is None:
             pos, R = ac.pos, ac.R
         else:
@@ -1475,9 +1495,10 @@ void main() { f_color = texture(u_tex, v_uv); }
         ps["u_inv"].write(gl_bytes(inv))
         ps["u_sun"].value = tuple(float(v) for v in env["sun"])
         ps["u_sun_col"].value = env["sun_col"]
-        ps["u_zenith"].value = env["zen"]
-        ps["u_horizon"].value = env["hor"] if not env["incloud"] else env["fog_col"]
-        ps["u_ground"].value = env["ground"] if not env["incloud"] else env["fog_col"]
+        pf = 1.0 if env["incloud"] else float(env.get("puff", 0.0))     # dentro de la nube no se ve el cielo
+        ps["u_zenith"].value = mix3(env["zen"], env["fog_col"], pf)
+        ps["u_horizon"].value = mix3(env["hor"], env["fog_col"], pf)
+        ps["u_ground"].value = mix3(env["ground"], env["fog_col"], pf)
         ps["u_night"].value = float(env["night"])
         ps["u_overcast"].value = float(env["overcast"])
         if "u_moon" in ps:
