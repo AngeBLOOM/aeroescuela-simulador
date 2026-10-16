@@ -169,6 +169,30 @@ def taxiway_texture():
     return surf
 
 
+def apron_slabs_texture(seed=3):
+    """Plataforma de concreto: 4 x 4 losas de 5 m con juntas selladas, cada losa con su tono (vaciadas en días
+    distintos) y alguna mancha de aceite donde se estacionan los aviones. El grano lo pone la foto de concreto."""
+    rng = np.random.default_rng(seed)
+    N, S = 4, 128
+    img = np.zeros((N * S, N * S, 3))
+    for i in range(N):
+        for j in range(N):
+            img[i * S:(i + 1) * S, j * S:(j + 1) * S] = np.array([150.0, 147.0, 140.0]) * rng.uniform(0.9, 1.07)
+    yy, xx = np.mgrid[0:N * S, 0:N * S]
+    for _ in range(5):
+        cx, cy, r = rng.uniform(0, N * S), rng.uniform(0, N * S), rng.uniform(10, 30)
+        d = np.hypot((xx - cx + N * S / 2) % (N * S) - N * S / 2, (yy - cy + N * S / 2) % (N * S) - N * S / 2)
+        img *= (1.0 - 0.28 * np.clip(1.0 - d / r, 0.0, 1.0) ** 0.7)[..., None]
+    for k in range(N):                    # juntas selladas (1 px = 4 cm, con el borde algo gastado)
+        img[k * S, :] *= 0.5
+        img[:, k * S] *= 0.5
+        img[k * S + 1, :] *= 0.85
+        img[:, k * S + 1] *= 0.85
+    surf = pygame.Surface((N * S, N * S))
+    pygame.surfarray.blit_array(surf, np.clip(img, 0, 255).astype(np.uint8).transpose(1, 0, 2))
+    return surf
+
+
 def runway_mid_texture(width_m, ppm_w=8.5, length_m=50.0, ppm_l=5.0):
     W = int(width_m * ppm_w)
     H = int(length_m * ppm_l)

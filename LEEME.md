@@ -112,6 +112,11 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   niebla en parches y los cerros quedan despejados. El METAR y el ATIS la informan (FG con menos de 1000 m, BR
   mientras se disipa).
 - **Atravesar un cúmulo**: al entrar en una nube suelta la vista queda en blanco (sin horizonte, como en IMC real) y al salir se ve la pared de la nube; dentro de la nube la luz sigue la hora (gris cálido y oscuro al amanecer y al atardecer).
+- **Suelo con texturas fotográficas**: la pista y las calles de rodaje usan un escaneo real de asfalto, la plataforma
+  losas de concreto de 5 m con juntas y el pasto un escaneo real de césped, cada uno con su **relieve** (mapa de
+  normales) que responde al Sol: de cerca, al rodar o en la corta final, se ve el grano del asfalto, las juntas y
+  las matas de pasto con su sombra. A media distancia el pasto tiene matas y manchas secas para que no se vea liso.
+  Las texturas se preparan con `tools/texturas_suelo.py` (créditos en `assets/CREDITOS_TEXTURAS.md`).
 - **Bruma iluminada por el Sol**: mirando hacia el Sol la bruma del horizonte brilla como el cielo (luz dispersada
   hacia adelante) y el terreno lejano empalma con el cielo sin corte. **Manga de viento iluminada** de noche.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.
@@ -509,6 +514,8 @@ pull request) o una sola, p. ej. `python tests/test_lessons.py` (con `LOC=LEMD` 
 - Modelos 3D de los aviones (Sketchfab, **CC BY 4.0**, uso comercial permitido citando al autor; la cita se muestra en
   Vuelo libre y está en `assets/modelos/CREDITOS.json`): «FREE Cessna 172SP» de NLM, «Cessna 152» de micheal_wain,
   «Piper Pa 28 Cadet», «Diamond Da42 Twin Star» de helijah y «Cirrus SR22» de KOG_THORNS.
+- Texturas fotográficas del suelo (**CC0**, dominio público, uso comercial libre): «Asphalt Pit Lane» y «Concrete
+  Floor 02» de Poly Haven, «Grass004» de ambientCG (`assets/CREDITOS_TEXTURAS.md`).
 - Tipografía **Orbitron** (© The Orbitron Project Authors, SIL Open Font License 1.1, texto en `assets/fuentes/Orbitron_OFL.txt`): libre para uso comercial e incluida con el programa.
 
 ## Límites honestos

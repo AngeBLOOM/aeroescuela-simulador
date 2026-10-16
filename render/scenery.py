@@ -58,7 +58,7 @@ class Scenery:
 
     # ---------------------------------------------------------------- pistas
     def _runways(self):
-        """Lista de (textura_surface, vertices pos+uv float32)."""
+        """Lista de (textura_surface, vertices pos+uv float32, tipo: "pista", "rodaje" o "plataforma")."""
         out = []
         for ap in self.aps:
             for rw in ap.runways:
@@ -93,11 +93,13 @@ class Scenery:
                     s1 = min(s + 50.0 * 8, L - seg)
                     vm += quad(s, s1, lambda ss, lat, s0=s: ((lat + W / 2) / W, (ss - seg) / 50.0))
                     s = s1
-                out.append((end_a, np.array(va, np.float32)))
-                out.append((end_b, np.array(vb, np.float32)))
-                out.append((mid, np.array(vm, np.float32)))
+                out.append((end_a, np.array(va, np.float32), "pista"))
+                out.append((end_b, np.array(vb, np.float32), "pista"))
+                out.append((mid, np.array(vm, np.float32), "pista"))
         if self._paved:
-            out.append((tx.taxiway_texture(), np.array(self._paved, np.float32)))
+            out.append((tx.taxiway_texture(), np.array(self._paved, np.float32), "rodaje"))
+        if self._apron:
+            out.append((tx.apron_slabs_texture(), np.array(self._apron, np.float32), "plataforma"))
         return out
 
     # ---------------------------------------------------------------- objetos
@@ -105,7 +107,8 @@ class Scenery:
         self.parked, self.parked_code = [], np.zeros((0, 9), np.float32)
         self.hangars, self.towers = [], []                # los dibuja el renderizador con detalle (render/buildings.py)
         self.taxi_signs = []                              # carteles de posición de espera (x, y, z, rumbo, texto, calle)
-        self._paved = []                                  # plataformas y calles de rodaje (pos + uv)
+        self._paved = []                                  # calles de rodaje de asfalto (pos + uv)
+        self._apron = []                                  # plataformas de losas de concreto (pos + uv)
         self.trees = None                                 # árboles: instancias con dos niveles de detalle
         mb = geo.MeshBuilder()
         rng = self.rng
@@ -125,17 +128,25 @@ class Scenery:
         # plataformas y calles de rodaje
         for ap in self.aps:
             z = -(ap.elev + 0.05)
-            for (c, hdg, ln, wd) in ap.paved_rects:
+            for rect in ap.paved_rects:
+                c, hdg, ln, wd = rect
                 h = math.radians(hdg)
                 d = np.array([math.cos(h), math.sin(h)])
                 rt = np.array([-d[1], d[0]])
                 c = np.array(c)
                 corners = [c - d * ln / 2 - rt * wd / 2, c + d * ln / 2 - rt * wd / 2,
                            c + d * ln / 2 + rt * wd / 2, c - d * ln / 2 + rt * wd / 2]
-                # superficie con la misma textura de asfalto que la pista (la dibuja el renderizador con ella)
-                uv = [(float(p[0]) / 8.0, float(p[1]) / 8.0) for p in corners]
-                for i in (0, 1, 2, 0, 2, 3):
-                    self._paved.append((corners[i][0], corners[i][1], z, *uv[i]))
+                if rect is ap.apron:
+                    # plataforma: losas de concreto de 5 m alineadas con ella (la textura trae 4 x 4 losas); un
+                    # poco más alta que las calles para que el concreto tape el empalme
+                    uv = [(float((p - c) @ d) / 20.0, float((p - c) @ rt) / 20.0) for p in corners]
+                    for i in (0, 1, 2, 0, 2, 3):
+                        self._apron.append((corners[i][0], corners[i][1], z - 0.008, *uv[i]))
+                else:
+                    # calle de rodaje: asfalto con la textura fotográfica (la pone el renderizador)
+                    uv = [(float(p[0]) / 8.0, float(p[1]) / 8.0) for p in corners]
+                    for i in (0, 1, 2, 0, 2, 3):
+                        self._paved.append((corners[i][0], corners[i][1], z, *uv[i]))
                 # línea central amarilla a lo largo del lado mayor
                 if ln >= wd:
                     a_, b_ = c - d * ln / 2, c + d * ln / 2
@@ -144,7 +155,7 @@ class Scenery:
                     a_, b_ = c - rt * wd / 2, c + rt * wd / 2
                     w_ = d * 0.15
                 if min(ln, wd) < 40:
-                    zz = z - 0.01
+                    zz = z - 0.015
                     mb.quad((*(a_ - w_), zz), (*(b_ - w_), zz), (*(b_ + w_), zz), (*(a_ + w_), zz), (0.85, 0.7, 0.15))
         if not world.is_school:
             loc = world.location

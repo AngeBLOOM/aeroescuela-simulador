@@ -151,8 +151,17 @@ class Renderer:
         self.t_detail.repeat_x = self.t_detail.repeat_y = True
         self.t_detail.anisotropy = 8.0
         self.t_cloud, self.n_cloud_var = self._cloud_atlas()
-        self.t_asph, self.asph_gain = self._photo_texture("asfalto.png")
-        self.t_grass, self.grass_gain = self._photo_texture("cesped.png")
+        # suelo fotográfico (escaneos CC0, tools/texturas_suelo.py): color con su relieve (mapa de normales)
+        self.t_asph, self.asph_gain = self._photo_texture("asfalto_pista.jpg", rgb_gain=True)
+        if self.t_asph is None:                          # sin los escaneos: las texturas generadas de antes
+            self.t_asph, self.asph_gain = self._photo_texture("asfalto.png", rgb_gain=True)
+        self.t_asph_n = self._normal_texture("asfalto_pista_n.jpg")
+        self.t_conc, self.conc_gain = self._photo_texture("concreto.jpg", rgb_gain=True)
+        self.t_conc_n = self._normal_texture("concreto_n.jpg")
+        self.t_grass, self.grass_gain = self._photo_texture("pasto.jpg", rgb_gain=True)
+        if self.t_grass is None:
+            self.t_grass, self.grass_gain = self._photo_texture("cesped.png", rgb_gain=True)
+        self.t_grass_n = self._normal_texture("pasto_n.jpg")
         self.t_skin, _ = self._photo_texture("pintura_avion.png")
         deck = tx.cloud_deck()
         self.t_deck = ctx.texture((deck.shape[1], deck.shape[0]), 4, deck.tobytes())
@@ -212,15 +221,15 @@ class Renderer:
         self._build_trees()
         self._build_casters()
         self.runway_meshes = []
-        for surf, verts in self.scn.runways:
+        for surf, verts, kind in self.scn.runways:
             data = tx.surface_rgba(surf, True)
             tex = ctx.texture(surf.get_size(), 4, data)
             tex.build_mipmaps()
             tex.anisotropy = 16.0
-            tex.repeat_x = False
+            tex.repeat_x = kind != "pista"
             tex.repeat_y = True
             m = GPUMesh(ctx, self.p_tex, verts, fmt="3f 2f", attrs=("in_pos", "in_uv"))
-            self.runway_meshes.append((tex, m))
+            self.runway_meshes.append((tex, m, kind))
         # luces
         self.light_data = self.scn.lights_static.copy()
         self.vbo_lights = ctx.buffer(self.light_data.tobytes())
@@ -305,17 +314,33 @@ class Renderer:
             a = np.full(rgb.shape[:2], 255, np.uint8)
         return np.dstack([rgb, a]).astype(np.uint8)
 
-    def _photo_texture(self, name):
+    def _photo_texture(self, name, rgb_gain=False):
+        """Textura fotográfica enlosable y su ganancia (1 / valor medio): multiplicada por ella queda con promedio 1,
+        así aporta el detalle sin cambiar el color de la superficie. Con rgb_gain, la ganancia es por canal."""
         arr = self._load_rgba(name)
         if arr is None:
-            return None, 1.0
+            return None, ((1.0, 1.0, 1.0) if rgb_gain else 1.0)
         arr = arr[::-1].copy()
         t = self.ctx.texture((arr.shape[1], arr.shape[0]), 4, arr.tobytes())
         t.build_mipmaps()
         t.repeat_x = t.repeat_y = True
         t.anisotropy = 16.0
+        if rgb_gain:
+            return t, tuple(1.0 / max(float(m) / 255.0, 0.05) for m in arr[..., :3].reshape(-1, 3).mean(0))
         mean = float(arr[..., :3].mean()) / 255.0
         return t, 1.0 / max(mean, 0.05)
+
+    def _normal_texture(self, name):
+        """Mapa de normales (convención OpenGL) de una textura de suelo; None si falta (se ve plano)."""
+        arr = self._load_rgba(name)
+        if arr is None:
+            return None
+        arr = arr[::-1].copy()
+        t = self.ctx.texture((arr.shape[1], arr.shape[0]), 4, arr.tobytes())
+        t.build_mipmaps()
+        t.repeat_x = t.repeat_y = True
+        t.anisotropy = 8.0
+        return t
 
     def _cloud_atlas(self):
         imgs = [self._load_rgba(f"nube_{i}.png") for i in (1, 2, 3)]
@@ -1535,7 +1560,11 @@ void main() { f_color = texture(u_tex, v_uv); }
             self.t_grass.use(7)
             pt["u_grass"] = 7
             pt["u_grass_on"].value = 1
-            pt["u_grass_gain"].value = float(self.grass_gain)
+            pt["u_grass_gain"].value = self.grass_gain
+            if self.t_grass_n is not None:
+                self.t_grass_n.use(14)
+                pt["u_grass_n"] = 14
+            pt["u_grass_nk"].value = 1.0 if self.t_grass_n is not None else 0.0
         if self.sat:
             pt["u_sat_on"].value = 1
             for i, (tex, rect) in enumerate(self.sat[:3]):
@@ -1571,19 +1600,30 @@ void main() { f_color = texture(u_tex, v_uv); }
         self.p_tex["u_model"].write(gl_bytes(np.identity(4)))
         self.p_tex["u_detail"] = 1
         self.p_tex["u_tint"].value = (1.0, 1.0, 1.0, 1.0)
+        ptx = self.p_tex
         if self.t_asph is not None:
             self.t_asph.use(6)
-            self.p_tex["u_asph"] = 6
-            self.p_tex["u_asph_on"].value = 1
-            self.p_tex["u_asph_gain"].value = float(self.asph_gain)
+            ptx["u_asph"] = 6
+            ptx["u_asph_on"].value = 1
+            ptx["u_asph_gain"].value = self.asph_gain
+            for t, unit, name in ((self.t_asph_n, 15, "u_asph_n"), (self.t_conc or self.t_asph, 16, "u_conc"),
+                                  (self.t_conc_n, 17, "u_conc_n")):
+                if t is not None:
+                    t.use(unit)
+                    ptx[name] = unit
+            ptx["u_conc_gain"].value = self.conc_gain if self.t_conc is not None else self.asph_gain
+            ptx["u_asph_nk"].value = 1.0 if self.t_asph_n is not None else 0.0
+            ptx["u_conc_nk"].value = 1.0 if self.t_conc_n is not None else 0.0
         # pista mojada: la misma que calcula la atmósfera (la que informa el ATIS y la que usa el frenado)
         wet = float(getattr(world.atmo, "wet", 0.0))
         self._wet = wet
         self.p_tex["u_wet"].value = wet
-        for tex, m in self.runway_meshes:
+        for tex, m, kind in self.runway_meshes:
             tex.use(0)
             self.p_tex["u_tex"] = 0
+            self.p_tex["u_surf"].value = 1 if kind == "plataforma" else 0
             m.render()
+        self.p_tex["u_surf"].value = 0
         self.p_tex["u_wet"].value = 0.0
 
         # objetos estáticos

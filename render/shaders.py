@@ -162,8 +162,10 @@ void main() {
 TERRAIN_FS = COMMON + FOG_FN + SHADOW_FN + """
 uniform sampler2D u_detail;
 uniform sampler2D u_grass;
+uniform sampler2D u_grass_n;
 uniform int u_grass_on;
-uniform float u_grass_gain;
+uniform vec3 u_grass_gain;
+uniform float u_grass_nk;
 uniform int u_sat_on;
 uniform sampler2D u_sat0;
 uniform sampler2D u_sat1;
@@ -265,12 +267,35 @@ void main() {
         lit = col * (u_amb + u_sun_col * diff * shf);
         alb = col;
     }
-    if (u_grass_on == 1 && dist < 450.0) {
-        float near = 1.0 - smoothstep(40.0, 450.0, dist);
+    // suelo verde (pasto): ahí van el color de las hojas, las matas y las manchas secas
+    float green = smoothstep(0.0, 0.05, alb.g - max(alb.r, alb.b) * 0.92);
+    if (u_sat_on == 0 && dist < 3000.0 && green > 0.0) {
+        // pasto a media distancia, donde el escaneo ya no se distingue: matas más oscuras y manchas secas
+        float m1 = textureGrad(u_detail, R2 * uv / 27.0, R2 * dx / 27.0, R2 * dy / 27.0).g;
+        float m2 = textureGrad(u_detail, uv / 97.0, dx / 97.0, dy / 97.0).b;
+        float fade = green * (1.0 - smoothstep(1200.0, 3000.0, dist));
+        vec3 dry = mix(vec3(1.0), vec3(1.1, 1.0, 0.62), smoothstep(0.55, 0.72, m2) * 0.5);
+        lit *= mix(vec3(1.0), clamp(1.0 + 1.0 * (m1 - 0.5), 0.8, 1.2) * dry, fade);
+    }
+    if (u_grass_on == 1 && dist < 600.0) {
+        // escaneo fotográfico de pasto (promedio 1) en dos escalas: hojas, matas y huecos de tierra
+        float near = 1.0 - smoothstep(40.0, 600.0, dist);
         mat2 R3 = mat2(0.6, 0.8, -0.8, 0.6);
-        float g1 = dot(textureGrad(u_grass, uv / 7.0, dx / 7.0, dy / 7.0).rgb, vec3(0.333)) * u_grass_gain;
-        float g2 = dot(textureGrad(u_grass, R3 * uv / 29.0, R3 * dx / 29.0, R3 * dy / 29.0).rgb, vec3(0.333)) * u_grass_gain;
-        lit *= mix(1.0, g1 * (0.5 + 0.5 * g2), near * (u_sat_on == 1 ? 0.45 : 0.8));
+        vec2 gp = uv / 4.0;
+        vec3 g1 = textureGrad(u_grass, gp, dx / 4.0, dy / 4.0).rgb * u_grass_gain;
+        vec3 g2 = textureGrad(u_grass, R3 * uv / 23.0, R3 * dx / 23.0, R3 * dy / 23.0).rgb * u_grass_gain;
+        vec3 gm = g1 * mix(vec3(1.0), g2, 0.5);
+        // el color de las hojas solo donde el suelo es verde; en tierra, roca o ciudad de la foto, solo el brillo
+        vec3 gl = mix(vec3(dot(gm, vec3(0.333))), gm, 0.7 * green);
+        lit *= mix(vec3(1.0), gl, near * (u_sat_on == 1 ? 0.5 : 0.85));
+        if (u_grass_nk > 0.0 && dist < 120.0) {
+            // relieve de las matas con la luz del Sol (de cerca, al rodar o en la corta final)
+            vec3 tn = textureGrad(u_grass_n, gp, dx / 4.0, dy / 4.0).xyz * 2.0 - 1.0;
+            vec3 nb = normalize(n + vec3(tn.x, tn.y, 0.0) * 1.2);
+            float ratio = max(dot(nb, u_sun), 0.0) / max(dot(n, u_sun), 0.05);
+            float kk = u_grass_nk * (1.0 - smoothstep(25.0, 120.0, dist)) * shf;
+            lit *= mix(1.0, clamp(mix(1.0, ratio, 0.6), 0.55, 1.45), kk);
+        }
     }
     if (u_water_on == 1) {
         vec2 uvw = vec2((v_pos.y - u_wrect.y) / u_wrect.w, (v_pos.x - u_wrect.x) / u_wrect.z);
@@ -406,8 +431,15 @@ uniform sampler2D u_tex;
 uniform float u_wet;          // pista mojada (0 seca, 1 empapada)
 uniform sampler2D u_detail;
 uniform sampler2D u_asph;
+uniform sampler2D u_asph_n;
+uniform sampler2D u_conc;
+uniform sampler2D u_conc_n;
 uniform int u_asph_on;
-uniform float u_asph_gain;
+uniform int u_surf;           // 0 asfalto (pista y calles de rodaje), 1 concreto (plataforma)
+uniform vec3 u_asph_gain;
+uniform vec3 u_conc_gain;
+uniform float u_asph_nk;
+uniform float u_conc_nk;
 uniform vec4 u_tint;
 
 uniform float u_ll_on;
@@ -435,15 +467,44 @@ void main() {
     float d = texture(u_detail, v_pos.xy / 9.0).r;
     float d2 = texture(u_detail, v_pos.xy / 71.0).g;
     vec3 base = t.rgb * (0.88 + 0.24 * d) * (0.9 + 0.2 * d2);
+    vec3 nrm = vec3(0.0, 0.0, -1.0);
+    float paint = 0.0;
     if (u_asph_on == 1) {
-        vec3 a1 = texture(u_asph, v_pos.xy / 11.0).rgb * u_asph_gain;
-        vec3 a2 = texture(u_asph, mat2(0.8, -0.6, 0.6, 0.8) * v_pos.xy / 57.0).rgb * u_asph_gain;
+        // escaneo fotográfico del pavimento (promedio 1: da el grano sin cambiar el color) en dos escalas
+        mat2 R = mat2(0.8, -0.6, 0.6, 0.8);
+        vec3 a1, a2, tn;
+        float nk;
+        if (u_surf == 1) {
+            vec2 p1 = v_pos.xy / 7.0;
+            a1 = texture(u_conc, p1).rgb * u_conc_gain;
+            a2 = texture(u_conc, R * v_pos.xy / 41.0).rgb * u_conc_gain;
+            tn = texture(u_conc_n, p1).xyz * 2.0 - 1.0;
+            nk = u_conc_nk;
+        } else {
+            vec2 p1 = v_pos.xy / 5.0;
+            a1 = texture(u_asph, p1).rgb * u_asph_gain;
+            a2 = texture(u_asph, R * v_pos.xy / 37.0).rgb * u_asph_gain;
+            tn = texture(u_asph_n, p1).xyz * 2.0 - 1.0;
+            nk = u_asph_nk;
+        }
         vec3 asph = a1 * mix(vec3(1.0), a2, 0.5);
-        float paint = smoothstep(0.35, 0.7, dot(t.rgb, vec3(0.333)));
-        base = t.rgb * mix(asph, mix(vec3(1.0), asph, 0.45), paint) * (0.95 + 0.1 * d2);
+        paint = smoothstep(0.35, 0.7, dot(t.rgb, vec3(0.333)));
+        base = t.rgb * mix(asph, mix(vec3(1.0), asph, 0.35), paint) * (0.95 + 0.1 * d2);
+        // relieve del escaneo: la normal del mapa (OpenGL, u = norte, v = este) llevada al suelo (z abajo). Se apaga
+        // con la distancia (los mipmaps ya la promedian) y sobre la pintura, que es más lisa
+        float dist = length(v_pos - u_campos);
+        float k = nk * 1.4 * (1.0 - smoothstep(40.0, 400.0, dist)) * (1.0 - 0.6 * paint);
+        nrm = normalize(vec3(tn.x * k, tn.y * k, -max(tn.z, 0.3)));
     }
-    float diff = max(-u_sun.z, 0.0) * sun_shadow(v_pos);
-    vec3 lit = base * (u_amb + u_sun_col * diff + landing_light(v_pos));
+    float shd = sun_shadow(v_pos);
+    float diff = max(dot(nrm, u_sun), 0.0) * shd;
+    vec3 lit = base * (u_amb * (0.8 - 0.2 * nrm.z) + u_sun_col * diff + landing_light(v_pos));
+    if (u_asph_on == 1) {
+        // brillo rasante hacia el Sol: el pavimento pulido por las ruedas y la pintura reflejan algo
+        vec3 vv = normalize(u_campos - v_pos);
+        float sp = pow(max(dot(nrm, normalize(vv + u_sun)), 0.0), 30.0);
+        lit += u_sun_col * sp * shd * (0.04 + 0.05 * paint);
+    }
     if (u_wet > 0.01) {
         // pavimento mojado: más oscuro y espejado; refleja el cielo cuanto más rasante se mira y el brillo del Sol
         vec3 v = normalize(u_campos - v_pos);
