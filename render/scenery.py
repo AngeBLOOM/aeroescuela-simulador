@@ -811,6 +811,7 @@ class Scenery:
         L = []
         groups = []        # (ident_a, idx_slice_a, idx_slice_b, runway) para color bicolor de umbrales
         papis = []
+        self._papi_yaw = []
         rabbits = []
 
         def add(p, c, s):
@@ -867,6 +868,7 @@ class Scenery:
                     for i, ang in enumerate(angles):
                         p = thr_e + de * 300 - re * (W / 2 + 15 + i * 9)
                         papis.append((p[0], p[1], -(ap.elev + 0.8), ang))
+                        self._papi_yaw.append((p[0], p[1], -(ap.elev + 0.8), ang, math.atan2(-de[0], de[1])))
         # REIL en los extremos sin luces de aproximación (escenario de la escuela; en los aeropuertos reales no hay
         # dato de cuáles las tienen)
         self.reils = []
@@ -899,6 +901,19 @@ class Scenery:
                             continue                 # borde interior (cruce con otra calle) o junto a la pista
                         add((p[0], p[1], z), (0.12, 0.3, 1.0), 2.4)
         self.beacons = self._beacon_points()
+        # luminarias físicas (modelos de Blender) bajo las luces de borde, umbral y rodaje, y las cajas de los PAPI
+        if bl.load_model("luminaria") is not None:
+            for (x, y, z, r_, g_, b_, sz) in L:
+                gz = -float(max(self.terrain.height(x, y), 0.0))
+                for ap in self.aps:
+                    if math.hypot(x - ap.ref[0], y - ap.ref[1]) < 6000:
+                        gz = -ap.elev
+                        break
+                if abs((z - gz) + 0.45) < 0.2:             # las de 0,4-0,5 m sobre el suelo (no las de aproximación)
+                    self.house_inst.append(("luminaria", x, y, gz, 0.0, 1.0, 1.0, 1.0, 1.0))
+        if bl.load_model("papi") is not None:
+            for (x, y, z, ang, yaw) in self._papi_yaw:
+                self.house_inst.append(("papi", x, y, z + 0.8, yaw, 1.0, 1.0, 1.0, 1.0))
         return np.array(L, np.float32), groups, papis, rabbits
 
     def _beacon_points(self):

@@ -137,6 +137,9 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
 - **Árboles de Blender**: pino, frondoso, samán (copa ancha de los llanos) y palma, con tronco, ramas y copa de
   masas irregulares, la penumbra del interior de la copa calculada con rayos y normales de follaje suaves. De cerca
   se usa el modelo detallado y de lejos la versión simple, por instancias.
+- **Luminarias y PAPI físicos** (Blender): bajo cada luz de borde, umbral y rodaje hay una luminaria elevada con
+  su pata frangible amarilla y su domo, y cada PAPI tiene su caja sobre patas con tres lentes hacia la
+  aproximación; de día se ven al rodar y en la corta final, como en un aeródromo real.
 - **Luz horneada en Blender** en hangares y torres: la luz del cielo con sus rebotes (Cycles) está calculada de
   antemano en un mapa de luz por edificio, así los rincones, el pie de las paredes, los aleros y el portón tienen
   la penumbra suave de una foto, y el suelo alrededor se oscurece un poco junto a las paredes. El Sol y sus sombras

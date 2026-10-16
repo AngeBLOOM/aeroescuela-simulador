@@ -41,6 +41,8 @@ def pedido(fast):
                     samples=samples))
     out.append(dict(key="bloque_10", kind="bloque", p=dict(pisos=10, w=18.0, d=18.0), size=size, gsize=size // 4,
                     samples=samples))
+    for k in ("luminaria", "papi"):                            # luces de pista y PAPI
+        out.append(dict(key=k, kind=k, p={}, size=128, gsize=32, samples=128))
     for nm in ("pino", "frondoso", "saman", "palma"):          # árboles (plantillas por instancias)
         out.append(dict(key="arbol_" + nm, kind="arbol", p=dict(name=nm)))
     return out

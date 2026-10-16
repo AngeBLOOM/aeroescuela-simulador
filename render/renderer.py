@@ -781,7 +781,7 @@ class Renderer:
             r = item["rows"]
             d = np.hypot(r[:, 0] - eye[0], r[:, 1] - eye[1])
             near = r[d < self.HOUSE_NEAR]
-            far = r[(d >= self.HOUSE_NEAR) & (d < self.HOUSE_FAR)]
+            far = r[(d >= self.HOUSE_NEAR) & (d < self.HOUSE_FAR)] if item["key"] not in ("luminaria", "papi") else r[:0]
             item["n"], item["nf"] = len(near), len(far)
             if len(near):
                 item["ib"].write(np.ascontiguousarray(near).tobytes())

@@ -720,7 +720,30 @@ def bloque(p):
     return dict(grect_margin=8.0)
 
 
-BUILDERS.update({"casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
+def luminaria(p):
+    """Luz de borde elevada (tipo L-861): base, pata frangible amarilla, cabezal y domo (luce de noche)."""
+    cyl("steel", (0, 0, 0.0), (0, 0, 0.03), 0.09, 12)
+    cyl("steel", (0, 0, 0.03), (0, 0, 0.07), 0.035, 10)
+    cyl("yellow", (0, 0, 0.07), (0, 0, 0.27), 0.022, 10)
+    cyl("steel", (0, 0, 0.27), (0, 0, 0.33), 0.06, 12)
+    cyl("lamp", (0, 0, 0.33), (0, 0, 0.39), 0.052, 12)
+    return dict(grect_margin=0.5)
+
+
+def papi(p):
+    """Caja de un PAPI: carcasa sobre cuatro patas regulables con tres lentes hacia la aproximación (-y)."""
+    box("concrete", (-0.8, -0.6, 0.0), (0.8, 0.6, 0.1), 0.02)
+    for x in (-0.45, 0.45):
+        for y in (-0.15, 0.15):
+            cyl("steel", (x, y, 0.1), (x, y, 0.45), 0.025, 8)
+    box("white", (-0.6, -0.3, 0.45), (0.6, 0.3, 0.9), 0.04)
+    box("white", (-0.62, -0.42, 0.85), (0.62, 0.3, 0.92), 0.02)                 # visera
+    for x in (-0.35, 0.0, 0.35):
+        cyl("lamp", (x, -0.3, 0.66), (x, -0.34, 0.66), 0.1, 14)
+    return dict(grect_margin=1.0)
+
+
+BUILDERS.update({"luminaria": luminaria, "papi": papi, "casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
 
 
 # ============================================================ árboles (plantillas para el dibujo por instancias)
