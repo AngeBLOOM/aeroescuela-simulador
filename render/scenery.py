@@ -158,6 +158,8 @@ class Scenery:
                 if min(ln, wd) < 40:
                     zz = z - 0.015
                     mb.quad((*(a_ - w_), zz), (*(b_ - w_), zz), (*(b_ + w_), zz), (*(a_ + w_), zz), (0.85, 0.7, 0.15))
+        # antenas de radio en los cerros: obstáculos pintados de rojo y blanco, con luces de noche
+        self.masts = self._masts(mb)
         if not world.is_school:
             loc = world.location
             try:
@@ -515,6 +517,48 @@ class Scenery:
             end = base - d * 4.5                                              # extremo del brazo largo (lado de llegada)
             short_c = end + side * 2.25
             mb.box((short_c[0], short_c[1], z), (4.5, 1.0, 0.35), white, yaw=math.atan2(side[1], side[0]))
+
+    def _masts(self, mb):
+        """Antenas de radio y TV (60-90 m) en las cimas más altas a menos de 12 km de los aeródromos, separadas por
+        3 km o más, como las repetidoras de los cerros. Pintadas en franjas rojas y blancas (OACI) y con luz roja de
+        obstáculo: intermitente arriba y fija a media altura (la enciende el renderizador de noche)."""
+        T = self.terrain
+        out = []
+        for ap in self.aps[:2]:
+            g = np.arange(-12000.0, 12001.0, 250.0)
+            X, Y = np.meshgrid(ap.ref[0] + g, ap.ref[1] + g, indexing="ij")
+            try:
+                H = T.height_v(X, Y)
+            except Exception:
+                continue
+            # cimas: el punto más alto de su vecindario de ~1,5 km, bien por encima del aeródromo
+            from numpy.lib.stride_tricks import sliding_window_view
+            P = np.pad(H, 3, mode="edge")
+            loc_max = sliding_window_view(P, (7, 7)).max(axis=(-1, -2))
+            inner = np.zeros_like(H, bool)
+            inner[3:-3, 3:-3] = True                 # en el borde del muestreo cualquier ladera parece cima
+            cand = np.argwhere((H >= loc_max) & (H > ap.elev + 120.0) & inner)
+            cand = sorted(cand.tolist(), key=lambda ij: -H[ij[0], ij[1]])
+            n = 0
+            for i, j in cand:
+                x, y = float(X[i, j]), float(Y[i, j])
+                if math.hypot(x - ap.ref[0], y - ap.ref[1]) < 2500.0 or T.is_water(x, y):
+                    continue
+                if any(math.hypot(x - m[0], y - m[1]) < 3000.0 for m in out):
+                    continue
+                out.append((x, y, -float(H[i, j]), 60.0 + 30.0 * (n % 2)))
+                n += 1
+                if n >= 2:
+                    break
+        red, white = (0.78, 0.18, 0.1), (0.9, 0.9, 0.88)
+        for (x, y, gz, h) in out:
+            nb = 7                                   # franjas alternadas, rojas en los extremos
+            for k in range(nb):
+                z0, z1 = h * k / nb, h * (k + 1) / nb
+                w = 1.6 - 0.8 * (z0 + z1) / (2 * h)  # se afina hacia arriba
+                mb.box((x, y, gz - (z0 + z1) / 2), (w, w, z1 - z0), red if k % 2 == 0 else white)
+            mb.box((x, y, gz - 0.3), (3.0, 3.0, 0.6), (0.55, 0.55, 0.53))     # base de concreto
+        return out
 
     def _houses_facade(self, P, sc, yaw, cm):
         """Casas con fachada (ventanas) y techo de tejas a dos aguas."""

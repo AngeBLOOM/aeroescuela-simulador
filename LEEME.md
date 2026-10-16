@@ -132,6 +132,9 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   desde unos 14 kt borreguitos de espuma; los árboles se inclinan hacia donde sopla y las ráfagas recorren el bosque.
   Cerca de los aeródromos hay **humo de quemas y chimeneas** que sube, se acuesta con el viento fuerte y deriva en
   su dirección (con lluvia fuerte no hay quemas).
+- **Antenas en los cerros como obstáculos**: repetidoras de 60-90 m en las cimas cercanas a los aeródromos, pintadas
+  en franjas rojas y blancas, con luz roja intermitente arriba y fija a media altura de noche (vuelo VFR nocturno y
+  altura mínima sobre obstáculos).
 - **Bruma iluminada por el Sol**: mirando hacia el Sol la bruma del horizonte brilla como el cielo (luz dispersada
   hacia adelante) y el terreno lejano empalma con el cielo sin corte. **Manga de viento iluminada** de noche.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.

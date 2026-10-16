@@ -2112,6 +2112,14 @@ void main() { f_color = texture(u_tex, v_uv); }
             el = math.degrees(math.atan2(hz, math.hypot(dx, dy)))
             col = (1.0, 1.0, 1.0) if el > ang else (1.0, 0.08, 0.05)
             L.append((x, y, z, *col, 4.5))
+        # luces de obstáculo de las antenas: roja intermitente arriba (unos 30 destellos por minuto) y fija a media
+        # altura; de noche o con poca luz
+        if getattr(self.scn, "masts", None) and (self.env.get("night", 0.0) > 0.25 or self.env.get("overcast", 0.0) > 0.7):
+            on = (self.time * 0.5) % 1.0 < 0.45
+            for (x, y, gz, h) in self.scn.masts:
+                if on:
+                    L.append((x, y, gz - h - 0.6, 1.0, 0.08, 0.04, 6.0))
+                L.append((x, y, gz - h * 0.5, 0.9, 0.06, 0.03, 3.5))
         # faro giratorio del aeródromo: dos haces opuestos (blanco y verde) que giran 12 veces por minuto; se ve un
         # destello cuando el haz pasa por el observador. Encendido de noche o con poca visibilidad
         if getattr(self.scn, "beacons", None) and (self.env.get("night", 0.0) > 0.25 or self.env.get("overcast", 0.0) > 0.7):
