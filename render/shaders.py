@@ -309,11 +309,15 @@ void main() {
     float green = smoothstep(0.0, 0.05, alb.g - max(alb.r, alb.b) * 0.92);
     if (u_sat_on == 0 && dist < 3000.0 && green > 0.0) {
         // pasto a media distancia, donde el escaneo ya no se distingue: matas más oscuras y manchas secas
-        float m1 = textureGrad(u_detail, R2 * uv / 27.0, R2 * dx / 27.0, R2 * dy / 27.0).g;
+        // las matas chicas (27 m) solo de cerca: desde el aire su repetición formaría una cuadrícula
+        float near1 = 1.0 - smoothstep(200.0, 500.0, dist);
+        float m1 = near1 > 0.0 ? textureGrad(u_detail, R2 * uv / 27.0, R2 * dx / 27.0, R2 * dy / 27.0).g : 0.5;
+        float m3 = textureGrad(u_detail, R1 * uv / 211.0, R1 * dx / 211.0, R1 * dy / 211.0).r;
         float m2 = textureGrad(u_detail, uv / 97.0, dx / 97.0, dy / 97.0).b;
         float fade = green * (1.0 - smoothstep(1200.0, 3000.0, dist));
         vec3 dry = mix(vec3(1.0), vec3(1.1, 1.0, 0.62), smoothstep(0.55, 0.72, m2) * 0.5);
-        lit *= mix(vec3(1.0), clamp(1.0 + 1.0 * (m1 - 0.5), 0.8, 1.2) * dry, fade);
+        float tone = clamp(1.0 + 1.0 * (m1 - 0.5) * near1 + 0.8 * (m3 - 0.5), 0.8, 1.2);
+        lit *= mix(vec3(1.0), tone * dry, fade);
     }
     if (u_grass_on == 1 && dist < 600.0) {
         // escaneo fotográfico de pasto (promedio 1) en dos escalas: hojas, matas y huecos de tierra
@@ -687,6 +691,56 @@ void main() {
     v_shade = in_shade + in_corner.y * 0.18;
     gl_Position = u_proj * u_view * vec4(p, 1.0);
     v_logz = 1.0 + gl_Position.w;
+}
+"""
+
+# Humo de quemas y chimeneas: bocanadas con su propia transparencia (la edad las desvanece). Señal del viento.
+SMOKE_VS = COMMON + """
+uniform vec3 u_right;
+uniform vec3 u_up;
+uniform float u_nvar;
+in vec2 in_corner;
+in vec4 in_center;   // xyz + tamaño
+in float in_alpha;
+in float in_var;
+in float in_tone;    // 0 humo gris de quema, 1 vapor blanco de chimenea
+out vec2 v_uv;
+out vec3 v_pos;
+out float v_alpha;
+out float v_tone;
+out float v_y;
+out float v_logz;
+void main() {
+    vec3 p = in_center.xyz + (in_corner.x * u_right + in_corner.y * u_up) * in_center.w;
+    v_pos = p;
+    vec2 uv = in_corner * 0.5 + 0.5;
+    v_uv = vec2((mod(in_var, u_nvar) + uv.x) / u_nvar, uv.y);
+    v_alpha = in_alpha;
+    v_tone = in_tone;
+    v_y = in_corner.y;
+    gl_Position = u_proj * u_view * vec4(p, 1.0);
+    v_logz = 1.0 + gl_Position.w;
+}
+"""
+
+SMOKE_FS = COMMON + FOG_FN + """
+uniform sampler2D u_tex;
+in vec2 v_uv;
+in vec3 v_pos;
+in float v_alpha;
+in float v_tone;
+in float v_y;
+in float v_logz;
+out vec4 f_color;
+void main() {
+    float a = texture(u_tex, v_uv).a * v_alpha;
+    a *= smoothstep(5.0, 40.0, length(v_pos - u_campos));
+    if (a < 0.005) discard;
+    vec3 base = mix(vec3(0.50, 0.49, 0.47), vec3(0.93, 0.93, 0.92), v_tone);
+    vec3 col = base * (u_amb * 1.05 + u_sun_col * (0.5 + 0.15 * v_y));
+    col = mix(fog_color(v_pos), col, fog_factor(v_pos));
+    f_color = vec4(col * a, a);
+    gl_FragDepth = log2(v_logz) * u_logc * 0.5;
 }
 """
 

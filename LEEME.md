@@ -130,6 +130,8 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
 - **El viento se lee en el paisaje**, como en un aterrizaje forzoso real: en lagos y mar las ondas avanzan a favor del
   viento, con calma el agua queda lisa como un espejo, desde unos 10 kt aparecen franjas a lo largo del viento y
   desde unos 14 kt borreguitos de espuma; los árboles se inclinan hacia donde sopla y las ráfagas recorren el bosque.
+  Cerca de los aeródromos hay **humo de quemas y chimeneas** que sube, se acuesta con el viento fuerte y deriva en
+  su dirección (con lluvia fuerte no hay quemas).
 - **Bruma iluminada por el Sol**: mirando hacia el Sol la bruma del horizonte brilla como el cielo (luz dispersada
   hacia adelante) y el terreno lejano empalma con el cielo sin corte. **Manga de viento iluminada** de noche.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.

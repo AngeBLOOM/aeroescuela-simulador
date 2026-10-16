@@ -133,6 +133,7 @@ class Renderer:
         self.p_tree = ctx.program(vertex_shader=sh.TREE_VS, fragment_shader=sh.TREE_FS)
         self.p_bldg = ctx.program(vertex_shader=sh.BLDG_VS, fragment_shader=sh.BLDG_FS)
         self.p_decal = ctx.program(vertex_shader=sh.DECAL_VS, fragment_shader=sh.DECAL_FS)
+        self.p_smoke = ctx.program(vertex_shader=sh.SMOKE_VS, fragment_shader=sh.SMOKE_FS)
         self.decals = []
         self.p_shadow_tree = ctx.program(vertex_shader=sh.SHADOW_TREE_VS, fragment_shader=sh.SHADOW_FS)
         self.p_bright = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BRIGHT_FS)
@@ -276,6 +277,12 @@ class Renderer:
         self.cloud_key = None
         corners = np.array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1], dtype="f4")
         self.vbo_corners = ctx.buffer(corners.tobytes())
+        # humo de quemas y chimeneas cerca de los aeródromos (indica el viento)
+        self.smoke_src = self._smoke_sources()
+        self.vbo_smoke = ctx.buffer(reserve=8 * 4 * self.SMOKE_N * max(1, len(self.smoke_src)), dynamic=True)
+        self.vao_smoke = ctx.vertex_array(self.p_smoke, [
+            (self.vbo_corners, "2f", "in_corner"),
+            (self.vbo_smoke, "4f 1f 1f 1f 4x/i", "in_center", "in_alpha", "in_var", "in_tone")])
         self.env = {}
         self.rscale = 1.0
         self.samples = 4
@@ -813,6 +820,88 @@ class Renderer:
                     ent[2].write(np.ascontiguousarray(data).tobytes())
                 ent[3] = len(data)
         self._sh2_key = None                         # las sombras de los árboles se rehacen con el reparto nuevo
+
+    # ------------------------------------------------------------ humo (quemas y chimeneas)
+    SMOKE_N = 40                 # bocanadas por columna
+
+    def _smoke_sources(self):
+        """Dos o tres columnas de humo a 2,5-8 km de los aeródromos, siempre en tierra: una quema agrícola (humo
+        gris, columna alta) y alguna chimenea (vapor blanco, columna baja). Fijas para cada escenario."""
+        out = []
+        T = self.world.terrain
+        aps = [a for a in self.world.airports if not getattr(a, "offscene", False)][:2]
+        seed = sum(ord(c) for a in aps for c in a.ident)
+        rng = np.random.default_rng(seed)
+        for n, ap in enumerate(aps):
+            kinds = ("quema", "chimenea") if n == 0 else ("quema",)
+            for kind in kinds:
+                for _try in range(30):
+                    a = rng.uniform(0.0, 2.0 * math.pi)
+                    d = rng.uniform(2500.0, 8000.0)
+                    x, y = ap.ref[0] + math.cos(a) * d, ap.ref[1] + math.sin(a) * d
+                    try:
+                        g = float(T.height(x, y))
+                        wet = T.is_water(x, y)
+                    except Exception:
+                        continue
+                    if g > 1.0 and not wet:
+                        out.append((x, y, -g, kind))
+                        break
+        return out
+
+    def _draw_smoke(self, cam, view, proj):
+        if not self.smoke_src:
+            return
+        w = self.world.weather
+        if w.rain > 0.4:
+            return                                       # con lluvia fuerte no hay quemas
+        N = self.SMOKE_N
+        wv = np.array(self._wind_vec(), float)
+        k = float(np.hypot(*wv))
+        wind_ms = float(w.wind_kt) * 0.5144
+        wd = wv / k if k > 1e-4 else np.array([1.0, 0.0])
+        wc = np.array([-wd[1], wd[0]])
+        rows = []
+        for si, (x, y, gz, kind) in enumerate(self.smoke_src):
+            if math.hypot(x - cam.eye[0], y - cam.eye[1]) > 30000.0:
+                continue
+            quema = kind == "quema"
+            life = 110.0 if quema else 45.0
+            i = np.arange(N, dtype=float)
+            age = ((self.time / life + i / N + si * 0.37) % 1.0) * life
+            # sube rápido y se nivela (más bajo con viento fuerte, que la acuesta) mientras deriva con el viento
+            top = (420.0 if quema else 120.0) / (1.0 + wind_ms / 5.0)
+            rise = top * (1.0 - np.exp(-age * (3.5 if quema else 2.5) / top))
+            drift = wind_ms * age * 0.9 + 0.4 * age
+            side = np.sin(age * 0.11 + i * 1.7 + si) * age * (0.35 if quema else 0.15)
+            px = x + wd[0] * drift + wc[0] * side
+            py = y + wd[1] * drift + wc[1] * side
+            pz = gz - 3.0 - rise
+            size = (10.0 + 2.0 * age) if quema else (3.0 + 0.6 * age)
+            fade = np.clip(age / 4.0, 0.0, 1.0) * (1.0 - age / life) ** 1.3
+            alpha = fade * (0.7 if quema else 0.55)
+            tone = np.full(N, 0.0 if quema else 1.0)
+            rows.append(np.column_stack([px, py, pz, size, alpha, i % max(1, self.n_cloud_var), tone, np.zeros(N)]))
+        if not rows:
+            return
+        arr = np.vstack(rows)
+        d = np.linalg.norm(arr[:, :3] - np.asarray(cam.eye)[None], axis=1)
+        arr = arr[np.argsort(-d)].astype(np.float32)               # de atrás hacia adelante
+        self.vbo_smoke.write(arr.tobytes())
+        ps = self.p_smoke
+        self._set_common(ps, view, proj, cam.eye)
+        right = np.cross(cam.fwd, cam.up)
+        right /= np.linalg.norm(right)
+        up = np.cross(right, cam.fwd)
+        ps["u_right"].value = tuple(float(v) for v in right)
+        ps["u_up"].value = tuple(float(v) for v in up)
+        ps["u_nvar"].value = float(self.n_cloud_var)
+        self.t_cloud.use(2)
+        ps["u_tex"] = 2
+        ctx = self.ctx
+        ctx.enable(moderngl.BLEND)
+        ctx.blend_func = moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA
+        self.vao_smoke.render(instances=len(arr), vertices=6)
 
     def _wind_vec(self):
         """Hacia dónde sopla el viento en superficie (unitario, NED) por su fuerza: 0 en calma, 1 con 25 kt o más.
@@ -1819,6 +1908,7 @@ void main() { f_color = texture(u_tex, v_uv); }
                 self.m_deck.render()
             pt["u_model"].write(gl_bytes(np.identity(4)))
             pt["u_tint"].value = (1.0, 1.0, 1.0, 1.0)
+        self._draw_smoke(cam, view, proj)
         if self.vao_cloud is not None:
             ctx.blend_func = moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA
             pc = self.p_cloud
