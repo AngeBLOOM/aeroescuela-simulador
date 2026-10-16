@@ -1929,7 +1929,17 @@ class ScreensMixin:
                 ac.sys.trim_cb = True
             f.blit(s, "⚠ activa   ⏱ programada. El alumno no ve qué falla es: debe reconocer los síntomas.",
                    (x0 + 240, ry + 10), 13, COL["grey"])
-            yy = ry + 50
+            # señales luminosas de la torre (pistola de luz): las ve el alumno desde la torre, apuntadas al avión
+            from sim.emergencies import LIGHT_SIGNALS
+            f.blit(s, "Señal de la torre", (x0, ry + 58), 14, COL["accent"], bold=True)
+            tx = x0 + 150
+            for sig, lab in LIGHT_SIGNALS:
+                tw_ = f.get(12, True).size(lab)[0] + 18
+                if ui.button(s, (tx, ry + 50, tw_, 32), lab, active=em.light_manual == sig, size=12,
+                             tip="La torre apunta la luz al avión; el significado cambia si está en vuelo o en tierra"):
+                    em.light_manual = sig
+                tx += tw_ + 6
+            yy = ry + 96
             for name, txt, ok in em.report()[-4:]:
                 f.blit(s, f"{name}: {txt}", (x0, yy), 13, COL["green"] if ok else COL["amber"])
                 yy += 20

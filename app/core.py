@@ -1982,7 +1982,9 @@ class App(ScreensMixin):
         if lt is not None:
             col, blink = lt
             on = not blink or int(t * 2) % 2 == 0
-            c = (60, 255, 90) if col == "verde" else (255, 50, 40)
+            if col == "alterna":
+                on, col = True, ("rojo" if int(t * 2) % 2 == 0 else "verde")
+            c = {"verde": (60, 255, 90), "rojo": (255, 50, 40), "blanco": (255, 255, 245)}[col]
             r = pygame.Rect(0, self.H * 0.30, 250, 64)
             r.right = self.free_span(lesson_box=False)[1]          # a la izquierda de la tableta si está abierta
             panel_box(s, r, 10, (6, 16, 28, 230), border=c if on else (70, 76, 86))
@@ -1990,9 +1992,11 @@ class App(ScreensMixin):
                 pygame.draw.circle(s, c, (r.x + 34, r.centery), 18)
                 pygame.draw.circle(s, (255, 255, 255), (r.x + 34, r.centery), 7)
             f.blit(s, "SEÑAL DE LA TORRE", (r.x + 64, r.y + 12), 12, COL["grey"], bold=True)
-            meaning = {("verde", False): "Autorizado a aterrizar", ("rojo", False): "Ceda el paso, siga en circuito",
-                       ("verde", True): "Autorizado a rodar", ("rojo", True): "Libere la pista"}[lt]
-            f.blit(s, meaning, (r.x + 64, r.y + 32), 14, COL["white"], bold=True)
+            # el significado aparece a los 8 s: primero el alumno debe interpretarla (en la cabina física no hay cartel)
+            if w.emerg.light_since > 8.0:
+                f.blit(s, w.emerg.light_meaning(w.ac.on_ground), (r.x + 64, r.y + 32), 14, COL["white"], bold=True)
+            else:
+                f.blit(s, "¿Qué significa?", (r.x + 64, r.y + 32), 14, COL["grey"], bold=True)
 
     def draw_replay(self, dt):
         r = self.replay

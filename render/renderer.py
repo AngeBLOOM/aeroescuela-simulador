@@ -2133,6 +2133,21 @@ void main() { f_color = texture(u_tex, v_uv); }
             el = math.degrees(math.atan2(hz, math.hypot(dx, dy)))
             col = (1.0, 1.0, 1.0) if el > ang else (1.0, 0.08, 0.05)
             L.append((x, y, z, *col, 4.5))
+        # señal luminosa de la torre (pistola de luz): un foco muy intenso apuntado al avión desde la cabina de la torre
+        lt = getattr(getattr(world, "emerg", None), "light", None)
+        if lt is not None and getattr(self.scn, "beacons", None):
+            home = getattr(world, "home", None)
+            ref = home.ref if home is not None else (0.0, 0.0)
+            bx, by, bz = min(self.scn.beacons, key=lambda b: math.hypot(b[0] - ref[0], b[1] - ref[1]))
+            col, blink = lt
+            ph = int(self.time * 2.0) % 2 == 0
+            if col == "alterna":
+                col, on = ("rojo" if ph else "verde"), True
+            else:
+                on = (not blink) or ph
+            if on:
+                rgb = {"verde": (0.25, 1.0, 0.4), "rojo": (1.0, 0.1, 0.06), "blanco": (1.0, 1.0, 0.95)}[col]
+                L.append((bx, by, bz + 3.0, *rgb, 9.0))
         # luces de obstáculo de las antenas: roja intermitente arriba (unos 30 destellos por minuto) y fija a media
         # altura; de noche o con poca luz
         if getattr(self.scn, "masts", None) and (self.env.get("night", 0.0) > 0.25 or self.env.get("overcast", 0.0) > 0.7):
