@@ -814,12 +814,21 @@ class Renderer:
                 ent[3] = len(data)
         self._sh2_key = None                         # las sombras de los árboles se rehacen con el reparto nuevo
 
+    def _wind_vec(self):
+        """Hacia dónde sopla el viento en superficie (unitario, NED) por su fuerza: 0 en calma, 1 con 25 kt o más.
+        Lo usan el agua y los árboles, las referencias con que el piloto estima el viento desde el aire."""
+        w = self.world.weather
+        k = min(max(float(w.wind_kt), 0.0), 25.0) / 25.0
+        a = math.radians(w.wind_dir + 180.0)
+        return (math.cos(a) * k, math.sin(a) * k)
+
     def _draw_trees(self):
         if not self.tree_vaos:
             return
         pt = self.p_tree
         pt["u_time"].value = float(self.time)
         pt["u_wind"].value = float(0.3 + min(self.world.weather.wind_kt, 30.0) / 15.0)
+        pt["u_wind_vec"].value = self._wind_vec()
         for vao, _svao, _ib, n, _nv in self.tree_vaos.values():
             if n:
                 vao.render(instances=n)
@@ -1645,9 +1654,13 @@ void main() { f_color = texture(u_tex, v_uv); }
                 pt["u_water"] = 10
                 pt["u_wrect"].value = lake[1]
                 pt["u_time"].value = self.time
+        wv = self._wind_vec()
+        if "u_wind_vec" in pt:
+            pt["u_wind_vec"].value = wv
         self._draw_terrain()
         self.p_water["u_detail"] = 1
         self.p_water["u_time"].value = self.time
+        self.p_water["u_wind_vec"].value = wv
         self.m_water.render()
 
         # pistas

@@ -127,6 +127,9 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   la penumbra suave de una foto, y el suelo alrededor se oscurece un poco junto a las paredes. El Sol y sus sombras
   siguen siendo dinámicos (sirve a cualquier hora). Se rehace con `python tools/hornear_luz.py <blender.exe>`
   (Blender 4.2 LTS, solo hace falta para volver a hornear si cambia la forma de los edificios); queda en `assets/luz`.
+- **El viento se lee en el paisaje**, como en un aterrizaje forzoso real: en lagos y mar las ondas avanzan a favor del
+  viento, con calma el agua queda lisa como un espejo, desde unos 10 kt aparecen franjas a lo largo del viento y
+  desde unos 14 kt borreguitos de espuma; los árboles se inclinan hacia donde sopla y las ráfagas recorren el bosque.
 - **Bruma iluminada por el Sol**: mirando hacia el Sol la bruma del horizonte brilla como el cielo (luz dispersada
   hacia adelante) y el terreno lejano empalma con el cielo sin corte. **Manga de viento iluminada** de noche.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.

@@ -159,6 +159,53 @@ void main() {
 }
 """
 
+# Agua según el viento (lagos y mar): el piloto lee el viento en el agua como en la realidad. Las ondas avanzan a
+# favor del viento; en calma el agua queda como un espejo; desde ~14 kt aparece espuma en franjas a lo largo del
+# viento. Necesita u_detail y u_time declarados antes.
+WATER_FN = """
+uniform vec2 u_wind_vec;       // hacia dónde sopla (unitario) por la fuerza: 0 calma, 1 = 25 kt o más
+vec3 water_shade(vec3 wpos, vec3 deep) {
+    float k = length(u_wind_vec);
+    vec2 wd = k > 0.001 ? u_wind_vec / k : vec2(1.0, 0.0);
+    vec2 wc = vec2(-wd.y, wd.x);
+    vec2 q = vec2(dot(wpos.xy, wd), dot(wpos.xy, wc));      // a lo largo y a lo ancho del viento
+    // coordenadas algo deformadas a gran escala: así la textura no forma una cuadrícula al repetirse
+    q += (texture(u_detail, wpos.xy / 377.0 + 0.43).rg - 0.5) * vec2(60.0, 90.0);
+    float sp = 0.4 + 3.0 * k;                                // las olas viajan a favor del viento
+    // franjas de viento: bandas largas paralelas al viento, más rizadas (se ven desde el aire con 10 kt o más)
+    float lane = smoothstep(0.5, 0.68, texture(u_detail, vec2(q.x * 0.03, q.y) / 110.0 + 0.11).g) * smoothstep(0.2, 0.6, k);
+    vec4 a1 = texture(u_detail, vec2(q.x - u_time * sp, q.y * 0.75) / 31.0);
+    vec2 q2 = mat2(0.956, 0.292, -0.292, 0.956) * vec2(q.x - u_time * sp * 1.4, q.y * 0.8);   // girada 17°
+    vec4 a2 = texture(u_detail, q2 / 7.3 + 0.37);
+    vec4 a3 = texture(u_detail, wpos.xy / 90.0 + vec2(u_time * 0.004, u_time * 0.002));
+    // zonas más y menos rizadas a gran escala: rompen la repetición de la textura y se ven como en el mar real
+    float m = texture(u_detail, wpos.xy / 613.0 + 0.21).r * 0.6 + texture(u_detail, wpos.xy / 241.0 + 0.6).g * 0.4;
+    float amp = (0.05 + 0.9 * k) * clamp(1.0 + 3.0 * (m - 0.5), 0.35, 1.7) * (1.0 + 0.4 * lane);
+    amp *= mix(1.0, 0.45, smoothstep(300.0, 3000.0, length(u_campos - wpos)));   // de lejos se promedia
+    vec2 sl = ((a1.r - 0.5) * wd + (a1.g - 0.5) * wc * 0.6 + (a2.r - 0.5) * wd * 0.8 + (a2.g - 0.5) * wc) * amp
+            + (a3.rg - 0.5) * 0.06;
+    vec3 wn = normalize(vec3(sl, -1.0));
+    vec3 v = normalize(u_campos - wpos);
+    vec3 r = reflect(-v, wn);
+    float fres = 0.02 + 0.98 * pow(1.0 - clamp(dot(v, wn), 0.0, 1.0), 5.0);
+    // cielo reflejado: claro en el horizonte (bruma) y más azul hacia arriba; así se ve la forma de las olas
+    vec3 sky = mix(u_fog_col, u_fog_col * vec3(0.62, 0.74, 1.0), smoothstep(0.02, 0.45, -r.z));
+    vec3 body = deep * (u_amb * 0.9 + u_sun_col * 0.35);
+    vec3 col = mix(body, sky, clamp(0.08 + fres, 0.0, 1.0));
+    float spec = pow(max(dot(r, u_sun), 0.0), mix(600.0, 80.0, k)) * mix(4.0, 1.5, k);
+    col += u_sun_col * spec;
+    if (k > 0.45) {
+        // espuma (borreguitos): manchas sueltas que se agrupan, más y más grandes con el viento
+        float f1 = texture(u_detail, vec2(q.x * 0.5 - u_time * sp * 0.6, q.y) / 9.0).b;
+        float f2 = texture(u_detail, vec2(q.x, q.y) / 70.0 + 0.5).r;
+        float foam = smoothstep(0.7 - 0.18 * (k - 0.45), 0.78, f1) * smoothstep(0.42, 0.58, f2 + 0.15 * lane)
+                   * smoothstep(0.45, 0.85, k);
+        col = mix(col, vec3(0.95) * (u_amb + u_sun_col * 0.7), foam * 0.85);
+    }
+    return col;
+}
+"""
+
 TERRAIN_FS = COMMON + FOG_FN + SHADOW_FN + """
 uniform sampler2D u_detail;
 uniform sampler2D u_grass;
@@ -200,19 +247,10 @@ in vec3 v_norm;
 in vec3 v_col;
 in float v_logz;
 out vec4 f_color;
+""" + WATER_FN + """
 vec3 lake_color(vec3 base) {
-    // agua de lagos y embalses: color profundo, reflejo del cielo según el ángulo y destello del sol
-    vec2 uv = v_pos.xy;
-    float w1 = texture(u_detail, uv / 90.0 + vec2(u_time * 0.004, u_time * 0.002)).r;
-    float w2 = texture(u_detail, uv / 23.0 - vec2(u_time * 0.006, -u_time * 0.003)).g;
-    vec3 wn = normalize(vec3((w1 - 0.5) * 0.25, (w2 - 0.5) * 0.25, -1.0));
-    vec3 v = normalize(u_campos - v_pos);
-    float fres = pow(1.0 - clamp(-v.z, 0.0, 1.0), 4.0);
-    vec3 deep = mix(vec3(0.05, 0.17, 0.24), base * 0.55, 0.18);
-    vec3 col = mix(deep, u_fog_col * 0.95, 0.22 + 0.6 * fres);
-    vec3 r = reflect(-v, wn);
-    float spec = pow(max(dot(r, u_sun), 0.0), 120.0);
-    return col * (u_amb * 0.6 + u_sun_col * 0.55) + u_sun_col * spec * 1.4;
+    // agua de lagos y embalses: color profundo, reflejo del cielo, destello del Sol y el viento en la superficie
+    return water_shade(v_pos, mix(vec3(0.05, 0.17, 0.24), base * 0.55, 0.18));
 }
 vec2 rect_d(vec2 d, vec4 r) {
     // derivada de las coordenadas de textura de una capa (u = este, v = norte)
@@ -323,24 +361,14 @@ WATER_VS = TERRAIN_VS
 WATER_FS = COMMON + FOG_FN + """
 uniform sampler2D u_detail;
 uniform float u_time;
+""" + WATER_FN + """
 in vec3 v_pos;
 in vec3 v_norm;
 in vec3 v_col;
 in float v_logz;
 out vec4 f_color;
 void main() {
-    vec2 uv = v_pos.xy;
-    float w1 = texture(u_detail, uv / 90.0 + vec2(u_time * 0.004, u_time * 0.002)).r;
-    float w2 = texture(u_detail, uv / 23.0 - vec2(u_time * 0.006, -u_time * 0.003)).g;
-    vec3 n = normalize(vec3((w1 - 0.5) * 0.25, (w2 - 0.5) * 0.25, -1.0));
-    vec3 v = normalize(u_campos - v_pos);
-    float fres = pow(1.0 - clamp(-v.z, 0.0, 1.0), 4.0);
-    vec3 deep = vec3(0.05, 0.18, 0.26);
-    vec3 sky = u_fog_col * 0.95;
-    vec3 col = mix(deep, sky, 0.25 + 0.6 * fres);
-    vec3 r = reflect(-v, n);
-    float spec = pow(max(dot(r, u_sun), 0.0), 120.0);
-    col = col * (u_amb * 0.6 + u_sun_col * 0.55) + u_sun_col * spec * 1.4;
+    vec3 col = water_shade(v_pos, vec3(0.05, 0.18, 0.26));
     f_color = vec4(apply_fog(col, v_pos), 1.0);
     gl_FragDepth = log2(v_logz) * u_logc * 0.5;
 }
@@ -940,6 +968,7 @@ void main() {
 TREE_VS = COMMON + """
 uniform float u_time;
 uniform float u_wind;
+uniform vec2 u_wind_vec;       // hacia dónde sopla por la fuerza (0 calma, 1 = 25 kt o más)
 in vec3 in_pos;
 in vec3 in_norm;
 in vec3 in_col;
@@ -960,6 +989,13 @@ void main() {
     float hf = clamp(-in_pos.z, 0.0, 1.0);
     float ph = i_pos.x * 0.07 + i_pos.y * 0.05;
     p.xy += vec2(sin(u_time * 1.6 + ph), cos(u_time * 1.2 + ph * 1.3)) * u_wind * hf * hf * i_scale * 0.012;
+    // inclinación a favor del viento, con ráfagas que avanzan por el bosque en la dirección del viento
+    float kw = length(u_wind_vec);
+    if (kw > 0.001) {
+        vec2 wd = u_wind_vec / kw;
+        float g = 0.55 + 0.45 * sin(dot(i_pos.xy, wd) * 0.045 - u_time * (1.0 + 2.5 * kw) + sin(ph) * 1.5);
+        p.xy += wd * kw * kw * g * hf * hf * i_scale * 0.07;
+    }
     vec3 wp = i_pos + p;
     v_pos = wp;
     v_norm = vec3(c * in_norm.x - s * in_norm.y, s * in_norm.x + c * in_norm.y, in_norm.z);
