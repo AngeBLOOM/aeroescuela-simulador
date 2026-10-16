@@ -138,6 +138,9 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
 - **Luces propias dentro de la nube o la niebla**: con las estroboscópicas encendidas en IMC cada destello ilumina
   toda la nube (desorienta, por eso se apagan), el anticolisión da un pulso rojo y el faro de aterrizaje un
   resplandor que enceguece; de noche mucho más que de día.
+- **Tendido de alta tensión** al norte de Base Escuela: torres de celosía de 32 m, cables con su comba y esferas
+  naranjas y blancas donde el vano cruza alto sobre el valle. Los cables son finos y cuesta verlos, como en la
+  realidad: se aprende a buscar las torres (vuelo bajo, aterrizaje forzoso).
 - **Bruma iluminada por el Sol**: mirando hacia el Sol la bruma del horizonte brilla como el cielo (luz dispersada
   hacia adelante) y el terreno lejano empalma con el cielo sin corte. **Manga de viento iluminada** de noche.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.

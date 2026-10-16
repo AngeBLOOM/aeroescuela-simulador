@@ -160,6 +160,8 @@ class Scenery:
                     mb.quad((*(a_ - w_), zz), (*(b_ - w_), zz), (*(b_ + w_), zz), (*(a_ + w_), zz), (0.85, 0.7, 0.15))
         # antenas de radio en los cerros: obstáculos pintados de rojo y blanco, con luces de noche
         self.masts = self._masts(mb)
+        if world.is_school:                               # tendido de alta tensión que cruza el valle
+            self._power_line(mb, (4200.0, -9000.0), (5200.0, 9000.0))
         if not world.is_school:
             loc = world.location
             try:
@@ -559,6 +561,62 @@ class Scenery:
                 mb.box((x, y, gz - (z0 + z1) / 2), (w, w, z1 - z0), red if k % 2 == 0 else white)
             mb.box((x, y, gz - 0.3), (3.0, 3.0, 0.6), (0.55, 0.55, 0.53))     # base de concreto
         return out
+
+    def _power_line(self, mb, a, b, step=380.0):
+        """Tendido de alta tensión: torres de celosía de 32 m cada ~380 m, cuatro conductores en dos crucetas y el
+        cable de guarda arriba, todos con su comba. Donde el vano cruza alto sobre el valle lleva esferas naranjas
+        y blancas de señalización. Los cables son finos: como en la realidad, cuesta verlos."""
+        T = self.terrain
+        a, b = np.asarray(a, float), np.asarray(b, float)
+        L = float(np.linalg.norm(b - a))
+        d = (b - a) / L
+        side = np.array([-d[1], d[0]])
+        n = int(L // step)
+        grey, wire, orange, white = (0.55, 0.56, 0.57), (0.22, 0.22, 0.23), (0.95, 0.42, 0.08), (0.92, 0.92, 0.9)
+        attach = [(-6.0, 22.0), (6.0, 22.0), (-4.0, 28.0), (4.0, 28.0), (0.0, 32.0)]     # (lateral, altura)
+        towers = []
+        for i in range(n + 1):
+            p = a + d * (i * L / n)
+            g = float(T.height(p[0], p[1]))
+            towers.append((p, -g))
+            # celosía: cuatro patas que se juntan arriba, crucetas y algunas diagonales
+            yaw = math.atan2(d[1], d[0])
+            for sx in (-1, 1):
+                for sy in (-1, 1):
+                    base = np.array([p[0], p[1], -g]) + np.array([*(d * sx * 3.0 + side * sy * 3.0), 0.0])
+                    top = np.array([p[0], p[1], -g - 32.0]) + np.array([*(d * sx * 0.6 + side * sy * 0.6), 0.0])
+                    mb.beam(base, top, 0.3, 0.3, grey)
+            for (lat, h) in ((0.0, 22.0), (0.0, 28.0)):
+                w_ = 6.6 if h < 25 else 4.6
+                p0 = np.array([*(p - side * w_), -g - h])
+                p1 = np.array([*(p + side * w_), -g - h])
+                mb.beam(p0, p1, 0.35, 0.5, grey)
+            for h0, h1 in ((2.0, 12.0), (12.0, 22.0)):
+                for sy in (-1, 1):
+                    q0 = np.array([*(p + side * sy * 3.0 * (1 - h0 / 40)), -g - h0])
+                    q1 = np.array([*(p - side * sy * 3.0 * (1 - h1 / 40)), -g - h1])
+                    mb.beam(q0, q1, 0.15, 0.15, grey)
+        for (p0, z0), (p1, z1) in zip(towers[:-1], towers[1:]):
+            span = float(np.linalg.norm(p1 - p0))
+            mid = (p0 + p1) / 2
+            clear = (z0 + z1) / 2 - (-float(T.height(mid[0], mid[1])))      # altura del vano sobre el suelo
+            for (lat, h) in attach:
+                sag = 0.03 * span
+                segs = 14
+                pts = []
+                for k in range(segs + 1):
+                    t = k / segs
+                    xy = p0 + (p1 - p0) * t + side * lat
+                    z = z0 + (z1 - z0) * t - h + sag * 4 * t * (1 - t)
+                    pts.append(np.array([xy[0], xy[1], z]))
+                for q0, q1 in zip(pts[:-1], pts[1:]):
+                    mb.beam(q0, q1, 0.12, 0.12, wire)
+                if lat == 0.0 and h == 32.0 and clear > 25.0:
+                    for k, t in enumerate((0.3, 0.5, 0.7)):
+                        xy = p0 + (p1 - p0) * t
+                        z = z0 + (z1 - z0) * t - h + sag * 4 * t * (1 - t) + 0.3
+                        mb.box((xy[0], xy[1], z), (0.7, 0.7, 0.7), orange if k % 2 == 0 else white)
+        self.power_towers = [(float(p[0]), float(p[1]), z) for p, z in towers]
 
     def _houses_facade(self, P, sc, yaw, cm):
         """Casas con fachada (ventanas) y techo de tejas a dos aguas."""
