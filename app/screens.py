@@ -1391,8 +1391,8 @@ class ScreensMixin:
             self.efb_tab = CL.suggested_phase(w, lists)
             if lists[0][0] == "Lección" and not all(d for _, d in L.checklist):
                 self.efb_tab = 0
-            if sug:
-                self.efb_tab = len(lists) - 1
+            if sug:                                   # emergencia en curso: su lista (no la última pestaña)
+                self.efb_tab = next(i for i, (n_, _) in enumerate(lists) if n_ == "EMERGENCIAS")
         self.efb_tab = max(0, min(self.efb_tab, len(lists) - 1))
         name, items = lists[self.efb_tab]
         self._efb_draw(s, lists, name, items)
