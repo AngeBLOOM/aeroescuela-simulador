@@ -37,6 +37,9 @@ class Scenery:
         self.runways = self._runways()
         self.lights_static, self.light_groups, self.papis, self.rabbits = self._lights()
         self.windsocks = self._windsocks()
+        if bl.load_model("manga") is not None:          # mástil modelado en Blender (la manga la mueve el renderizador)
+            for (x, y, z) in self.windsocks:
+                self.house_inst.append(("manga", x, y, z, 0.0, 1.0, 1.0, 1.0, 1.0))
         self.town_lights = self._town_lights()
 
     # ---------------------------------------------------------------- terreno

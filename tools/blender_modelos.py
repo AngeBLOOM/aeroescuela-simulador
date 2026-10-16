@@ -743,7 +743,24 @@ def papi(p):
     return dict(grect_margin=1.0)
 
 
-BUILDERS.update({"luminaria": luminaria, "papi": papi, "casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
+def manga(p):
+    """Mástil de la manga de viento: base de concreto, mástil con franjas rojas y blancas, soporte giratorio arriba
+    (la manga la mueve el simulador), dos reflectores para la noche y luz roja de obstáculo en la punta."""
+    box("concrete", (-0.8, -0.8, 0.0), (0.8, 0.8, 0.25), 0.03)
+    cyl("steel", (0, 0, 0.25), (0, 0, 0.45), 0.16, 12)
+    for k in range(7):
+        cyl("red" if k % 2 == 0 else "white", (0, 0, 0.45 + k * 0.9), (0, 0, 0.45 + (k + 1) * 0.9), 0.075, 12)
+    cyl("steel", (0, 0, 6.75), (0, 0, 7.0), 0.11, 12)                             # rodamiento del giro
+    cyl("steel", (0, 0, 7.0), (0, 0, 7.25), 0.05, 8)
+    cyl("lamp", (0, 0, 7.25), (0, 0, 7.42), 0.07, 10)                             # luz de obstáculo
+    for a in (0.0, math.pi):                                                     # reflectores
+        x, y = 0.6 * math.cos(a), 0.6 * math.sin(a)
+        beam("steel", (0, 0, 5.2), (x, y, 5.2), 0.05, 0.05)
+        box("lamp", (x - 0.12, y - 0.12, 5.1), (x + 0.12, y + 0.12, 5.35), 0.02)
+    return dict(grect_margin=2.0)
+
+
+BUILDERS.update({"manga": manga, "luminaria": luminaria, "papi": papi, "casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
 
 
 # ============================================================ árboles (plantillas para el dibujo por instancias)

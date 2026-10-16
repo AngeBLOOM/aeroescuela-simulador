@@ -261,12 +261,20 @@ class Renderer:
         ws = geo.MeshBuilder()
         ws.cylinder((0, 0, 0), (0, 0, -7.0), 0.08, (0.7, 0.7, 0.7), segs=6)
         sock = geo.MeshBuilder()
+        # manga cónica de 3,6 m en cinco bandas naranjas y blancas (cada banda, 3 kt), con el aro de la boca
+        segs = 14
         for i in range(5):
-            col = (1.0, 0.45, 0.05) if i % 2 == 0 else (0.95, 0.95, 0.95)
-            r0 = 0.45 - i * 0.06
-            r1 = 0.45 - (i + 1) * 0.06
-            sock.cone((i * 0.7, 0, 0), ((i + 1) * 0.7, 0, 0), r0, col, segs=8, cap=False) if False else \
-                sock.cylinder((i * 0.7, 0, 0), ((i + 1) * 0.7, 0, 0), (r0 + r1) / 2, col, segs=8, caps=False)
+            col = (1.0, 0.42, 0.04) if i % 2 == 0 else (0.96, 0.96, 0.95)
+            r0, r1 = 0.45 - i * 0.055, 0.45 - (i + 1) * 0.055
+            x0, x1 = i * 0.72, (i + 1) * 0.72
+            for j in range(segs):
+                a0, a1 = 2 * math.pi * j / segs, 2 * math.pi * (j + 1) / segs
+                c0, s0, c1, s1 = math.cos(a0), math.sin(a0), math.cos(a1), math.sin(a1)
+                sock.quad((x0, r0 * c0, r0 * s0), (x1, r1 * c0, r1 * s0), (x1, r1 * c1, r1 * s1), (x0, r0 * c1, r0 * s1), col)
+        for j in range(segs):
+            a0, a1 = 2 * math.pi * j / segs, 2 * math.pi * (j + 1) / segs
+            sock.beam((0.0, 0.47 * math.cos(a0), 0.47 * math.sin(a0)), (0.0, 0.47 * math.cos(a1), 0.47 * math.sin(a1)),
+                      0.04, 0.04, (0.55, 0.56, 0.58))
         self.m_pole = GPUMesh(ctx, self.p_obj, ws.array())
         self.m_sock = GPUMesh(ctx, self.p_obj, sock.array())
         self.m_ring = GPUMesh(ctx, self.p_obj, geo.ring_template())
@@ -2079,10 +2087,18 @@ void main() { f_color = texture(u_tex, v_uv); }
         wdir = math.radians(world.weather.wind_dir + 180.0)
         wspd = world.weather.wind_kt
         droop = math.radians(clamp(70.0 - wspd * 4.5, 0.0, 70.0))
-        for p in self.scn.windsocks:
-            po["u_model"].write(gl_bytes(translate(p)))
-            self.m_pole.render()
-            M = translate((p[0], p[1], p[2] - 6.8)) @ axis_rotation((0, 0, 1), wdir) @ axis_rotation((0, 1, 0), -droop)
+        mast_model = any(it["key"] == "manga" for it in self.house_draw)
+        for k, p in enumerate(self.scn.windsocks):
+            if not mast_model:
+                po["u_model"].write(gl_bytes(translate(p)))
+                self.m_pole.render()
+            # aleteo: con viento la manga oscila un poco de lado y de arriba abajo (más con ráfagas)
+            gust = float(getattr(world.weather, "gust_kt", 0.0))
+            amp = math.radians(2.0 + min(wspd, 25.0) * 0.25 + gust * 0.6)
+            sway = amp * math.sin(self.time * 1.7 + k) + amp * 0.5 * math.sin(self.time * 4.3 + 2 * k)
+            bob = amp * 0.6 * math.sin(self.time * 2.3 + 1.1 * k)
+            M = translate((p[0], p[1], p[2] - 7.0)) @ axis_rotation((0, 0, 1), wdir + sway) @ \
+                axis_rotation((0, 1, 0), -(droop + bob))
             po["u_model"].write(gl_bytes(M))
             po["u_flat"].value = float(min(0.85, env["night"] * 0.95))   # de noche la ilumina su reflector
             self.m_sock.render()
