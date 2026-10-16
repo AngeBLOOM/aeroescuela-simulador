@@ -122,6 +122,13 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   sentido contrario), con luz propia de noche: sirven para decidir a tiempo un despegue abortado. Las pistas con ILS
   tienen luces de borde de alta intensidad (HIRL), con la zona de precaución amarilla en los últimos 600 m; las
   demás, de intensidad media (MIRL) y todas blancas. Las luces más intensas se ven desde más lejos con bruma.
+- **Edificios modelados en Blender**: hangares (zócalo, chapa ondulada que el Sol marca, claraboyas, extractores,
+  canaletas y bajantes, portón con hojas, paneles y ventanas, una hoja abierta al interior con su estructura, oficina
+  anexa con ventanas, aires y alero, bolardos, extintor, reflectores), torre de control (edificio de operaciones,
+  fuste con ventanas de escalera, piso técnico, cabina de vidrio inclinado con parteluces, pasarela con baranda,
+  antenas y faro) y estación de combustible en la plataforma. Paredes blancas con remates azules. Se generan con
+  `python tools/modelos_edificios.py <blender.exe>` (Blender 4.2 LTS; cada modelo en su propio proceso), que
+  modela, hornea la luz del cielo y deja `assets/edificios/<clave>.npz`; sin esos archivos se usan los de código.
 - **Luz horneada en Blender** en hangares y torres: la luz del cielo con sus rebotes (Cycles) está calculada de
   antemano en un mapa de luz por edificio, así los rincones, el pie de las paredes, los aleros y el portón tienen
   la penumbra suave de una foto, y el suelo alrededor se oscurece un poco junto a las paredes. El Sol y sus sombras

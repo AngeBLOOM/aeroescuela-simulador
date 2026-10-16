@@ -105,6 +105,7 @@ class Scenery:
     # ---------------------------------------------------------------- objetos
     def _objects(self):
         self.parked, self.parked_code = [], np.zeros((0, 9), np.float32)
+        self.fuel = []                                    # estación de combustible (modelo de Blender)
         self.hangars, self.towers = [], []                # los dibuja el renderizador con detalle (render/buildings.py)
         self.taxi_signs = []                              # carteles de posición de espera (x, y, z, rumbo, texto, calle)
         self.guide_signs = []                             # carteles amarillos de guía (x, y, z, rumbo, texto, flecha)
@@ -179,17 +180,18 @@ class Scenery:
         # edificios del aeródromo principal
         ge = -esc.elev
         for i, hx in enumerate((50.0, 130.0, 210.0)):
-            self._hangar(mb, (hx, 262.0, ge), 45.0, 34.0, 11.0, yaw=0.0, col=[(0.75, 0.76, 0.78), (0.62, 0.66, 0.70), (0.80, 0.78, 0.72)][i],
+            self._hangar(mb, (hx, 262.0, ge), 45.0, 34.0, 11.0, yaw=0.0, col=[(0.94, 0.94, 0.92), (0.92, 0.93, 0.95), (0.95, 0.93, 0.88)][i],
                          sign=("AEROESCUELA", "HANGAR 2", "HANGAR 3")[i])
         self.towers.append((-60.0, 215.0, ge, 16.0))                                # torre
+        self.fuel = [(262.0, 238.0, ge, 0.0)]                                        # estación de combustible
         mb.box((-60.0, 215.0, ge - 20.3), (11, 11, 0.6), (0.4, 0.4, 0.42))
         mb.box((310.0, 160.0, ge - 3.5), (34, 22, 7), (0.88, 0.86, 0.8))         # terminal
         mb.box((310.0, 160.0, ge - 7.2), (36, 24, 0.5), (0.5, 0.5, 0.52))
         mb.box((290.0, 98.0, ge - 1.5), (6, 3, 3), (0.85, 0.2, 0.15))             # surtidor
         # aeródromo norte
         gn = -vnt.elev
-        self._hangar(mb, (17160.0, 3800.0, gn), 35.0, 28.0, 9.0, yaw=0.0, col=(0.72, 0.74, 0.76), sign="VALLE NORTE")
-        self._hangar(mb, (17160.0, 3740.0, gn), 30.0, 24.0, 8.0, yaw=0.0, col=(0.8, 0.78, 0.7))
+        self._hangar(mb, (17160.0, 3800.0, gn), 35.0, 28.0, 9.0, yaw=0.0, col=(0.93, 0.93, 0.91), sign="VALLE NORTE")
+        self._hangar(mb, (17160.0, 3740.0, gn), 30.0, 24.0, 8.0, yaw=0.0, col=(0.95, 0.93, 0.87))
         self.towers.append((17080.0, 3720.0, gn, 12.0))
         # señalización de rodaje: líneas y carteles de espera antes de cada pista
         self._hold_positions(mb)
@@ -878,7 +880,7 @@ class Scenery:
             tw = [t for t in getattr(self, "towers", []) if math.hypot(t[0] - ap.ref[0], t[1] - ap.ref[1]) < 1500]
             if tw:
                 x, y, gz, h = tw[0]
-                out.append((x, y, gz - h - 5.2))
+                out.append((x, y, gz - h - 6.6))
                 continue
             p = np.asarray(ap.ref, float).copy()
             for rw in ap.runways:

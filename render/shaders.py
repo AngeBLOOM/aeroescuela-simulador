@@ -876,7 +876,7 @@ void main() {
         // luz del cielo horneada en Blender (Cycles, con rebotes): rincones, aleros, el pie de las paredes y el
         // interior del portón; vale 1 en un techo a cielo abierto y ~0,6 en una pared sin obstáculos
         vec3 lm = texture(u_lmap, v_uv2).rgb * 1.6;
-        amb = u_amb * lm * 1.3;
+        amb = u_amb * lm * 1.5;
         ao = clamp(dot(lm, vec3(0.333)) * 1.5, 0.35, 1.0);
         aod = 1.0;                                   // el Sol y sus sombras los pone el mapa de sombras
     }

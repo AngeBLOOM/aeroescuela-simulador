@@ -191,14 +191,77 @@ def apply_light(tm, data):
     return ok
 
 
-def ground_quad(x, y, gz, yaw, rect, lift=0.1):
+# ---------------------------------------------------------------- modelos hechos en Blender (tools/modelos_edificios.py)
+INTERIOR_MATS = {"interiorfloor", "steelin"}      # interior del hangar: penumbra fija, sin mapa de luz
+INTERIOR_AO = 0.22
+MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "edificios")
+_model_cache = {}
+
+
+def load_model(key):
+    """Modelo de Blender: dict con 'parts' {material: filas (n, 10) = pos, normal, uv, uv del mapa de luz, en ejes
+    locales x a lo largo, y a lo ancho, z abajo}, 'lm', 'ground', 'grect' y 'model'=True. None si no existe."""
+    if key not in _model_cache:
+        try:
+            with np.load(os.path.join(MODEL_DIR, key + ".npz")) as z:
+                d = {k: z[k] for k in z.files}
+            d["parts"] = {k[2:]: d.pop(k) for k in list(d) if k.startswith("m_")}
+            d["model"] = True
+            _model_cache[key] = d
+        except (OSError, ValueError):
+            _model_cache[key] = None
+    return _model_cache[key]
+
+
+def add_model(tm, data, x, y, gz, yaw, rename=None):
+    """Agrega una copia del modelo girada yaw y apoyada en (x, y, gz) a la malla por materiales."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    rename = rename or {}
+    for mat, rows in data["parts"].items():
+        out = np.empty((len(rows), 11), np.float64)
+        px, py = rows[:, 0], rows[:, 1]
+        out[:, 0] = x + px * c - py * s
+        out[:, 1] = y + px * s + py * c
+        out[:, 2] = gz + rows[:, 2]
+        nx, ny = rows[:, 3], rows[:, 4]
+        out[:, 3] = nx * c - ny * s
+        out[:, 4] = nx * s + ny * c
+        out[:, 5] = rows[:, 5]
+        out[:, 6:8] = rows[:, 6:8]
+        out[:, 8] = INTERIOR_AO if mat in INTERIOR_MATS else 1.0
+        out[:, 9:11] = rows[:, 8:10]
+        tm.parts.setdefault(rename.get(mat, mat), []).extend(list(out))
+
+
+def hangar_sign(tm, x, y, gz, ln, wd, ht, yaw, sign_key):
+    """Letrero del hangar de Blender (el texto cambia de un hangar a otro, así que va aparte): sobre el portón."""
+    if sign_key is None:
+        return
+    c, s = math.cos(yaw), math.sin(yaw)
+
+    def W(px, py, h):
+        return (x + px * c - py * s, y + px * s + py * c, gz - h)
+    b = wd / 2
+    dh = min(0.78 * ht, ht - 1.6)
+    sw = min(0.55 * ln, 22.0)
+    sh = min(1.6, ht - dh - 1.2)
+    if sh > 0.6:
+        z0 = dh + 1.05
+        tm.quad(f"sign:{sign_key}", W(-sw / 2, -b - 0.06, z0), W(sw / 2, -b - 0.06, z0),
+                W(sw / 2, -b - 0.06, z0 + sh), W(-sw / 2, -b - 0.06, z0 + sh), [(1, 0), (0, 0), (0, 1), (1, 1)])
+
+
+def ground_quad(x, y, gz, yaw, rect, lift=0.1, model=False):
     """Parche de suelo con la penumbra horneada alrededor de un edificio: 6 vértices [pos, uv] (en el mundo)."""
     c, s = math.cos(yaw), math.sin(yaw)
     x0, y0, x1, y1 = (float(v) for v in rect)
     out = []
     for (px, py) in ((x0, y0), (x1, y0), (x1, y1), (x0, y0), (x1, y1), (x0, y1)):
-        # u a lo largo del este local (y), v del norte local (x): así lo despliega el horneado
-        out.append((x + px * c - py * s, y + px * s + py * c, gz - lift, (py - y0) / (y1 - y0), (px - x0) / (x1 - x0)))
+        if model:                                    # modelo de Blender: u a lo largo (x local), v a lo ancho
+            uv = ((px - x0) / (x1 - x0), (py - y0) / (y1 - y0))
+        else:                                        # horneado de la malla por código: u = este local, v = norte
+            uv = ((py - y0) / (y1 - y0), (px - x0) / (x1 - x0))
+        out.append((x + px * c - py * s, y + px * s + py * c, gz - lift, *uv))
     return out
 
 
@@ -474,24 +537,34 @@ def add_tower(tm, x, y, gz, shaft_h=16.0):
 
 MATERIALS = {
     # material: (color base, textura, transparente)
-    "roof": ((0.5, 0.52, 0.55, 1.0), "corrugated", False),
-    "door": ((0.78, 0.8, 0.82, 1.0), "door", False),
-    "trim": ((0.3, 0.32, 0.35, 1.0), None, False),
-    "gutter": ((0.82, 0.83, 0.84, 1.0), None, False),
+    "roof": ((0.74, 0.76, 0.78, 1.0), "corrugated", False),
+    "door": ((0.9, 0.91, 0.92, 1.0), "door", False),
+    "trim": ((0.14, 0.3, 0.56, 1.0), None, False),          # remates azules (frontis, esquineros, refuerzos)
+    "gutter": ((0.93, 0.93, 0.92, 1.0), None, False),
     "glass": ((0.1, 0.14, 0.18, 1.0), None, False),
     "concrete": ((0.95, 0.95, 0.95, 1.0), "concrete", False),
-    "tower": ((0.9, 0.88, 0.84, 1.0), "concrete", False),
+    "tower": ((0.95, 0.94, 0.91, 1.0), "concrete", False),
     "towerglass": ((0.25, 0.4, 0.45, 0.42), None, True),
     "plinth": ((0.78, 0.77, 0.74, 1.0), "concrete", False),
     "interior": ((0.42, 0.43, 0.45, 1.0), "corrugated", False),
     "interiorfloor": ((0.55, 0.55, 0.53, 1.0), "concrete", False),
-    "steel": ((0.38, 0.4, 0.43, 1.0), None, False),
+    "steel": ((0.82, 0.84, 0.86, 1.0), None, False),
     "skylight": ((0.78, 0.82, 0.84, 1.0), None, False),
     "frame": ((0.22, 0.23, 0.25, 1.0), None, False),
     "lamp": ((0.95, 0.93, 0.85, 1.0), None, False),
-    "office": ((0.88, 0.86, 0.8, 1.0), "concrete", False),
-    "doorpers": ((0.45, 0.47, 0.5, 1.0), "door", False),
+    "office": ((0.96, 0.95, 0.92, 1.0), "concrete", False),
+    "doorpers": ((0.16, 0.32, 0.58, 1.0), "door", False),
     "ac": ((0.82, 0.82, 0.8, 1.0), None, False),
+    "railing": ((0.92, 0.93, 0.94, 1.0), None, False),
+    "roofdeck": ((0.45, 0.45, 0.43, 1.0), "concrete", False),
+    "red": ((0.72, 0.12, 0.1, 1.0), None, False),
+    "white": ((0.92, 0.92, 0.9, 1.0), None, False),
+    "tank": ((0.9, 0.9, 0.88, 1.0), None, False),
+    "canopy": ((0.95, 0.95, 0.94, 1.0), None, False),
+    "pump": ((0.75, 0.2, 0.15, 1.0), None, False),
+    "brick": ((0.62, 0.4, 0.32, 1.0), "concrete", False),
+    "steelin": ((0.38, 0.4, 0.43, 1.0), None, False),
+    "yellow": ((0.95, 0.75, 0.1, 1.0), None, False),
 }
 CORRUGATED = 26.0                 # ondas de la chapa por cuadro de textura (4 m): el shader las ilumina con el Sol
 

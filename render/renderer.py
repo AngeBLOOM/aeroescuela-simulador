@@ -678,6 +678,22 @@ class Renderer:
     SH2_UNIT = 12
 
     # ------------------------------------------------------------ hangares y torres con detalle
+    def _face_runway(self, x, y):
+        """Giro para que el frente (-y local) de un edificio mire a la pista más cercana (torres de control)."""
+        best = None
+        for ap in self.world.airports:
+            for rw in ap.runways:
+                d = math.hypot(rw.center[0] - x, rw.center[1] - y)
+                if best is None or d < best[0]:
+                    lat = float((np.array([x, y]) - rw.center) @ rw.right)
+                    foot = np.array([x, y]) - rw.right * lat              # punto de la pista frente al edificio
+                    best = (d, foot)
+        if best is None:
+            return 0.0
+        dx, dy = best[1][0] - x, best[1][1] - y
+        n = math.hypot(dx, dy) or 1.0
+        return math.atan2(dx / n, -dy / n)
+
     def _build_buildings(self):
         """Hangares (chapa ondulada, portones, techo a dos aguas, letrero) y torres de control, con texturas
         generadas y penumbra; se dibujan como un modelo más (mismo sombreado y sombras que los aviones)."""
@@ -696,8 +712,15 @@ class Renderer:
         # edificios de igual forma lo comparten y se agrupan en la misma malla. Sin mapa, la penumbra por vértice
         groups = {None: bl.TexMesh()}
         ground = {}
+        datas = {}
 
-        def place(key, build, x, y, gz, yaw):
+        def place(key, build, x, y, gz, yaw, rename=None):
+            model = bl.load_model(key) if key else None
+            if model is not None:                        # modelo hecho en Blender, con su luz horneada
+                datas[key] = model
+                bl.add_model(groups.setdefault(key, bl.TexMesh()), model, x, y, gz, yaw, rename)
+                ground.setdefault(key, []).extend(bl.ground_quad(x, y, gz, yaw, model["grect"], model=True))
+                return
             data = bl.load_light(key) if key else None
             if data is None:
                 build(groups[None])
@@ -708,18 +731,25 @@ class Renderer:
                 for m_, rows in t1.parts.items():
                     groups[None].parts.setdefault(m_, []).extend(rows)
                 return
+            datas[key] = data
             g = groups.setdefault(key, bl.TexMesh())
             for m_, rows in t1.parts.items():
                 g.parts.setdefault(m_, []).extend(rows)
             ground.setdefault(key, []).extend(bl.ground_quad(x, y, gz, yaw, data["grect"]))
 
+        tm = groups[None]
         for (x, y, gz, ln, wd, ht, yaw, col, sign) in hs:
             ck = ",".join(f"{c:.3f}" for c in col)
-            place(bl.hangar_key(ln, wd, ht),
-                  lambda t, a=(x, y, gz, ln, wd, ht, yaw, ck, sign): bl.add_hangar(t, *a), x, y, gz, yaw)
+            key = bl.hangar_key(ln, wd, ht)
+            place(key, lambda t, a=(x, y, gz, ln, wd, ht, yaw, ck, sign): bl.add_hangar(t, *a), x, y, gz, yaw,
+                  rename={"wall": f"wall:{ck}"})
+            if bl.load_model(key) is not None:
+                bl.hangar_sign(tm, x, y, gz, ln, wd, ht, yaw, sign)
         for (x, y, gz, h) in tw:
-            place(bl.tower_key(h), lambda t, a=(x, y, gz, h): bl.add_tower(t, *a), x, y, gz, 0.0)
-        tm = groups[None]
+            place(bl.tower_key(h), lambda t, a=(x, y, gz, h): bl.add_tower(t, *a), x, y, gz, self._face_runway(x, y))
+        for (x, y, gz, yaw) in getattr(self.scn, "fuel", []):
+            if bl.load_model("combustible") is not None:
+                place("combustible", lambda t: None, x, y, gz, yaw)
         for (x, y, gz, yaw, mand, loc) in signs:
             bl.add_taxi_sign(tm, x, y, gz, yaw, mand, loc)
         for (x, y, gz, yaw, front, back) in dsigns:
@@ -731,7 +761,7 @@ class Renderer:
         for key in groups:
             if key is None:
                 continue
-            data = bl.load_light(key)
+            data = datas[key]
             img = np.ascontiguousarray(data["lm"])
             t_ = ctx.texture((img.shape[1], img.shape[0]), 3, img.tobytes())
             t_.build_mipmaps()
