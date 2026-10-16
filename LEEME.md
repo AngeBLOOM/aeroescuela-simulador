@@ -132,7 +132,8 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
 - **Pueblos con casas de Blender**: casas de una planta con techo de teja a dos aguas, casas con corredor y techo a
   cuatro aguas, casas de dos plantas con platabanda, balcón y tanque de agua, casas en L y edificios de 4 y 10 pisos
   con balcones; cada casa con su color pastel. Se dibujan por instancias con dos niveles de detalle (el modelo
-  completo hasta 2,5 km y una versión simple hasta 14 km).
+  completo hasta 2,5 km y una versión simple hasta 14 km). Las granjas del campo usan las mismas casas. De noche
+  se encienden algunas ventanas con luz cálida, salteadas como en un pueblo real.
 - **Luz horneada en Blender** en hangares y torres: la luz del cielo con sus rebotes (Cycles) está calculada de
   antemano en un mapa de luz por edificio, así los rincones, el pie de las paredes, los aleros y el portón tienen
   la penumbra suave de una foto, y el suelo alrededor se oscurece un poco junto a las paredes. El Sol y sus sombras

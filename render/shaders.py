@@ -919,8 +919,18 @@ void main() {
     v_logz = 1.0 + gl_Position.w;
 }
 """
-MODEL_INST_FS = MODEL_FS.replace("in float v_logz;", "in float v_logz;\nin vec3 v_itint;\nuniform int u_itint_on;") \
-    .replace("vec3 base = c.rgb * u_tint.rgb;", "vec3 base = c.rgb * u_tint.rgb * (u_itint_on == 1 ? v_itint : vec3(1.0));")
+_WINLIT = """
+    if (u_winlit > 0.0) {
+        // ventanas encendidas de noche: algunas sí y otras no (según el lugar), con luz cálida
+        vec3 cell = floor(v_pos / vec3(1.6, 1.6, 2.9));
+        float hsh = fract(sin(dot(cell, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+        lit += vec3(1.0, 0.72, 0.38) * u_winlit * step(0.55, hsh) * (0.6 + 0.6 * fract(hsh * 7.0));
+    }
+    f_color = vec4(apply_fog(lit, v_pos), c.a * u_tint.a);"""
+MODEL_INST_FS = MODEL_FS.replace("in float v_logz;", "in float v_logz;\nin vec3 v_itint;\nuniform int u_itint_on;\n"
+                                 "uniform float u_winlit;") \
+    .replace("vec3 base = c.rgb * u_tint.rgb;", "vec3 base = c.rgb * u_tint.rgb * (u_itint_on == 1 ? v_itint : vec3(1.0));") \
+    .replace("    f_color = vec4(apply_fog(lit, v_pos), c.a * u_tint.a);", _WINLIT)
 
 
 # ---------------------------------------------------------------- penumbra horneada en el suelo

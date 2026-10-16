@@ -725,7 +725,8 @@ class Renderer:
                         t_.anisotropy = 8.0
                         texs[tkey] = t_
                     tex = texs[tkey]
-                parts.append((vao, tex, dict(color=list(col), tint=mat in bl.TINTED, lamp=(mat == "lamp"))))
+                parts.append((vao, tex, dict(color=list(col), tint=mat in bl.TINTED, lamp=(mat == "lamp"),
+                                             glass=(mat == "glass"))))
                 svaos.append(ctx.vertex_array(self.p_shadow_tree, [(vbo, "3f 32x", "in_pos"),
                                                                     (ib, "3f 1f 1f 12x/i", "i_pos", "i_yaw", "i_scale")]))
             # versión simple para lejos: caja de paredes con el color de la casa y techo (a dos aguas si es de teja)
@@ -805,6 +806,7 @@ class Renderer:
                 pi["u_base"].value = tuple(float(c) for c in m["color"])
                 pi["u_itint_on"].value = 1 if m["tint"] else 0
                 pi["u_emis"].value = 1.8 * night if m["lamp"] else 0.0
+                pi["u_winlit"].value = night if m["glass"] else 0.0
                 if tex is not None:
                     tex.use(9)
                     pi["u_tex"].value = 9
@@ -814,6 +816,7 @@ class Renderer:
                 if item["n"]:
                     vao.render(instances=item["n"])
             if item["nf"]:                                # versión simple: paredes con su color y techo de teja
+                pi["u_winlit"].value = 0.0
                 pi["u_lm_on"].value = 0
                 pi["u_has_tex"].value = 0
                 ns = item["split"]

@@ -269,7 +269,14 @@ class Scenery:
             P = np.array(keep)
             m = len(P)
             sc = np.column_stack([rng.uniform(9, 20, m), rng.uniform(7, 12, m), rng.uniform(5, 9, m)])
-            self._houses_facade(P, sc, rng.uniform(0, math.pi, m), rng.uniform(0.85, 1.1, (m, 3)))
+            if models:                                   # casas de campo: de una planta, con su color
+                kind = rng.choice([0, 1, 3], m, p=[0.4, 0.35, 0.25])
+                tint = np.array(HOUSE_COLORS)[rng.integers(0, len(HOUSE_COLORS), m)]
+                yaw = rng.uniform(0, math.pi * 2, m)
+                for i in range(m):
+                    self.house_inst.append((HOUSE_KEYS[kind[i]], *P[i], yaw[i], rng.uniform(0.95, 1.15), *tint[i]))
+            else:
+                self._houses_facade(P, sc, rng.uniform(0, math.pi, m), rng.uniform(0.85, 1.1, (m, 3)))
         # árboles en bosques (cerca de los aeródromos y a lo largo del valle)
         self._trees()
         # carreteras
