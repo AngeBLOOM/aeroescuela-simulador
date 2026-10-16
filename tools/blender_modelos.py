@@ -41,6 +41,8 @@ MATS = {
     "roofdeck": ((0.42, 0.42, 0.4), 4.0), "red": ((0.7, 0.12, 0.1), 1.0), "white": ((0.9, 0.9, 0.88), 1.0),
     "tank": ((0.88, 0.88, 0.86), 2.0), "canopy": ((0.86, 0.86, 0.84), 2.0), "pump": ((0.75, 0.2, 0.15), 1.0),
     "brick": ((0.6, 0.38, 0.3), 2.0), "steelin": ((0.38, 0.4, 0.43), 1.0), "yellow": ((0.95, 0.75, 0.1), 1.0),
+    "tile": ((0.6, 0.3, 0.2), 2.0), "housewall": ((0.85, 0.8, 0.7), 3.0), "slab": ((0.55, 0.55, 0.53), 6.0),
+    "tinaco": ((0.1, 0.1, 0.11), 1.0), "woodoor": ((0.4, 0.25, 0.15), 1.0),
 }
 NOBAKE = {"towerglass"}             # transparentes: no tapan la luz ni llevan mapa de luz
 # el interior del hangar queda en penumbra fija (no gasta mapa de luz: así sobra resolución para el exterior)
@@ -206,7 +208,7 @@ def cut(ob, cutters):
         co["cutter"] = True
 
 
-def window(axis, at, u0, u1, z0, z1, depth, frame=0.07, mullion=True):
+def window(axis, at, u0, u1, z0, z1, depth, frame=0.07, mullion=True, light=False):
     """Ventana en una pared perpendicular a 'axis' ('x' o 'y') en la coordenada 'at' (cara exterior), entre u0-u1
     a lo largo de la pared y z0-z1 de alto: devuelve el corte para la pared y agrega el marco y el vidrio hundido."""
     s = 1.0 if depth > 0 else -1.0                   # hacia dónde está el interior
@@ -217,9 +219,10 @@ def window(axis, at, u0, u1, z0, z1, depth, frame=0.07, mullion=True):
     glass_w = at + s * d * 0.55
     box("glass", P(u0, glass_w - 0.01, z0), P(u1, glass_w + 0.01, z1))
     f = frame
-    for (a0, a1, b0, b1) in ((u0 - f, u1 + f, z0 - f, z0), (u0 - f, u1 + f, z1, z1 + f),
-                             (u0 - f, u0, z0, z1), (u1, u1 + f, z0, z1)):
-        box("frame", P(a0, at - s * 0.03, b0), P(a1, at + s * d * 0.6, b1))
+    if not light:                                    # marco completo (en las casas basta el vano y el alféizar)
+        for (a0, a1, b0, b1) in ((u0 - f, u1 + f, z0 - f, z0), (u0 - f, u1 + f, z1, z1 + f),
+                                 (u0 - f, u0, z0, z1), (u1, u1 + f, z0, z1)):
+            box("frame", P(a0, at - s * 0.03, b0), P(a1, at + s * d * 0.6, b1))
     if mullion and (u1 - u0) > 1.1:
         m = (u0 + u1) / 2
         box("frame", P(m - 0.03, glass_w - 0.03, z0), P(m + 0.03, glass_w + 0.03, z1))
@@ -527,6 +530,197 @@ def _prueba(p):
 
 
 BUILDERS = {"hangar": hangar, "torre": tower, "combustible": fuel, "prueba": _prueba}
+
+
+# ============================================================ casas y edificios de los pueblos
+def gable_roof(x0, x1, y0, y1, zw, rise, ov=0.5, mat="tile", along="x"):
+    """Techo a dos aguas con cumbrera a lo largo de 'along', aleros de ov m y hastiales de pared."""
+    if along == "x":
+        yc = (y0 + y1) / 2
+        half = (y1 - y0) / 2
+        slope = rise / half
+        for sy in (-1, 1):
+            ye = yc + sy * (half + ov)
+            ze = zw - ov * slope
+            poly = [(ye, ze), (yc, zw + rise), (yc, zw + rise + 0.12), (ye, ze + 0.12)]
+            slab_yz(mat, poly[::sy], x0 - ov, x1 + ov)
+        for xe, x_in in ((x0, x0 + 0.2), (x1 - 0.2, x1)):
+            slab_yz("housewall", [(y0, zw), (y1, zw), (yc, zw + rise)], xe, x_in)
+        box("tile", (x0 - ov, yc - 0.14, zw + rise + 0.05), (x1 + ov, yc + 0.14, zw + rise + 0.24))   # caballete
+    else:
+        xc = (x0 + x1) / 2
+        half = (x1 - x0) / 2
+        slope = rise / half
+        for sx in (-1, 1):
+            xe = xc + sx * (half + ov)
+            ze = zw - ov * slope
+            poly = [(xe, ze), (xc, zw + rise), (xc, zw + rise + 0.12), (xe, ze + 0.12)]
+            slab_xz(mat, poly[::-sx], y0 - ov, y1 + ov)
+        for ye, y_in in ((y0, y0 + 0.2), (y1 - 0.2, y1)):
+            slab_xz("housewall", [(x0, zw), (x1, zw), (xc, zw + rise)][::-1], ye, y_in)
+        box("tile", (xc - 0.14, y0 - ov, zw + rise + 0.05), (xc + 0.14, y1 + ov, zw + rise + 0.24))
+
+
+def hip_roof(x0, x1, y0, y1, zw, rise, ov=0.6, mat="tile"):
+    """Techo a cuatro aguas (con espesor) sobre el rectángulo, con alero."""
+    X0, X1, Y0, Y1 = x0 - ov, x1 + ov, y0 - ov, y1 + ov
+    w, d = X1 - X0, Y1 - Y0
+    slope = rise / (min(w, d) / 2 - ov)
+    ze = zw - ov * slope
+    zr = ze + slope * min(w, d) / 2
+    if w >= d:
+        r0, r1 = (X0 + d / 2, (Y0 + Y1) / 2), (X1 - d / 2, (Y0 + Y1) / 2)
+    else:
+        r0, r1 = ((X0 + X1) / 2, Y0 + w / 2), ((X0 + X1) / 2, Y1 - w / 2)
+    bm = bmesh.new()
+    a = bm.verts.new((X0, Y0, ze)); b = bm.verts.new((X1, Y0, ze))
+    c = bm.verts.new((X1, Y1, ze)); dd = bm.verts.new((X0, Y1, ze))
+    p = bm.verts.new((*r0, zr)); q = bm.verts.new((*r1, zr))
+    if w >= d:
+        faces = [(a, b, q, p), (c, dd, p, q), (b, c, q), (dd, a, p)]
+    else:
+        faces = [(b, c, q, p), (dd, a, p, q), (a, b, p), (c, dd, q)]
+    for f in faces:
+        bm.faces.new(f)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    ob = obj_from_bm(bm, mat)
+    md = ob.modifiers.new("espesor", "SOLIDIFY")
+    md.thickness = 0.12
+    md.offset = 1.0
+    box("housewall", (x0, y0, zw - 0.05), (x1, y1, zw + 0.05))
+    return ob
+
+
+def house_windows(x0, x1, y0, y1, z0, z1, front, back, sides, door=None, depth=0.18, frame=0.06):
+    """Cortes de ventanas (y puerta) en un bloque de casa: devuelve la lista de cortes y agrega marcos y vidrios."""
+    cuts = []
+    W = 1.1
+
+    def spread(a, b, n):
+        if n <= 0:
+            return []
+        step = (b - a) / n
+        return [a + step * (i + 0.5) for i in range(n)]
+    for (at, u0, u1, n, ax, dsg) in ((y0, x0, x1, front, "y", 1), (y1, x0, x1, back, "y", -1),
+                                      (x0, y0, y1, sides, "x", 1), (x1, y0, y1, sides, "x", -1)):
+        cs = spread(u0 + 0.8, u1 - 0.8, n)
+        for c in cs:
+            if door is not None and ax == "y" and dsg == 1 and abs(c - door) < 1.4:
+                continue
+            cuts.append(window(ax, at, c - W / 2, c + W / 2, z0, z1, dsg * depth, frame, mullion=False, light=True))
+    if door is not None:
+        cuts.append(((door - 0.5, y0 - 0.2, 0.25), (door + 0.5, y0 + 0.3, 2.3)))
+        box("woodoor", (door - 0.5, y0 + 0.12, 0.25), (door + 0.5, y0 + 0.17, 2.28))
+        for (a0, a1, b0, b1) in ((door - 0.58, door - 0.5, 0.25, 2.36), (door + 0.5, door + 0.58, 0.25, 2.36),
+                                 (door - 0.58, door + 0.58, 2.28, 2.36)):
+            box("frame", (a0, y0 - 0.02, b0), (a1, y0 + 0.14, b1))
+    return cuts
+
+
+def casa_a(p):
+    """Casa de una planta, techo de teja a dos aguas, puerta con alerito y aire acondicionado."""
+    x0, x1, y0, y1, h = -5.0, 5.0, -4.0, 4.0, 3.0
+    box("plinth", (x0 - 0.05, y0 - 0.05, 0), (x1 + 0.05, y1 + 0.05, 0.3))
+    body = box("housewall", (x0, y0, 0.25), (x1, y1, h))
+    cut(body, house_windows(x0, x1, y0, y1, 1.0, 2.2, 3, 2, 1, door=0.0))
+    gable_roof(x0, x1, y0, y1, h, 1.9, 0.5)
+    box("tile", (-1.0, y0 - 1.0, 2.55), (1.0, y0, 2.65))                  # alerito de la puerta
+    box("ac", (x1, 1.0, 1.6), (x1 + 0.3, 1.8, 2.2), 0.02)
+    box("plinth", (-0.8, y0 - 1.0, 0), (0.8, y0, 0.2))                    # escalón
+    return dict(grect_margin=5.0)
+
+
+def casa_b(p):
+    """Casa con techo de teja a cuatro aguas y corredor al frente con columnas."""
+    x0, x1, y0, y1, h = -6.0, 6.0, -4.5, 4.5, 3.0
+    box("plinth", (x0 - 0.05, y0 - 2.6, 0), (x1 + 0.05, y1 + 0.05, 0.3))
+    body = box("housewall", (x0, y0, 0.25), (x1, y1, h))
+    cut(body, house_windows(x0, x1, y0, y1, 1.0, 2.2, 4, 3, 2, door=-1.4))
+    hip_roof(x0, x1, y0, y1, h, 2.0, 0.6)
+    # corredor: techo de teja en pendiente sobre columnas blancas
+    slab_yz("tile", [(y0, h - 0.1), (y0 - 2.6, h - 0.65), (y0 - 2.6, h - 0.53), (y0, h + 0.02)], x0 - 0.2, x1 + 0.2)
+    for xc in np.linspace(x0 + 0.3, x1 - 0.3, 4):
+        cyl("white", (xc, y0 - 2.3, 0.3), (xc, y0 - 2.3, h - 0.6), 0.12, 10)
+    for xc in np.linspace(x0 + 0.3, x1 - 0.3, 4)[:-1]:
+        beam("railing", (xc + 0.1, y0 - 2.3, 0.9), (xc + 3.7, y0 - 2.3, 0.9), 0.05, 0.05)
+    return dict(grect_margin=5.0)
+
+
+def casa_c(p):
+    """Casa de dos plantas con platabanda: balcón con baranda al frente, pretil y tanque de agua en el techo."""
+    x0, x1, y0, y1, h = -4.5, 4.5, -4.0, 4.0, 6.2
+    box("plinth", (x0 - 0.05, y0 - 0.05, 0), (x1 + 0.05, y1 + 0.05, 0.3))
+    body = box("housewall", (x0, y0, 0.25), (x1, y1, h))
+    cuts = house_windows(x0, x1, y0, y1, 1.0, 2.2, 2, 2, 1, door=1.8)
+    cuts += house_windows(x0, x1, y0, y1, 4.1, 5.3, 2, 2, 1)
+    cut(body, cuts)
+    box("slab", (x0 - 0.3, y0 - 1.3, 3.1), (x1 + 0.3, y0, 3.3), 0.02)         # losa del balcón
+    for z in (3.9, 4.3):
+        beam("railing", (x0 - 0.25, y0 - 1.25, z), (x1 + 0.25, y0 - 1.25, z), 0.05, 0.05)
+    for xc in np.linspace(x0 - 0.25, x1 + 0.25, 10):
+        beam("railing", (xc, y0 - 1.25, 3.3), (xc, y0 - 1.25, 4.3), 0.035, 0.035)
+    box("housewall", (x0 - 0.05, y0 - 0.05, h), (x1 + 0.05, y1 + 0.05, h + 0.7))      # pretil
+    box("slab", (x0 + 0.15, y0 + 0.15, h), (x1 - 0.15, y1 - 0.15, h + 0.75))
+    for xx, yy in ((x0 + 0.8, y1 - 0.8), (x1 - 0.8, y1 - 0.8)):
+        for dx_ in (-0.3, 0.3):
+            beam("steel", (xx + dx_, yy, h + 0.75), (xx + dx_, yy, h + 1.5), 0.06, 0.06)
+    cyl("tinaco", (x0 + 0.8, y1 - 0.8, h + 1.5), (x0 + 0.8, y1 - 0.8, h + 2.6), 0.6, 14)
+    box("ac", (x1, -1.0, 4.4), (x1 + 0.3, -0.2, 5.0), 0.02)
+    return dict(grect_margin=6.0)
+
+
+def casa_d(p):
+    """Casa en L de una planta: dos alas con techos de teja a dos aguas cruzados."""
+    box("plinth", (-5.05, -3.55, 0), (5.05, 3.55, 0.3))
+    box("plinth", (1.95, 3.45, 0), (5.05, 8.05, 0.3))
+    a = box("housewall", (-5.0, -3.5, 0.25), (5.0, 3.5, 3.0))
+    cut(a, house_windows(-5.0, 5.0, -3.5, 3.5, 1.0, 2.2, 3, 2, 1, door=-2.0))
+    b = box("housewall", (2.0, 3.5, 0.25), (5.0, 8.0, 3.0))
+    cut(b, house_windows(2.0, 5.0, 3.5, 8.0, 1.0, 2.2, 0, 1, 1))
+    gable_roof(-5.0, 5.0, -3.5, 3.5, 3.0, 1.8, 0.5)
+    gable_roof(2.0, 5.0, 3.5, 8.0, 3.0, 1.3, 0.45, along="y")
+    box("ac", (-5.3, 0.5, 1.6), (-5.0, 1.3, 2.2), 0.02)
+    return dict(grect_margin=5.0)
+
+
+def bloque(p):
+    """Edificio de apartamentos de p['pisos'] pisos: ventanas en cada piso, balcones con baranda al frente,
+    pretil, tanques de agua, sala de máquinas y alero de la entrada."""
+    n = p["pisos"]
+    w, d = p["w"], p["d"]
+    x0, x1, y0, y1 = -w / 2, w / 2, -d / 2, d / 2
+    fh = 3.1
+    h = n * fh + 0.4
+    box("plinth", (x0 - 0.05, y0 - 0.05, 0), (x1 + 0.05, y1 + 0.05, 0.4))
+    body = box("housewall", (x0, y0, 0.35), (x1, y1, h))
+    cuts = []
+    nf = max(3, int(w // 3.2))
+    ns = max(2, int(d // 3.4))
+    for k in range(n):
+        z0 = 1.0 + k * fh
+        cuts += house_windows(x0, x1, y0, y1, z0, z0 + 1.35, nf, nf, ns, door=(0.0 if k == 0 else None))
+        if 0 < k:                                    # balcones al frente en pisos altos
+            for i in range(0, nf, 2):
+                cx = x0 + 0.8 + (w - 1.6) / nf * (i + 0.5)
+                box("slab", (cx - 1.0, y0 - 1.0, z0 - 0.75), (cx + 1.0, y0, z0 - 0.6))
+                beam("railing", (cx - 0.97, y0 - 0.97, z0 + 0.2), (cx + 0.97, y0 - 0.97, z0 + 0.2), 0.05, 0.05)
+                for xx in np.linspace(cx - 0.97, cx + 0.97, 6):
+                    beam("railing", (xx, y0 - 0.97, z0 - 0.6), (xx, y0 - 0.97, z0 + 0.2), 0.03, 0.03)
+        if k > 0:                                    # cornisa entre pisos
+            box("white", (x0 - 0.04, y0 - 0.04, k * fh + 0.25), (x1 + 0.04, y1 + 0.04, k * fh + 0.4))
+    cut(body, cuts)
+    box("housewall", (x0 - 0.05, y0 - 0.05, h), (x1 + 0.05, y1 + 0.05, h + 0.9))
+    box("slab", (x0 + 0.2, y0 + 0.2, h), (x1 - 0.2, y1 - 0.2, h + 0.95))
+    box("housewall", (x1 - 4.5, y1 - 4.5, h + 0.95), (x1 - 1.0, y1 - 1.0, h + 3.4), 0.03)   # sala de máquinas
+    for i in range(2):
+        cyl("tinaco", (x0 + 1.5 + i * 1.6, y1 - 1.5, h + 0.95), (x0 + 1.5 + i * 1.6, y1 - 1.5, h + 2.2), 0.65, 14)
+    for i in range(3):
+        box("ac", (x0 + 1.0 + i * 1.6, y0 + 1.0, h + 0.95), (x0 + 2.2 + i * 1.6, y0 + 2.0, h + 1.7), 0.03)
+    box("canopy", (-2.0, y0 - 2.0, 2.8), (2.0, y0, 3.0), 0.03)
+    return dict(grect_margin=8.0)
+
+
+BUILDERS.update({"casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
 
 
 # ============================================================ coordenadas de textura y exportación

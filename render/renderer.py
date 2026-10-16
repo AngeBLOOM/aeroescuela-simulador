@@ -134,11 +134,14 @@ class Renderer:
         self.p_bldg = ctx.program(vertex_shader=sh.BLDG_VS, fragment_shader=sh.BLDG_FS)
         self.p_decal = ctx.program(vertex_shader=sh.DECAL_VS, fragment_shader=sh.DECAL_FS)
         self.p_smoke = ctx.program(vertex_shader=sh.SMOKE_VS, fragment_shader=sh.SMOKE_FS)
+        self.p_inst = ctx.program(vertex_shader=sh.MODEL_INST_VS, fragment_shader=sh.MODEL_INST_FS)
+        self.house_draw = []
         self.decals = []
         self.p_shadow_tree = ctx.program(vertex_shader=sh.SHADOW_TREE_VS, fragment_shader=sh.SHADOW_FS)
         self.p_bright = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BRIGHT_FS)
         self.p_blur = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BLUR_FS)
-        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg, self.p_decal):
+        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg, self.p_decal,
+                     self.p_inst):
             prog["u_cloudmap"] = self.CLOUD_UNIT
             prog["u_shmap"] = self.SH_UNIT          # nunca en la misma unidad que una textura normal
             prog["u_shmap2"] = self.SH2_UNIT
@@ -221,6 +224,7 @@ class Renderer:
                                   attrs=("in_pos", "in_norm", "in_col", "in_uvh", "in_style"))
         self._build_parked()
         self._build_buildings()
+        self._build_houses()
         self._build_trees()
         self._build_casters()
         self.runway_meshes = []
@@ -678,6 +682,148 @@ class Renderer:
     SH2_UNIT = 12
 
     # ------------------------------------------------------------ hangares y torres con detalle
+    def _build_houses(self):
+        """Casas y edificios de los pueblos hechos en Blender: un modelo por variante dibujado por instancias, cada
+        copia con su lugar, giro, escala y color de pared, el mapa de luz de la variante y su sombra."""
+        from . import buildings as bl
+        self.house_draw = []
+        inst = getattr(self.scn, "house_inst", [])
+        if not inst:
+            return
+        ctx = self.ctx
+        by = {}
+        for row in inst:
+            by.setdefault(row[0], []).append(row[1:])
+        texs = {}
+        for key, rows in by.items():
+            data = bl.load_model(key)
+            if data is None:
+                continue
+            rows = np.asarray(rows, np.float32)                            # x, y, z, rumbo, escala, r, g, b
+            ib = ctx.buffer(reserve=rows.nbytes, dynamic=True)              # las cercanas (se rehace al moverse)
+            ibf = ctx.buffer(reserve=rows.nbytes, dynamic=True)             # las lejanas (versión simple)
+            lm = np.ascontiguousarray(data["lm"])
+            lt = ctx.texture((lm.shape[1], lm.shape[0]), 3, lm.tobytes())
+            lt.build_mipmaps()
+            parts, svaos = [], []
+            for mat, r in data["parts"].items():
+                v = np.empty((len(r), 11), np.float32)
+                v[:, 0:8] = r[:, 0:8]
+                v[:, 8] = 1.0
+                v[:, 9:11] = r[:, 8:10]
+                vbo = ctx.buffer(v.tobytes())
+                vao = ctx.vertex_array(self.p_inst, [(vbo, "3f 3f 2f 1f 2f", "in_pos", "in_norm", "in_uv", "in_ao", "in_uv2"),
+                                                     (ib, "3f 1f 1f 3f/i", "i_pos", "i_yaw", "i_scale", "i_tint")])
+                col, tkey, blend = bl.material(mat)
+                tex = None
+                if tkey:
+                    if tkey not in texs:
+                        img = np.ascontiguousarray(bl.make_texture(tkey))
+                        t_ = ctx.texture((img.shape[1], img.shape[0]), 4, img.tobytes())
+                        t_.build_mipmaps()
+                        t_.repeat_x = t_.repeat_y = True
+                        t_.anisotropy = 8.0
+                        texs[tkey] = t_
+                    tex = texs[tkey]
+                parts.append((vao, tex, dict(color=list(col), tint=mat in bl.TINTED, lamp=(mat == "lamp"))))
+                svaos.append(ctx.vertex_array(self.p_shadow_tree, [(vbo, "3f 32x", "in_pos"),
+                                                                    (ib, "3f 1f 1f 12x/i", "i_pos", "i_yaw", "i_scale")]))
+            # versión simple para lejos: caja de paredes con el color de la casa y techo (a dos aguas si es de teja)
+            far = self._house_lod(data)
+            fvbo = ctx.buffer(far.tobytes())
+            fvao = ctx.vertex_array(self.p_inst, [(fvbo, "3f 3f 2f 1f 2f", "in_pos", "in_norm", "in_uv", "in_ao", "in_uv2"),
+                                                  (ibf, "3f 1f 1f 3f/i", "i_pos", "i_yaw", "i_scale", "i_tint")])
+            self.house_draw.append(dict(key=key, rows=rows, n=0, nf=0, ib=ib, ibf=ibf, parts=parts, svaos=svaos,
+                                        lmap=lt, far=fvao, split=self._lod_split, total=len(far),
+                                        tile="tile" in data["parts"]))
+        self._house_ref = None
+
+    HOUSE_NEAR = 2500.0          # hasta aquí el modelo completo de Blender…
+    HOUSE_FAR = 14000.0          # …y hasta aquí la versión simple (más lejos la bruma ya los borra)
+
+    def _house_lod(self, data):
+        """Malla simple de una variante (para lejos): paredes con color propio (las primeras filas, que toman el
+        color de la casa) y techo: prisma a dos aguas si el modelo tiene teja, losa si no. 11 floats por vértice."""
+        P = np.vstack([r[:, :3] for r in data["parts"].values()])
+        x0, y0 = P[:, 0].min(), P[:, 1].min()
+        x1, y1 = P[:, 0].max(), P[:, 1].max()
+        wall = data["parts"].get("housewall")
+        top = float(wall[:, 2].min()) if wall is not None else float(P[:, 2].min())      # z abajo: el mínimo
+        roof_top = float(P[:, 2].min())
+        m = 0.4
+        ax0, ax1, ay0, ay1 = x0 + m, x1 - m, y0 + m, y1 - m
+        tris = []
+
+        def quad(a, b, c, d, n):
+            for q in (a, b, c, a, c, d):
+                tris.append((*q, *n, 0.0, 0.0, 1.0, -1.0, -1.0))
+        for (a, b, n) in (((ax0, ay0), (ax1, ay0), (0, -1, 0)), ((ax1, ay0), (ax1, ay1), (1, 0, 0)),
+                          ((ax1, ay1), (ax0, ay1), (0, 1, 0)), ((ax0, ay1), (ax0, ay0), (-1, 0, 0))):
+            quad((*a, 0.0), (*b, 0.0), (*b, top), (*a, top), n)
+        nw = len(tris)
+        if "tile" in data["parts"]:
+            ym = (y0 + y1) / 2
+            quad((x0, y0, top + 0.3), (x1, y0, top + 0.3), (x1, ym, roof_top), (x0, ym, roof_top), (0, -0.6, -0.8))
+            quad((x1, y1, top + 0.3), (x0, y1, top + 0.3), (x0, ym, roof_top), (x1, ym, roof_top), (0, 0.6, -0.8))
+        else:
+            quad((ax0, ay0, top), (ax1, ay0, top), (ax1, ay1, top), (ax0, ay1, top), (0, 0, -1))
+        out = np.array(tris, np.float32)
+        self._lod_split = nw
+        return out
+
+    def _update_houses(self, eye):
+        ref = self._house_ref
+        if ref is not None and math.hypot(eye[0] - ref[0], eye[1] - ref[1]) < 250.0:
+            return
+        self._house_ref = (float(eye[0]), float(eye[1]))
+        for item in self.house_draw:
+            r = item["rows"]
+            d = np.hypot(r[:, 0] - eye[0], r[:, 1] - eye[1])
+            near = r[d < self.HOUSE_NEAR]
+            far = r[(d >= self.HOUSE_NEAR) & (d < self.HOUSE_FAR)]
+            item["n"], item["nf"] = len(near), len(far)
+            if len(near):
+                item["ib"].write(np.ascontiguousarray(near).tobytes())
+            if len(far):
+                item["ibf"].write(np.ascontiguousarray(far).tobytes())
+
+    def _draw_houses(self, cam):
+        if not self.house_draw:
+            return
+        self._update_houses(cam.eye)
+        pi = self.p_inst
+        pi["u_spec"].value = 0.2
+        pi["u_tint"].value = (1.0, 1.0, 1.0, 1.0)
+        pi["u_cutoff"].value = 0.0
+        pi["u_corr"].value = 0.0
+        night = float(self.env.get("night", 0.0))
+        for item in self.house_draw:
+            item["lmap"].use(18)
+            pi["u_lmap"].value = 18
+            pi["u_lm_on"].value = 1
+            for vao, tex, m in item["parts"]:
+                pi["u_base"].value = tuple(float(c) for c in m["color"])
+                pi["u_itint_on"].value = 1 if m["tint"] else 0
+                pi["u_emis"].value = 1.8 * night if m["lamp"] else 0.0
+                if tex is not None:
+                    tex.use(9)
+                    pi["u_tex"].value = 9
+                    pi["u_has_tex"].value = 1
+                else:
+                    pi["u_has_tex"].value = 0
+                if item["n"]:
+                    vao.render(instances=item["n"])
+            if item["nf"]:                                # versión simple: paredes con su color y techo de teja
+                pi["u_lm_on"].value = 0
+                pi["u_has_tex"].value = 0
+                ns = item["split"]
+                pi["u_itint_on"].value = 1
+                pi["u_base"].value = (0.92, 0.9, 0.86, 1.0)
+                item["far"].render(vertices=ns, instances=item["nf"])
+                pi["u_itint_on"].value = 0
+                pi["u_base"].value = (0.66, 0.34, 0.24, 1.0) if item["tile"] else (0.6, 0.6, 0.58, 1.0)
+                item["far"].render(first=ns, vertices=item["total"] - ns, instances=item["nf"])
+
     def _face_runway(self, x, y):
         """Giro para que el frente (-y local) de un edificio mire a la pista más cercana (torres de control)."""
         best = None
@@ -1101,6 +1247,12 @@ class Renderer:
             for _vao, _tex, _m, svao in (self.buildings_model or ()):    # hangares y torres
                 if svao is not None:
                     svao.render()
+            if self.house_draw:                          # casas de los pueblos (instancias)
+                self.p_shadow_tree["u_lmvp"].write(gl_bytes(LV))
+                for item in self.house_draw:
+                    if item["n"]:
+                        for svao in item["svaos"]:
+                            svao.render(instances=item["n"])
             if self.tree_vaos:                           # árboles (instancias)
                 self.p_shadow_tree["u_lmvp"].write(gl_bytes(LV))
                 for _vao, svao, _ib, n, _nv in self.tree_vaos.values():
@@ -1771,14 +1923,15 @@ void main() { f_color = texture(u_tex, v_uv); }
 
         # terreno y agua
         for prog in (self.p_terrain, self.p_water, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg,
-                     self.p_decal, self.p_light, self.p_cloud):
+                     self.p_decal, self.p_inst, self.p_light, self.p_cloud):
             self._set_common(prog, view, proj, cam.eye)
         if self.sh_tex is not None:
             self.sh_tex.use(self.SH_UNIT)
         if self.sh2_tex is not None:
             self.sh2_tex.use(self.SH2_UNIT)
         self._update_cloud_shadows(env)
-        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg, self.p_decal):
+        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg, self.p_decal,
+                     self.p_inst):
             prog["u_sh_on"].value = self.sh_k if prog is not self.p_model else 0.0
             if self.sh_k > 0.0 and prog is not self.p_model:
                 prog["u_shmat"].write(gl_bytes(self.sh_mat))
@@ -1897,6 +2050,7 @@ void main() { f_color = texture(u_tex, v_uv); }
         if self.m_bldg is not None:                      # edificios y casas con fachada
             self.p_bldg["u_night"].value = float(env["night"])
             self.m_bldg.render()
+        self._draw_houses(cam)
         self._draw_trees()
 
         # mangas de viento

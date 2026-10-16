@@ -887,6 +887,42 @@ void main() {
 """
 
 
+# ---------------------------------------------------------------- casas por instancias (modelos de Blender)
+MODEL_INST_VS = COMMON + """
+in vec3 in_pos;
+in vec3 in_norm;
+in vec2 in_uv;
+in float in_ao;
+in vec2 in_uv2;
+in vec3 i_pos;
+in float i_yaw;
+in float i_scale;
+in vec3 i_tint;
+out vec3 v_pos;
+out vec3 v_norm;
+out vec2 v_uv;
+out float v_ao;
+out vec2 v_uv2;
+out vec3 v_itint;
+out float v_logz;
+void main() {
+    float c = cos(i_yaw), s = sin(i_yaw);
+    vec3 p = in_pos * i_scale;
+    vec3 wp = i_pos + vec3(c * p.x - s * p.y, s * p.x + c * p.y, p.z);
+    v_pos = wp;
+    v_norm = vec3(c * in_norm.x - s * in_norm.y, s * in_norm.x + c * in_norm.y, in_norm.z);
+    v_uv = in_uv;
+    v_ao = in_ao;
+    v_uv2 = in_uv2;
+    v_itint = i_tint;
+    gl_Position = u_proj * u_view * vec4(wp, 1.0);
+    v_logz = 1.0 + gl_Position.w;
+}
+"""
+MODEL_INST_FS = MODEL_FS.replace("in float v_logz;", "in float v_logz;\nin vec3 v_itint;\nuniform int u_itint_on;") \
+    .replace("vec3 base = c.rgb * u_tint.rgb;", "vec3 base = c.rgb * u_tint.rgb * (u_itint_on == 1 ? v_itint : vec3(1.0));")
+
+
 # ---------------------------------------------------------------- penumbra horneada en el suelo
 DECAL_VS = COMMON + """
 in vec3 in_pos;

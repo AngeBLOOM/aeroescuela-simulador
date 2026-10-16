@@ -84,6 +84,34 @@ def tex_concrete(seed=3):
     return _rgba(img, (1.0, 0.99, 0.96))
 
 
+def tex_tile(seed=4):
+    """Teja criolla (2 x 2 m): hileras de tejas curvas (cada 33 cm, a lo largo de la pendiente) con su sombra,
+    cada teja con su tono (la arcilla varía) y algo de moho y polvo."""
+    rng = np.random.default_rng(seed)
+    n = TEX
+    u = (np.arange(n) + 0.5) / n
+    ridge = 0.78 + 0.22 * np.sin(np.pi * ((u * 8) % 1.0)) ** 0.8          # canales y cobijas (en u)
+    v = (np.arange(n) + 0.5) / n
+    row = (v * 6) % 1.0
+    lip = 0.72 + 0.28 * np.clip(row * 1.3, 0, 1)                          # sombra bajo la hilera de arriba
+    img = lip[:, None] * ridge[None, :]
+    cell = rng.uniform(0.85, 1.12, (6, 8))
+    img *= cell[(v * 6).astype(int) % 6][:, (u * 8).astype(int) % 8]
+    img *= 0.9 + 0.14 * _fnoise(rng, n, 1.8)
+    return _rgba(img)
+
+
+def tex_plaster(seed=5):
+    """Friso de pared (3 x 3 m): grano fino, manchas suaves y suciedad que sube del suelo (la pinta el color de cada
+    casa: la textura va en gris)."""
+    rng = np.random.default_rng(seed)
+    n = TEX
+    img = 0.86 + 0.08 * _fnoise(rng, n, 1.4) + 0.05 * (rng.random((n, n)) - 0.5)
+    v = (np.arange(n) + 0.5) / n
+    img *= (0.86 + 0.14 * np.clip(v * 4.0, 0, 1))[:, None]                # zócalo sucio (v = 0 abajo)
+    return _rgba(img)
+
+
 def tex_sign(text, w=1024, h=128):
     """Letrero: franja azul con letras blancas (y fila 0 = abajo, como espera la textura)."""
     import pygame
@@ -565,7 +593,13 @@ MATERIALS = {
     "brick": ((0.62, 0.4, 0.32, 1.0), "concrete", False),
     "steelin": ((0.38, 0.4, 0.43, 1.0), None, False),
     "yellow": ((0.95, 0.75, 0.1, 1.0), None, False),
+    "tile": ((0.72, 0.36, 0.24, 1.0), "tile", False),
+    "housewall": ((1.0, 1.0, 1.0, 1.0), "plaster", False),     # lo pinta el color de cada casa
+    "slab": ((0.62, 0.62, 0.6, 1.0), "concrete", False),
+    "tinaco": ((0.12, 0.12, 0.13, 1.0), None, False),
+    "woodoor": ((0.42, 0.27, 0.16, 1.0), None, False),
 }
+TINTED = {"housewall"}            # materiales que toman el color propio de cada casa
 CORRUGATED = 26.0                 # ondas de la chapa por cuadro de textura (4 m): el shader las ilumina con el Sol
 
 
@@ -586,6 +620,10 @@ def make_texture(key):
         return tex_door()
     if key == "concrete":
         return tex_concrete()
+    if key == "tile":
+        return tex_tile()
+    if key == "plaster":
+        return tex_plaster()
     if key.startswith("sign:"):
         return tex_sign(key[5:])
     if key.startswith("tsign:"):

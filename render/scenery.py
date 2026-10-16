@@ -7,6 +7,13 @@ from . import buildings as bl
 from . import geometry as geo
 from . import textures as tx
 
+HOUSE_KEYS = ["casa_a", "casa_b", "casa_c", "casa_d"]
+BLOCK_KEYS = ["bloque_4", "bloque_10"]
+# colores de las casas (pasteles de los pueblos venezolanos) y de los edificios
+HOUSE_COLORS = [(0.98, 0.93, 0.78), (0.95, 0.86, 0.7), (0.76, 0.88, 0.96), (0.98, 0.82, 0.76), (0.84, 0.95, 0.8),
+                (0.97, 0.97, 0.95), (1.0, 0.9, 0.6), (0.95, 0.8, 0.88), (0.9, 0.78, 0.62), (0.8, 0.92, 0.9)]
+BLOCK_COLORS = [(0.95, 0.94, 0.9), (0.9, 0.88, 0.84), (0.86, 0.9, 0.95), (0.96, 0.9, 0.8), (0.82, 0.82, 0.82)]
+
 TOWNS = [
     # (x, y, radio, casas, edificios)
     (-3600.0, -3200.0, 950.0, 260, 26),
@@ -106,6 +113,7 @@ class Scenery:
     def _objects(self):
         self.parked, self.parked_code = [], np.zeros((0, 9), np.float32)
         self.fuel = []                                    # estación de combustible (modelo de Blender)
+        self.house_inst = []                              # casas y edificios de Blender: (clave, x, y, z, rumbo, escala, r, g, b)
         self.hangars, self.towers = [], []                # los dibuja el renderizador con detalle (render/buildings.py)
         self.taxi_signs = []                              # carteles de posición de espera (x, y, z, rumbo, texto, calle)
         self.guide_signs = []                             # carteles amarillos de guía (x, y, z, rumbo, texto, flecha)
@@ -214,7 +222,8 @@ class Scenery:
             self.parked.append((px, py, gh, math.radians(270.0)))
         self.parked_code = geo.instances(static, np.array(pos), np.ones(len(pos)), np.full(len(pos), math.radians(270.0)),
                                          np.array([cols[i % 3] for i in range(len(pos))]))
-        # pueblos
+        # pueblos: casas y edificios modelados en Blender (instancias con su color) o, si faltan, con fachada
+        models = all(bl.load_model(k) is not None for k in HOUSE_KEYS + BLOCK_KEYS)
         for (tx_, ty_, rad, nh, nb) in TOWNS:
             pts = self._town_points(tx_, ty_, rad, nh)
             if len(pts):
@@ -223,7 +232,14 @@ class Scenery:
                 sc = np.column_stack([rng.uniform(8, 16, len(pts)), rng.uniform(7, 12, len(pts)), rng.uniform(5, 8, len(pts))])
                 yaw = np.round(rng.uniform(0, 4, len(pts))) * math.pi / 2 + 0.2
                 cm = rng.uniform(0.85, 1.1, (len(pts), 3))
-                self._houses_facade(P, sc, yaw, cm)
+                if models:
+                    kind = rng.choice(len(HOUSE_KEYS), len(pts), p=[0.3, 0.25, 0.25, 0.2])
+                    tint = np.array(HOUSE_COLORS)[rng.integers(0, len(HOUSE_COLORS), len(pts))]
+                    for i in range(len(pts)):
+                        self.house_inst.append((HOUSE_KEYS[kind[i]], *P[i], yaw[i] + rng.uniform(-0.15, 0.15),
+                                                rng.uniform(0.9, 1.1), *tint[i]))
+                else:
+                    self._houses_facade(P, sc, yaw, cm)
                 self._houses = getattr(self, "_houses", []) + [P]
             if nb:
                 pts = self._town_points(tx_, ty_, rad * 0.35, nb)
@@ -232,9 +248,15 @@ class Scenery:
                 sc = np.column_stack([rng.uniform(18, 30, nb), rng.uniform(18, 30, nb), rng.uniform(12, 38, nb)])
                 yaw = np.full(nb, 0.2)
                 cm = rng.uniform(0.8, 1.1, (nb, 3))
-                style = np.where(sc[:, 2] > 28, bl.TOWER, bl.BLOCK) + rng.uniform(0.1, 0.9, nb)
-                self._bparts.append(bl.box_buildings(P, sc, yaw, np.array([0.78, 0.78, 0.76]) * cm,
-                                                     np.array([0.45, 0.45, 0.47]) * cm, style))
+                if models:
+                    for i in range(nb):
+                        key = BLOCK_KEYS[1] if sc[i, 2] > 34 else BLOCK_KEYS[0]     # pocas torres altas
+                        tint = BLOCK_COLORS[rng.integers(0, len(BLOCK_COLORS))]
+                        self.house_inst.append((key, *P[i], 0.2 + rng.integers(0, 4) * math.pi / 2, 1.0, *tint))
+                else:
+                    style = np.where(sc[:, 2] > 28, bl.TOWER, bl.BLOCK) + rng.uniform(0.1, 0.9, nb)
+                    self._bparts.append(bl.box_buildings(P, sc, yaw, np.array([0.78, 0.78, 0.76]) * cm,
+                                                         np.array([0.45, 0.45, 0.47]) * cm, style))
         # granjas dispersas
         fx = rng.uniform(-18000, 18000, 600)
         fy = rng.uniform(-18000, 12000, 600)

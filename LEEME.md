@@ -129,6 +129,10 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   antenas y faro) y estación de combustible en la plataforma. Paredes blancas con remates azules. Se generan con
   `python tools/modelos_edificios.py <blender.exe>` (Blender 4.2 LTS; cada modelo en su propio proceso), que
   modela, hornea la luz del cielo y deja `assets/edificios/<clave>.npz`; sin esos archivos se usan los de código.
+- **Pueblos con casas de Blender**: casas de una planta con techo de teja a dos aguas, casas con corredor y techo a
+  cuatro aguas, casas de dos plantas con platabanda, balcón y tanque de agua, casas en L y edificios de 4 y 10 pisos
+  con balcones; cada casa con su color pastel. Se dibujan por instancias con dos niveles de detalle (el modelo
+  completo hasta 2,5 km y una versión simple hasta 14 km).
 - **Luz horneada en Blender** en hangares y torres: la luz del cielo con sus rebotes (Cycles) está calculada de
   antemano en un mapa de luz por edificio, así los rincones, el pie de las paredes, los aleros y el portón tienen
   la penumbra suave de una foto, y el suelo alrededor se oscurece un poco junto a las paredes. El Sol y sus sombras

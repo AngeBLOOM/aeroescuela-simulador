@@ -32,7 +32,16 @@ def pedido(fast):
         items[bl.tower_key(h)] = dict(kind="torre", p=dict(h=h))
     if getattr(scn, "fuel", None):
         items["combustible"] = dict(kind="combustible", p={})
-    return [dict(key=k, size=size, gsize=size // 4, samples=samples, **v) for k, v in items.items()]
+    out = [dict(key=k, size=size, gsize=size // 4, samples=samples, **v) for k, v in items.items()]
+    # casas y edificios de los pueblos (variantes que el simulador repite con su color)
+    hs = (128, 24) if fast else (512, 256)
+    for k in ("casa_a", "casa_b", "casa_c", "casa_d"):
+        out.append(dict(key=k, kind=k, p={}, size=hs[0], gsize=hs[0] // 4, samples=hs[1]))
+    out.append(dict(key="bloque_4", kind="bloque", p=dict(pisos=4, w=20.0, d=14.0), size=size, gsize=size // 4,
+                    samples=samples))
+    out.append(dict(key="bloque_10", kind="bloque", p=dict(pisos=10, w=18.0, d=18.0), size=size, gsize=size // 4,
+                    samples=samples))
+    return out
 
 
 def main():
