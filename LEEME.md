@@ -150,7 +150,8 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
 - **Radioayudas físicas** (Blender) en su lugar real: estación VOR Doppler con su contrapeso y anillo de antenas,
   NDB con mástil en franjas y antena en T, y por cada ILS la fila de dipolos del localizador detrás del extremo
   de la pista y el mástil de la senda de planeo al costado, 300 m pasado el umbral. Se ven desde hasta 9 km: el
-  alumno aprende a reconocerlas desde el aire.
+  alumno aprende a reconocerlas desde el aire. Las luces de aproximación están sobre sus barras reales: postes
+  frangibles, barra de 4 m y cinco cabezales cada 60 m, con la barra transversal a 300 m.
 - **Luz horneada en Blender** en hangares y torres: la luz del cielo con sus rebotes (Cycles) está calculada de
   antemano en un mapa de luz por edificio, así los rincones, el pie de las paredes, los aleros y el portón tienen
   la penumbra suave de una foto, y el suelo alrededor se oscurece un poco junto a las paredes. El Sol y sus sombras

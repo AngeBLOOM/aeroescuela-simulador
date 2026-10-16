@@ -891,7 +891,21 @@ def senda(p):
     return dict(grect_margin=5.0)
 
 
-BUILDERS.update({"vor": vor, "ndb": ndb, "localizador": localizador, "senda": senda, "terminal": terminal, "valla": valla, "manga": manga, "luminaria": luminaria, "papi": papi, "casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
+def barra_aprox(p):
+    """Barra de luces de aproximación: dos postes frangibles (pata amarilla), barra horizontal de 4 m y cinco
+    cabezales con su vidrio (las luces las pone el simulador); x a lo ancho de la aproximación."""
+    for x in (-1.5, 1.5):
+        box("concrete", (x - 0.35, -0.35, 0.0), (x + 0.35, 0.35, 0.15), 0.02)
+        cyl("yellow", (x, 0, 0.15), (x, 0, 0.5), 0.05, 8)
+        cyl("steel", (x, 0, 0.5), (x, 0, 1.15), 0.045, 8)
+    beam("steel", (-2.2, 0, 1.15), (2.2, 0, 1.15), 0.08, 0.08)
+    for x in (-2.0, -1.0, 0.0, 1.0, 2.0):
+        box("steel", (x - 0.13, -0.13, 1.18), (x + 0.13, 0.13, 1.36), 0.02)
+        cyl("lamp", (x, -0.13, 1.27), (x, -0.17, 1.27), 0.09, 10)
+    return dict(grect_margin=1.0)
+
+
+BUILDERS.update({"barra_aprox": barra_aprox, "vor": vor, "ndb": ndb, "localizador": localizador, "senda": senda, "terminal": terminal, "valla": valla, "manga": manga, "luminaria": luminaria, "papi": papi, "casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
 
 
 # ============================================================ árboles (plantillas para el dibujo por instancias)

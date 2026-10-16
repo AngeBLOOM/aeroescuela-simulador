@@ -895,6 +895,7 @@ class Scenery:
         groups = []        # (ident_a, idx_slice_a, idx_slice_b, runway) para color bicolor de umbrales
         papis = []
         self._papi_yaw = []
+        self._als_bars = []
         rabbits = []
 
         def add(p, c, s):
@@ -940,6 +941,12 @@ class Scenery:
                         for k in (-2, -1, 0, 1, 2):
                             p = pc + re * k * 1.0
                             add((p[0], p[1], gz), (1.0, 1.0, 0.95), 3.5)
+                        # soporte de la barra (modelo de Blender): -y local mira a la aproximación
+                        self._als_bars.append((float(pc[0]), float(pc[1]), gz + 1.2, math.atan2(-de[0], de[1])))
+                        if dist == 300:
+                            for k in (-4, 4):
+                                q = pc + re * k * 1.6 * 1.25
+                                self._als_bars.append((float(q[0]), float(q[1]), gz + 1.2, math.atan2(-de[0], de[1])))
                         if dist == 300:
                             for k in range(-7, 8):
                                 p = pc + re * k * 1.6
@@ -994,6 +1001,9 @@ class Scenery:
                         break
                 if abs((z - gz) + 0.45) < 0.2:             # las de 0,4-0,5 m sobre el suelo (no las de aproximación)
                     self.house_inst.append(("luminaria", x, y, gz, 0.0, 1.0, 1.0, 1.0, 1.0))
+        if bl.load_model("barra_aprox") is not None:
+            for (x, y, gz, yaw) in self._als_bars:
+                self.house_inst.append(("barra_aprox", x, y, gz, yaw, 1.0, 1.0, 1.0, 1.0))
         if bl.load_model("papi") is not None:
             for (x, y, z, ang, yaw) in self._papi_yaw:
                 self.house_inst.append(("papi", x, y, z + 0.8, yaw, 1.0, 1.0, 1.0, 1.0))
