@@ -826,7 +826,72 @@ def terminal(p):
     return dict(grect_margin=10.0)
 
 
-BUILDERS.update({"terminal": terminal, "valla": valla, "manga": manga, "luminaria": luminaria, "papi": papi, "casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
+def vor(p):
+    """Estación VOR Doppler: caseta circular blanca con techo cónico, contrapeso metálico de 30 m sobre postes y el
+    anillo de antenas en su borde, con la antena central (el punto que el alumno busca desde el aire)."""
+    cyl("office", (0, 0, 0.0), (0, 0, 3.2), 3.0, 24)
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=24, radius1=3.3, radius2=0.6, depth=1.0)
+    bmesh.ops.translate(bm, vec=(0, 0, 3.7), verts=bm.verts)
+    obj_from_bm(bm, "white")
+    box("doorpers", (-0.5, -3.05, 0.0), (0.5, -2.9, 2.1))
+    R_ = 15.0
+    prism("steel", [(R_ * math.cos(a), R_ * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 40, endpoint=False)],
+          4.4, 4.5)                                                               # contrapeso
+    for a in np.linspace(0, 2 * math.pi, 12, endpoint=False):
+        cyl("steel", (R_ * 0.8 * math.cos(a), R_ * 0.8 * math.sin(a), 0.0),
+            (R_ * 0.8 * math.cos(a), R_ * 0.8 * math.sin(a), 4.4), 0.12, 6)
+    for a in np.linspace(0, 2 * math.pi, 48, endpoint=False):
+        x, y = (R_ - 0.4) * math.cos(a), (R_ - 0.4) * math.sin(a)
+        cyl("white", (x, y, 4.5), (x, y, 5.6), 0.08, 6)
+    cyl("white", (0, 0, 4.5), (0, 0, 6.2), 0.25, 10)
+    return dict(grect_margin=6.0)
+
+
+def ndb(p):
+    """Radiofaro NDB: mástil de 24 m en franjas rojas y blancas con riendas, antena en T y caseta del transmisor."""
+    for k in range(8):
+        cyl("red" if k % 2 == 0 else "white", (0, 0, k * 3.0), (0, 0, (k + 1) * 3.0), 0.15, 10)
+    cyl("lamp", (0, 0, 24.0), (0, 0, 24.3), 0.12, 8)
+    for a in np.linspace(0, 2 * math.pi, 3, endpoint=False):
+        beam("steel", (0, 0, 20.0), (12 * math.cos(a), 12 * math.sin(a), 0.0), 0.02, 0.02)
+    beam("steel", (0, 0, 23.0), (30, 0, 23.0), 0.03, 0.03)                       # antena en T (hacia un poste)
+    for k in range(8):
+        cyl("red" if k % 2 == 0 else "white", (30, 0, k * 3.0), (30, 0, (k + 1) * 3.0), 0.12, 8)
+    box("office", (4.0, -2.0, 0.0), (8.0, 2.0, 2.8), 0.03)
+    box("trim", (3.9, -2.1, 2.8), (8.1, 2.1, 3.0), 0.02)
+    box("doorpers", (3.95, -0.5, 0.0), (4.0, 0.5, 2.1))
+    return dict(grect_margin=6.0)
+
+
+def localizador(p):
+    """Antena del localizador del ILS: fila de 14 dipolos sobre un bastidor de 36 m frente a la pista (-y mira
+    a la pista) y caseta del equipo."""
+    beam("steel", (-18.0, 0, 2.2), (18.0, 0, 2.2), 0.2, 0.2)
+    beam("steel", (-18.0, 0, 0.8), (18.0, 0, 0.8), 0.14, 0.14)
+    for x in np.linspace(-17.5, 17.5, 14):
+        cyl("steel", (x, 0, 0.0), (x, 0, 3.6), 0.07, 6)
+        for z in (3.3, 2.7):
+            beam("white", (x - 1.0, -0.2, z), (x + 1.0, -0.2, z), 0.12, 0.12)
+        box("white", (x - 0.25, -0.35, 2.55), (x + 0.25, -0.15, 3.45), 0.02)        # radomo del dipolo
+    box("office", (-2.0, 6.0, 0.0), (2.0, 9.5, 2.6), 0.03)
+    box("trim", (-2.1, 5.9, 2.6), (2.1, 9.6, 2.8), 0.02)
+    return dict(grect_margin=5.0)
+
+
+def senda(p):
+    """Antena de senda de planeo: mástil de 14 m en franjas rojas y blancas con sus tres antenas y la caseta."""
+    for k in range(7):
+        cyl("red" if k % 2 == 0 else "white", (0, 0, k * 2.0), (0, 0, (k + 1) * 2.0), 0.18, 10)
+    for z in (5.0, 9.0, 13.0):
+        box("white", (-0.9, -0.7, z - 0.25), (0.9, -0.2, z + 0.25), 0.03)
+    cyl("lamp", (0, 0, 14.0), (0, 0, 14.3), 0.12, 8)
+    box("office", (2.0, -1.5, 0.0), (5.0, 1.5, 2.6), 0.03)
+    box("trim", (1.9, -1.6, 2.6), (5.1, 1.6, 2.8), 0.02)
+    return dict(grect_margin=5.0)
+
+
+BUILDERS.update({"vor": vor, "ndb": ndb, "localizador": localizador, "senda": senda, "terminal": terminal, "valla": valla, "manga": manga, "luminaria": luminaria, "papi": papi, "casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
 
 
 # ============================================================ árboles (plantillas para el dibujo por instancias)

@@ -41,6 +41,8 @@ def pedido(fast):
                     samples=samples))
     out.append(dict(key="bloque_10", kind="bloque", p=dict(pisos=10, w=18.0, d=18.0), size=size, gsize=size // 4,
                     samples=samples))
+    for k in ("vor", "ndb", "localizador", "senda"):           # radioayudas
+        out.append(dict(key=k, kind=k, p={}, size=256, gsize=64, samples=128))
     out.append(dict(key="terminal", kind="terminal", p={}, size=size, gsize=size // 4, samples=samples))
     for k in ("luminaria", "papi", "manga", "valla"):                   # luces de pista, PAPI y mástil de la manga
         out.append(dict(key=k, kind=k, p={}, size=128, gsize=32, samples=128))

@@ -49,6 +49,7 @@ class Scenery:
         self.windsocks = self._windsocks()
         if bl.load_model("valla") is not None:
             self._fences()
+        self._navaid_sites()
         if bl.load_model("manga") is not None:          # mástil modelado en Blender (la manga la mueve el renderizador)
             for (x, y, z) in self.windsocks:
                 self.house_inst.append(("manga", x, y, z, 0.0, 1.0, 1.0, 1.0, 1.0))
@@ -594,6 +595,30 @@ class Scenery:
             end = base - d * 4.5                                              # extremo del brazo largo (lado de llegada)
             short_c = end + side * 2.25
             mb.box((short_c[0], short_c[1], z), (4.5, 1.0, 0.35), white, yaw=math.atan2(side[1], side[0]))
+
+    def _navaid_sites(self):
+        """Estaciones físicas de las radioayudas: VOR, NDB y, por cada ILS, la antena del localizador (detrás del
+        extremo opuesto de la pista, de frente a ella) y la de senda de planeo (300 m pasado el umbral, al costado)."""
+        T = self.terrain
+        for nv in self.world.navaids:
+            x, y = float(nv.pos[0]), float(nv.pos[1])
+            if nv.kind in ("VOR", "NDB"):
+                key = "vor" if nv.kind == "VOR" else "ndb"
+                if bl.load_model(key) is not None:
+                    self.house_inst.append((key, x, y, -float(T.height(x, y)), 0.0, 1.0, 1.0, 1.0, 1.0))
+            elif nv.kind == "ILS" and getattr(nv, "runway", None) is not None:
+                rw = nv.runway
+                ap = next((a for a in self.aps if rw in a.runways), None)
+                if ap is None:
+                    continue
+                thr, _hdg, de = rw.end(nv.end_ident)
+                re = np.array([-de[1], de[0]])
+                if bl.load_model("localizador") is not None:
+                    yaw = math.atan2(-de[0], de[1])          # su -y local mira hacia la pista
+                    self.house_inst.append(("localizador", x, y, -ap.elev, yaw, 1.0, 1.0, 1.0, 1.0))
+                if bl.load_model("senda") is not None:
+                    g = thr + de * 300.0 + re * (rw.width / 2 + 120.0)
+                    self.house_inst.append(("senda", float(g[0]), float(g[1]), -ap.elev, 0.0, 1.0, 1.0, 1.0, 1.0))
 
     def _fences(self):  # noqa: C901
         """Cerca perimetral de los aeródromos de la escuela: rectángulo alrededor de pista, calles y plataforma,

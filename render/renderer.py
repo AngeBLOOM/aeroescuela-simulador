@@ -789,8 +789,9 @@ class Renderer:
         for item in self.house_draw:
             r = item["rows"]
             d = np.hypot(r[:, 0] - eye[0], r[:, 1] - eye[1])
-            near = r[d < self.HOUSE_NEAR]
-            far = r[(d >= self.HOUSE_NEAR) & (d < self.HOUSE_FAR)] if item["key"] not in ("luminaria", "papi", "valla") else r[:0]
+            # las radioayudas se ven desde lejos (son referencias de navegación) y son livianas
+            near = r[d < (9000.0 if item["key"] in ("vor", "ndb", "localizador", "senda") else self.HOUSE_NEAR)]
+            far = r[(d >= self.HOUSE_NEAR) & (d < self.HOUSE_FAR)]                 if item["key"] not in ("luminaria", "papi", "valla", "vor", "ndb", "localizador", "senda") else r[:0]
             item["n"], item["nf"] = len(near), len(far)
             if len(near):
                 item["ib"].write(np.ascontiguousarray(near).tobytes())

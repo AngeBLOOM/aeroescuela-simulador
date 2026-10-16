@@ -147,6 +147,10 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   púas, a 70 m del borde de la pista, siguiendo el terreno, con el portón de acceso.
 - **Edificio de la escuela de vuelo** (Blender) frente a la plataforma: vidriera en planta baja, marquesina, balcón
   mirador con baranda y ventanas corridas arriba. La cerca perimetral tiene portones donde la cruzan las carreteras.
+- **Radioayudas físicas** (Blender) en su lugar real: estación VOR Doppler con su contrapeso y anillo de antenas,
+  NDB con mástil en franjas y antena en T, y por cada ILS la fila de dipolos del localizador detrás del extremo
+  de la pista y el mástil de la senda de planeo al costado, 300 m pasado el umbral. Se ven desde hasta 9 km: el
+  alumno aprende a reconocerlas desde el aire.
 - **Luz horneada en Blender** en hangares y torres: la luz del cielo con sus rebotes (Cycles) está calculada de
   antemano en un mapa de luz por edificio, así los rincones, el pie de las paredes, los aleros y el portón tienen
   la penumbra suave de una foto, y el suelo alrededor se oscurece un poco junto a las paredes. El Sol y sus sombras
