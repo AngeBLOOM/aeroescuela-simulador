@@ -734,9 +734,10 @@ class Renderer:
                         texs[tkey] = t_
                     tex = texs[tkey]
                 parts.append((vao, tex, dict(color=list(col), tint=mat in bl.TINTED, lamp=(mat == "lamp"),
-                                             glass=(mat == "glass"))))
+                                             glass=(mat == "glass"), blend=blend)))
                 svaos.append(ctx.vertex_array(self.p_shadow_tree, [(vbo, "3f 32x", "in_pos"),
                                                                     (ib, "3f 1f 1f 12x/i", "i_pos", "i_yaw", "i_scale")]))
+            parts.sort(key=lambda it: it[2]["blend"])        # los transparentes (malla de la valla) al final
             # versión simple para lejos: caja de paredes con el color de la casa y techo (a dos aguas si es de teja)
             far = self._house_lod(data)
             fvbo = ctx.buffer(far.tobytes())
@@ -789,7 +790,7 @@ class Renderer:
             r = item["rows"]
             d = np.hypot(r[:, 0] - eye[0], r[:, 1] - eye[1])
             near = r[d < self.HOUSE_NEAR]
-            far = r[(d >= self.HOUSE_NEAR) & (d < self.HOUSE_FAR)] if item["key"] not in ("luminaria", "papi") else r[:0]
+            far = r[(d >= self.HOUSE_NEAR) & (d < self.HOUSE_FAR)] if item["key"] not in ("luminaria", "papi", "valla") else r[:0]
             item["n"], item["nf"] = len(near), len(far)
             if len(near):
                 item["ib"].write(np.ascontiguousarray(near).tobytes())
@@ -811,6 +812,10 @@ class Renderer:
             pi["u_lmap"].value = 18
             pi["u_lm_on"].value = 1
             for vao, tex, m in item["parts"]:
+                if m["blend"]:
+                    self.ctx.enable(moderngl.BLEND)
+                    self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+                    self.ctx.fbo.depth_mask = False
                 pi["u_base"].value = tuple(float(c) for c in m["color"])
                 pi["u_itint_on"].value = 1 if m["tint"] else 0
                 pi["u_emis"].value = 1.8 * night if m["lamp"] else 0.0
@@ -823,6 +828,9 @@ class Renderer:
                     pi["u_has_tex"].value = 0
                 if item["n"]:
                     vao.render(instances=item["n"])
+                if m["blend"]:
+                    self.ctx.fbo.depth_mask = True
+                    self.ctx.disable(moderngl.BLEND)
             if item["nf"]:                                # versión simple: paredes con su color y techo de teja
                 pi["u_winlit"].value = 0.0
                 pi["u_lm_on"].value = 0

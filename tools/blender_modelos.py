@@ -42,7 +42,7 @@ MATS = {
     "tank": ((0.88, 0.88, 0.86), 2.0), "canopy": ((0.86, 0.86, 0.84), 2.0), "pump": ((0.75, 0.2, 0.15), 1.0),
     "brick": ((0.6, 0.38, 0.3), 2.0), "steelin": ((0.38, 0.4, 0.43), 1.0), "yellow": ((0.95, 0.75, 0.1), 1.0),
     "tile": ((0.6, 0.3, 0.2), 2.0), "housewall": ((0.85, 0.8, 0.7), 3.0), "slab": ((0.55, 0.55, 0.53), 6.0),
-    "tinaco": ((0.1, 0.1, 0.11), 1.0), "woodoor": ((0.4, 0.25, 0.15), 1.0),
+    "tinaco": ((0.1, 0.1, 0.11), 1.0), "woodoor": ((0.4, 0.25, 0.15), 1.0), "fence": ((0.35, 0.37, 0.38), 1.0),
 }
 NOBAKE = {"towerglass"}             # transparentes: no tapan la luz ni llevan mapa de luz
 # el interior del hangar queda en penumbra fija (no gasta mapa de luz: así sobra resolución para el exterior)
@@ -760,7 +760,22 @@ def manga(p):
     return dict(grect_margin=2.0)
 
 
-BUILDERS.update({"manga": manga, "luminaria": luminaria, "papi": papi, "casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
+def valla(p):
+    """Tramo de 3 m de cerca perimetral: postes galvanizados, malla (franja oscura translúcida al ojo) y tres
+    hilos de alambre de púas en el brazo inclinado de arriba."""
+    for x in (-1.5, 1.5):
+        cyl("steel", (x, 0, 0.0), (x, 0, 2.1), 0.035, 8)
+        beam("steel", (x, 0, 2.1), (x, -0.32, 2.45), 0.03, 0.03)
+    beam("steel", (-1.5, 0, 2.05), (1.5, 0, 2.05), 0.03, 0.03)
+    beam("steel", (-1.5, 0, 0.1), (1.5, 0, 0.1), 0.02, 0.02)
+    box("fence", (-1.5, -0.005, 0.1), (1.5, 0.005, 2.05))
+    for k in range(3):
+        t = (k + 1) / 3.5
+        beam("steel", (-1.5, -0.32 * t, 2.1 + 0.35 * t), (1.5, -0.32 * t, 2.1 + 0.35 * t), 0.008, 0.008)
+    return dict(grect_margin=1.0)
+
+
+BUILDERS.update({"valla": valla, "manga": manga, "luminaria": luminaria, "papi": papi, "casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
 
 
 # ============================================================ árboles (plantillas para el dibujo por instancias)

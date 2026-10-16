@@ -143,6 +143,8 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
 - **Manga de viento real**: mástil de Blender con franjas rojas y blancas, reflectores y luz de obstáculo; manga
   cónica de cinco bandas (cada una, unos 3 kt) con aro en la boca, que se infla con el viento y aletea más con
   ráfagas, para leer dirección e intensidad en la corta final.
+- **Cerca perimetral** de los aeródromos de la escuela (Blender): postes galvanizados, malla translúcida y alambre de
+  púas, a 70 m del borde de la pista, siguiendo el terreno, con el portón de acceso.
 - **Luz horneada en Blender** en hangares y torres: la luz del cielo con sus rebotes (Cycles) está calculada de
   antemano en un mapa de luz por edificio, así los rincones, el pie de las paredes, los aleros y el portón tienen
   la penumbra suave de una foto, y el suelo alrededor se oscurece un poco junto a las paredes. El Sol y sus sombras

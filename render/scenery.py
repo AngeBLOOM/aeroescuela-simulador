@@ -37,6 +37,8 @@ class Scenery:
         self.runways = self._runways()
         self.lights_static, self.light_groups, self.papis, self.rabbits = self._lights()
         self.windsocks = self._windsocks()
+        if bl.load_model("valla") is not None:
+            self._fences()
         if bl.load_model("manga") is not None:          # mástil modelado en Blender (la manga la mueve el renderizador)
             for (x, y, z) in self.windsocks:
                 self.house_inst.append(("manga", x, y, z, 0.0, 1.0, 1.0, 1.0, 1.0))
@@ -579,6 +581,43 @@ class Scenery:
             end = base - d * 4.5                                              # extremo del brazo largo (lado de llegada)
             short_c = end + side * 2.25
             mb.box((short_c[0], short_c[1], z), (4.5, 1.0, 0.35), white, yaw=math.atan2(side[1], side[0]))
+
+    def _fences(self):
+        """Cerca perimetral de los aeródromos de la escuela: rectángulo alrededor de pista, calles y plataforma,
+        a 70 m del borde de la pista, con tramos de 3 m que siguen el terreno."""
+        if not self.world.is_school:
+            return
+        for ap in self.aps:
+            pts = []
+            for rw in ap.runways:
+                for s_ in (-1, 1):
+                    for l_ in (-1, 1):
+                        pts.append(rw.center + rw.dir * s_ * (rw.length / 2 + 120.0) + rw.right * l_ * (rw.width / 2 + 70.0))
+            for (c, h, ln, wd) in ap.paved_rects:
+                hr = math.radians(h)
+                d = np.array([math.cos(hr), math.sin(hr)])
+                r = np.array([-d[1], d[0]])
+                for s_ in (-1, 1):
+                    for l_ in (-1, 1):
+                        pts.append(np.asarray(c) + d * s_ * (ln / 2 + 60.0) + r * l_ * (wd / 2 + 60.0))
+            rw = ap.runways[0]
+            P = np.array(pts)
+            u = (P - rw.center) @ rw.dir
+            v = (P - rw.center) @ rw.right
+            corners = [(u.min(), v.min()), (u.max(), v.min()), (u.max(), v.max()), (u.min(), v.max())]
+            C = [rw.center + rw.dir * a + rw.right * b for a, b in corners]
+            for k in range(4):
+                a, b = C[k], C[(k + 1) % 4]
+                L = float(np.linalg.norm(b - a))
+                dd = (b - a) / L
+                yaw = math.atan2(dd[1], dd[0])
+                n = int(L // 3.0)
+                for i in range(n):
+                    if k == 0 and abs(i - n // 2) <= 1:
+                        continue                           # portón de acceso (hueco de 9 m)
+                    p = a + dd * (i + 0.5) * 3.0
+                    g = float(self.terrain.height(p[0], p[1]))
+                    self.house_inst.append(("valla", p[0], p[1], -g, yaw, 1.0, 1.0, 1.0, 1.0))
 
     def _masts(self, mb):
         """Antenas de radio y TV (60-90 m) en las cimas más altas a menos de 12 km de los aeródromos, separadas por

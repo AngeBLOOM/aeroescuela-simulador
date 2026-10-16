@@ -598,6 +598,7 @@ MATERIALS = {
     "slab": ((0.62, 0.62, 0.6, 1.0), "concrete", False),
     "tinaco": ((0.12, 0.12, 0.13, 1.0), None, False),
     "woodoor": ((0.42, 0.27, 0.16, 1.0), None, False),
+    "fence": ((0.3, 0.32, 0.34, 0.45), None, True),          # malla de alambre: se ve a través
 }
 TINTED = {"housewall"}            # materiales que toman el color propio de cada casa
 CORRUGATED = 26.0                 # ondas de la chapa por cuadro de textura (4 m): el shader las ilumina con el Sol
