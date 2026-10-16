@@ -201,8 +201,8 @@ class App(ScreensMixin):
         self.messages = deque(maxlen=4)
         self.flash_msg = None
         self.show_panel = True
-        # cabina en pantalla: "auto" (según haya consola física), "2d", "3d" o "none". La cabina fotográfica ya no
-        # existe: los mandos dibujados no sirven con la consola física (un ajuste antiguo pasa a "auto")
+        # cabina en pantalla: "auto" (según haya consola física), "2d" o "none". La cabina fotográfica y la cabina 3D
+        # ya no se ofrecen: los mandos dibujados no sirven con la consola física (un ajuste antiguo pasa a "auto")
         self.cockpit_mode = self.settings.get("cabina_estilo", "auto")
         if self.cockpit_mode not in self.COCKPIT_MODES:
             self.cockpit_mode = self.settings["cabina_estilo"] = "auto"
@@ -373,7 +373,7 @@ class App(ScreensMixin):
                    "unica": "Solo instrumentos (esta pantalla)", "segunda": "Instrumentos en una segunda ventana"}
 
     # ------------------------------------------------------------ cabina en pantalla
-    COCKPIT_MODES = ("auto", "2d", "3d", "none")
+    COCKPIT_MODES = ("auto", "2d", "none")
     COCKPIT_NAMES = {"2d": "Panel 2D", "3d": "Cabina 3D", "none": "Sin panel (solo paisaje)",
                      "franja": "Paisaje + franja de instrumentos"}
 
@@ -964,7 +964,7 @@ class App(ScreensMixin):
             self.panel.mode = "glass" if self.panel.mode == "analog" else "analog"
             self.settings["cabina"] = self.panel.mode
         elif k == pygame.K_p:
-            # automática → panel 2D → cabina 3D → sin panel
+            # automática → panel 2D → sin panel
             order = self.COCKPIT_MODES
             self.cockpit_mode = order[(order.index(self.cockpit_mode) + 1) % len(order)]
             self.settings["cabina_estilo"] = self.cockpit_mode

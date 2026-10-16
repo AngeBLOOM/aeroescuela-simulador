@@ -162,9 +162,8 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
 - **Cabina automática** (por defecto): con la consola física conectada no se dibuja ningún mando (solo el paisaje,
   con la franja de instrumentos debajo si no van en su propia pantalla); sin consola, el panel 2D, que se maneja
   con el ratón y con el teclado o un joystick USB. Cambia sola al enchufar o quitar la consola.
-- **Cabina 3D por dentro**: tablero con los instrumentos reales montado en 3D y pulsable con el ratón,
-  visera, brújula, montantes, techo, puertas, asientos, capó del motor a la vista, disco de la hélice y reflejos
-  del sol en el parabrisas; volantes ocultos (tecla **Y**). Tecla **P**: automática · panel 2D · cabina 3D · sin panel.
+- Tecla **P**: automática · panel 2D · sin panel. La cabina 3D dibujada ya no se ofrece (se veía artificial y con la
+  consola física no hace falta: el alumno mira el paisaje y sus mandos reales).
 - Aspecto fotográfico: marcos metálicos con tornillos, esferas, reflejo del cristal, tablero texturizado y marcos
   físicos de las pantallas G1000. Las texturas se generan por código con `python tools/make_assets.py`
   (carpeta `assets/`); si se sustituyen por fotos o imágenes de IA con el mismo nombre, el simulador las usa.
