@@ -835,6 +835,7 @@ uniform vec4 u_tint;
 uniform float u_emis;
 uniform sampler2D u_lmap;
 uniform int u_lm_on;
+uniform float u_corr;         // chapa ondulada: ondas por unidad de u (0 = lisa)
 in vec3 v_pos;
 in vec3 v_norm;
 in vec2 v_uv;
@@ -849,6 +850,19 @@ void main() {
     vec3 n = normalize(v_norm);
     vec3 v = normalize(u_campos - v_pos);
     if (dot(n, v) < 0.0) n = -n;
+    if (u_corr > 0.0) {
+        // chapa ondulada: la normal ondula a lo largo de u (marco tangente por derivadas); de lejos se promedia
+        vec3 dp1 = dFdx(v_pos), dp2 = dFdy(v_pos);
+        vec2 du1 = dFdx(v_uv), du2 = dFdy(v_uv);
+        vec3 tg = cross(dp2, n) * du1.x + cross(n, dp1) * du2.x;
+        float tl = length(tg);
+        // se apaga cuando una onda ocupa menos de ~3 píxeles (si no, forma muaré a media distancia)
+        float fade = 1.0 - smoothstep(0.12, 0.3, fwidth(v_uv.x * u_corr));
+        if (tl > 1e-8 && fade > 0.0) {
+            tg = normalize(tg / tl - n * dot(n, tg / tl));
+            n = normalize(n + tg * cos(v_uv.x * u_corr * 6.2832) * 0.42 * fade);
+        }
+    }
     float shf = sun_shadow_n(v_pos, n);             // sombra de hangares y edificios sobre el avión
     float diff = max(dot(n, u_sun), 0.0) * shf;
     vec3 h = normalize(u_sun + v);

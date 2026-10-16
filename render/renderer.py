@@ -444,6 +444,7 @@ class Renderer:
             pm["u_cutoff"].value = float(m.get("cutoff", 0.0))
             lmap = m.get("lmap")
             pm["u_lm_on"].value = 1 if lmap is not None else 0
+            pm["u_corr"].value = float(m.get("corr", 0.0))
             if lmap is not None:
                 lmap.use(18)
                 pm["u_lmap"].value = 18
@@ -762,6 +763,10 @@ class Renderer:
             meta = dict(color=list(col), blend=blend, cutoff=0.0)
             if mat.startswith(("tsign:", "dsign:", "gsign:")):
                 meta["emis"] = 0.85                      # los carteles de rodaje y de pista tienen luz propia de noche
+            elif mat == "lamp":
+                meta["emis"] = 1.8                       # reflectores y luces de las puertas, encendidos de noche
+            if mat.startswith("wall:") or mat in ("roof", "interior"):
+                meta["corr"] = bl.CORRUGATED
             if key is not None:
                 meta["lmap"] = lmaps[key]
             model.append((vao, tex, meta, svao))

@@ -208,99 +208,233 @@ def _ao_h(h):
 
 
 def add_hangar(tm, x, y, gz, ln, wd, ht, yaw, color_key, sign_key=None):
-    """Hangar de ln x wd x ht m (portón en la cara -y local, la que mira a la plataforma), techo a dos aguas."""
+    """Hangar de chapa de ln x wd x ht m (portón en la cara -y local, la que mira a la plataforma), con detalle de
+    obra: zócalo de concreto, esquineros, techo a dos aguas con claraboyas y cumbrera, alero con canaleta y bajantes,
+    viga y rieles del portón, hojas corredizas con paneles, ventanas y zócalo, una hoja corrida que deja ver el
+    interior (piso, paredes, cielo y cerchas), oficina anexa con ventanas, puerta con alero y aires acondicionados,
+    reflectores y letrero. La luz del cielo se hornea en Blender (tools/hornear_luz.py)."""
     c, s = math.cos(yaw), math.sin(yaw)
 
     def W(px, py, h):                               # local (a lo largo, a lo ancho, altura) -> mundo NED
         return (x + px * c - py * s, y + px * s + py * c, gz - h)
+
+    def box(mat, p0, p1, tile=1.0, ao=1.0):
+        """Caja en coordenadas locales (px, py, h) entre dos esquinas (con el giro del hangar)."""
+        (ax, ay, ah), (bx, by, bh) = p0, p1
+        ax, bx = sorted((ax, bx))
+        ay, by = sorted((ay, by))
+        ah, bh = sorted((ah, bh))
+        v = [W(ax, ay, ah), W(bx, ay, ah), W(bx, by, ah), W(ax, by, ah),
+             W(ax, ay, bh), W(bx, ay, bh), W(bx, by, bh), W(ax, by, bh)]
+        sx, sy, sh = (bx - ax) / tile, (by - ay) / tile, (bh - ah) / tile
+        for f, (du, dv) in (((0, 1, 2, 3), (sx, sy)), ((4, 5, 6, 7), (sx, sy)), ((0, 1, 5, 4), (sx, sh)),
+                            ((1, 2, 6, 5), (sy, sh)), ((2, 3, 7, 6), (sx, sh)), ((3, 0, 4, 7), (sy, sh))):
+            lo = [ao if v[i][2] >= gz - 0.01 else 1.0 for i in f]     # el pie, algo más oscuro
+            tm.quad(mat, *(v[i] for i in f), [(0, 0), (du, 0), (du, dv), (0, dv)], lo)
+
     a, b = ln / 2, wd / 2
-    rise = 2.5
-    ov = 0.6                                        # alero
+    rise = max(1.6, wd * 0.085)                    # techo de poca pendiente (~10°)
+    ov = 0.7                                        # alero
     wall = f"wall:{color_key}"
     T = 4.0                                         # la textura de chapa cubre 4 x 4 m
+    P0 = 0.4                                        # zócalo de concreto
 
-    def wallq(p, q, py_p, py_q, h0, h1, ao_top=0.92, mat=wall, off=0.0):
-        """Pared vertical de (p, py_p) a (q, py_q) en planta local, entre las alturas h0 y h1."""
+    def wallq(p, q, py_p, py_q, h0, h1, mat=wall, off=0.0, tile=T):
         L = math.hypot(q - p, py_q - py_p)
-        u0 = 0.0
         tm.quad(mat, W(p, py_p + off, h0), W(q, py_q + off, h0), W(q, py_q + off, h1), W(p, py_p + off, h1),
-                [(u0, h0 / T), (u0 + L / T, h0 / T), (u0 + L / T, h1 / T), (u0, h1 / T)],
-                [_ao_h(h0), _ao_h(h0), min(ao_top, _ao_h(h1)), min(ao_top, _ao_h(h1))])
-    # cara del portón (-b): marcos laterales y franja sobre la abertura
-    dx = 0.85 * a
-    dh = 0.8 * ht
-    wallq(-a, -dx, -b, -b, 0, ht)
-    wallq(dx, a, -b, -b, 0, ht)
-    wallq(-dx, dx, -b, -b, dh, ht)
-    # trasera y laterales
-    wallq(a, -a, b, b, 0, ht)
+                [(0.0, h0 / tile), (L / tile, h0 / tile), (L / tile, h1 / tile), (0.0, h1 / tile)],
+                [_ao_h(h0), _ao_h(h0), 1.0, 1.0])
+
+    dx = 0.8 * a                                    # media abertura del portón
+    dh = min(0.78 * ht, ht - 1.6)                   # alto del portón
+    # ---- zócalo de concreto (sobresale 5 cm) y chapa encima
+    box("plinth", (-a - 0.05, -b - 0.05, 0.0), (-dx, -b + 0.15, P0), tile=2.0, ao=0.75)
+    box("plinth", (dx, -b - 0.05, 0.0), (a + 0.05, -b + 0.15, P0), tile=2.0, ao=0.75)
+    box("plinth", (-a - 0.05, b - 0.15, 0.0), (a + 0.05, b + 0.05, P0), tile=2.0, ao=0.75)
+    for sx in (-1, 1):
+        box("plinth", (sx * a - 0.15, -b, 0.0), (sx * a + 0.05 * sx, b, P0), tile=2.0, ao=0.75)
+    wallq(-a, -dx, -b, -b, P0, ht)
+    wallq(dx, a, -b, -b, P0, ht)
+    wallq(-dx, dx, -b, -b, dh + 0.9, ht)            # sobre la viga del portón
+    wallq(a, -a, b, b, P0, ht)
     for sx in (-1, 1):
         px = sx * a
-        wallq(px, px, -b * sx, b * sx, 0, ht)
-        # hastial triangular hasta la cumbrera
+        wallq(px, px, -b * sx, b * sx, P0, ht)
         tm.tri(wall, W(px, -b, ht), W(px, b, ht), W(px, 0, ht + rise),
-               [(0, ht / T), (wd / T, ht / T), (b / T, (ht + rise) / T)], (0.85, 0.85, 0.8))
-    # techo: dos faldones con alero, canto (fascia), parte de abajo del alero y cumbrera
-    roof = "roof"
+               [(0, ht / T), (wd / T, ht / T), (b / T, (ht + rise) / T)])
+    # interior: paredes, piso y cielo por dentro (se ven por la hoja corrida; quedan en penumbra al hornear)
+    ins = 0.12
+    for (p, q, pp, qq) in ((-a + ins, a - ins, b - ins, b - ins), (-a + ins, -a + ins, -b + ins, b - ins),
+                           (a - ins, a - ins, b - ins, -b + ins), (-a + ins, a - ins, -b + ins, -b + ins)):
+        wallq(p, q, pp, qq, 0.02, ht, mat="interior")
+    tm.quad("interiorfloor", W(-a + ins, -b + ins, 0.03), W(a - ins, -b + ins, 0.03), W(a - ins, b - ins, 0.03),
+            W(-a + ins, b - ins, 0.03), [(0, 0), (ln / 6, 0), (ln / 6, wd / 6), (0, wd / 6)])
+    for sy in (-1, 1):                              # cielo (bajo los faldones)
+        tm.quad("interior", W(-a + ins, sy * (b - ins), ht - 0.05), W(a - ins, sy * (b - ins), ht - 0.05),
+                W(a - ins, 0, ht + rise - 0.25), W(-a + ins, 0, ht + rise - 0.25),
+                [(0, 0), (ln / T, 0), (ln / T, b / T), (0, b / T)])
+    nb = max(3, int(ln / 7.5))                      # cerchas cada ~7,5 m
+    for i in range(1, nb):
+        px = -a + ln * i / nb
+        for sy in (-1, 1):
+            p0 = np.array(W(px, sy * (b - 0.3), ht - 0.3))
+            p1 = np.array(W(px, 0, ht + rise - 0.45))
+            _beam(tm, "steel", p0, p1, 0.25, 0.45)
+            q0 = np.array(W(px, sy * (b - 0.3), ht - 1.4))
+            _beam(tm, "steel", q0, np.array(W(px, 0, ht - 1.4)), 0.2, 0.2)
+            _beam(tm, "steel", q0, np.array(W(px, sy * b * 0.5, ht + rise * 0.5 - 0.4)), 0.12, 0.12)
+        box("steel", (px - 0.2, -b + 0.15, 0.0), (px + 0.2, -b + 0.5, ht - 0.3), tile=1.0)     # columnas
+        box("steel", (px - 0.2, b - 0.5, 0.0), (px + 0.2, b - 0.15, ht - 0.3), tile=1.0)
+    # ---- esquineros, botaguas del zócalo
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            box("trim", (sx * a - 0.13 * (sx > 0), sy * b - 0.13 * (sy > 0), P0),
+                (sx * a + 0.13 * (sx < 0) + 0.04 * sx, sy * b + 0.13 * (sy < 0) + 0.04 * sy, ht), tile=1.0)
+    for (p, q, pp, qq) in ((-a, -dx, -b, -b), (dx, a, -b, -b), (-a, a, b, b), (-a, -a, -b, b), (a, a, -b, b)):
+        nx, ny = (0.0, -0.06) if pp == qq and pp < 0 else ((0.0, 0.06) if pp == qq else ((-0.06 if p < 0 else 0.06), 0.0))
+        box("trim", (min(p, q) + (nx if nx < 0 else 0), min(pp, qq) + (ny if ny < 0 else 0), P0 - 0.02),
+            (max(p, q) + (nx if nx > 0 else 0), max(pp, qq) + (ny if ny > 0 else 0), P0 + 0.12), tile=1.0)
+    # ---- techo: dos faldones con alero, claraboyas, cumbrera, frontis, canaleta y bajantes
     slope = rise / b
-    L = math.hypot(b + ov, rise + ov * slope)
+    Ls = math.hypot(b + ov, rise + ov * slope)
+    he = ht - ov * slope
     for sy in (-1, 1):
         ye = sy * (b + ov)
-        he = ht - ov * slope
-        tm.quad(roof, W(-a - 0.4, ye, he), W(a + 0.4, ye, he), W(a + 0.4, 0, ht + rise + 0.05),
-                W(-a - 0.4, 0, ht + rise + 0.05),
-                [(0, 0), ((ln + 0.8) / T, 0), ((ln + 0.8) / T, L / T), (0, L / T)])
-        tm.quad("trim", W(-a - 0.4, ye, he), W(a + 0.4, ye, he), W(a + 0.4, ye, he - 0.28), W(-a - 0.4, ye, he - 0.28),
-                [(0, 0), (1, 0), (1, 1), (0, 1)])
-        tm.quad("trim", W(-a - 0.4, sy * b, ht), W(a + 0.4, sy * b, ht), W(a + 0.4, ye, he), W(-a - 0.4, ye, he),
-                [(0, 0), (1, 0), (1, 1), (0, 1)], (0.55, 0.55, 0.62, 0.62))
-        # canaleta
-        g0 = ye + sy * 0.08
-        tm.quad("gutter", W(-a - 0.4, g0, he - 0.05), W(a + 0.4, g0, he - 0.05), W(a + 0.4, g0, he - 0.3),
-                W(-a - 0.4, g0, he - 0.3), [(0, 0), (1, 0), (1, 1), (0, 1)])
-    tm.quad("trim", W(-a - 0.4, -0.25, ht + rise + 0.02), W(a + 0.4, -0.25, ht + rise + 0.02),
-            W(a + 0.4, 0.25, ht + rise + 0.02), W(-a - 0.4, 0.25, ht + rise + 0.02), [(0, 0), (1, 0), (1, 1), (0, 1)])
-    # portón: cuatro hojas corredizas en dos rieles (unas más afuera que otras), con ventanas y canto
-    leaf = 2 * dx / 4
-    for k in range(4):
+        tm.quad("roof", W(-a - 0.5, ye, he), W(a + 0.5, ye, he), W(a + 0.5, 0, ht + rise + 0.05),
+                W(-a - 0.5, 0, ht + rise + 0.05), [(0, 0), ((ln + 1.0) / T, 0), ((ln + 1.0) / T, Ls / T), (0, Ls / T)])
+        # claraboyas: franjas de policarbonato a lo largo del faldón, algo más altas que la chapa
+        for k in range(int(ln // 9)):
+            u0 = -a + 4.5 + k * 9.0 - 0.6
+            t0, t1 = 0.25, 0.8
+            def R(px, t, lift=0.04):
+                yy = ye * (1 - t)
+                return W(px, yy, he + (ht + rise + 0.05 - he) * t + lift)
+            tm.quad("skylight", R(u0, t0), R(u0 + 1.2, t0), R(u0 + 1.2, t1), R(u0, t1), [(0, 0), (1, 0), (1, 1), (0, 1)])
+        tm.quad("trim", W(-a - 0.5, ye, he), W(a + 0.5, ye, he), W(a + 0.5, ye, he - 0.3), W(-a - 0.5, ye, he - 0.3),
+                [(0, 0), (1, 0), (1, 1), (0, 1)])                      # frontis
+        tm.quad("trim", W(-a - 0.5, sy * b, ht), W(a + 0.5, sy * b, ht), W(a + 0.5, ye, he), W(-a - 0.5, ye, he),
+                [(0, 0), (1, 0), (1, 1), (0, 1)], (0.6, 0.6, 0.65, 0.65))   # cielo del alero
+        g0 = ye + sy * 0.05
+        box("gutter", (-a - 0.5, g0, he - 0.42), (a + 0.5, g0 + sy * 0.22, he - 0.2), tile=1.0)
+        for sx in (-1, 1):                          # bajantes en las esquinas
+            px = sx * (a + 0.2)
+            box("gutter", (px - 0.07, g0 + sy * 0.02, 0.15), (px + 0.07, g0 + sy * 0.16, he - 0.35), tile=1.0)
+            box("gutter", (px - 0.07, g0 + sy * 0.02, 0.05), (px + 0.07, g0 + sy * 0.45, 0.2), tile=1.0)
+    for sx in (-1, 1):                              # frontis del hastial (sigue la pendiente)
+        px = sx * (a + 0.5)
+        for sy in (-1, 1):
+            ye = sy * (b + ov)
+            tm.quad("trim", W(px, ye, he), W(px, 0, ht + rise + 0.05), W(px, 0, ht + rise - 0.3), W(px, ye, he - 0.3),
+                    [(0, 0), (1, 0), (1, 1), (0, 1)])
+    box("trim", (-a - 0.5, -0.3, ht + rise - 0.02), (a + 0.5, 0.3, ht + rise + 0.14), tile=1.0)   # cumbrera
+    # ---- portón: viga, rieles, hojas con paneles y ventanas; una hoja corrida deja ver adentro
+    box("steel", (-dx - 0.7, -b - 0.45, dh), (dx + 0.7, -b, dh + 0.9), tile=2.0)
+    box("trim", (-dx - 0.7, -b - 0.7, dh + 0.05), (dx + 0.7, -b - 0.45, dh + 0.3), tile=1.0)    # riel de arriba
+    box("steel", (-dx - 0.5, -b - 0.75, 0.0), (dx + 0.5, -b - 0.1, 0.03), tile=1.0)              # riel del piso
+    for px in (-dx - 0.35, dx + 0.35):                                                            # jambas
+        box("steel", (px - 0.35, -b - 0.45, 0.0), (px + 0.35, -b, dh), tile=1.0, ao=0.7)
+    nl = max(4, 2 * int(round(dx / 5.5)))
+    leaf = 2 * dx / nl
+    gap = nl // 2 - 1                               # esta hoja está corrida detrás de la vecina: abertura de una hoja
+    for k in range(nl):
+        if k == gap:
+            continue
         p0 = -dx + k * leaf
-        p1 = p0 + leaf
-        off = -0.12 if k % 2 == 0 else -0.32
+        if k == gap + 1:
+            pass
+        off = -0.2 if k % 2 == 0 else -0.45
+        if k == gap - 1:                            # la vecina queda adelante, en el riel de afuera
+            off = -0.6
         py = -b + off
-        tm.quad("door", W(p0, py, 0.02), W(p1, py, 0.02), W(p1, py, dh), W(p0, py, dh),
-                [(0, 0), (leaf / T, 0), (leaf / T, dh / T), (0, dh / T)], (0.62, 0.62, 0.95, 0.95))
-        for pe in (p0, p1):                          # cantos de la hoja
-            tm.quad("door", W(pe, -b, 0.02), W(pe, py, 0.02), W(pe, py, dh), W(pe, -b, dh),
-                    [(0, 0), (0.05, 0), (0.05, dh / T), (0, dh / T)], (0.5, 0.5, 0.8, 0.8))
-        nw = max(2, int(leaf / 3.2))
-        for i in range(nw):                          # ventanas altas de la hoja
-            w0 = p0 + leaf * (i + 0.2) / nw
-            w1 = p0 + leaf * (i + 0.8) / nw
-            tm.quad("glass", W(w0, py - 0.02, dh * 0.72), W(w1, py - 0.02, dh * 0.72), W(w1, py - 0.02, dh * 0.86),
-                    W(w0, py - 0.02, dh * 0.86), [(0, 0), (1, 0), (1, 1), (0, 1)])
-    # riel y marco del portón
-    tm.box("trim", W(-dx - 0.6, -b - 0.55, dh + 0.45), W(dx + 0.6, -b - 0.02, dh), tile=1.0)
-    for px in (-dx - 0.35, dx + 0.35):
-        tm.box("trim", W(px - 0.25, -b - 0.4, dh), W(px + 0.25, -b, 0.0), tile=1.0, ao_floor=0.6)
+        p1 = p0 + leaf
+        tm.quad("door", W(p0, py, 0.04), W(p1, py, 0.04), W(p1, py, dh), W(p0, py, dh),
+                [(0, 0), (leaf / T, 0), (leaf / T, dh / T), (0, dh / T)], (0.7, 0.7, 1.0, 1.0))
+        for pe in (p0, p1):                          # cantos y largueros de la hoja
+            box("trim", (pe - 0.06, py - 0.08, 0.04), (pe + 0.06, py + 0.02, dh), tile=1.0)
+        for hh in np.arange(1.2, dh - 0.4, 1.25):    # refuerzos horizontales
+            box("trim", (p0 + 0.06, py - 0.05, hh), (p1 - 0.06, py, hh + 0.08), tile=1.0)
+        box("trim", (p0 + 0.06, py - 0.04, 0.04), (p1 - 0.06, py, 0.6), tile=1.0, ao=0.7)       # zócalo de la hoja
+        nw = max(2, int(leaf / 1.6))
+        for i in range(nw):                          # ventanas con marco
+            w0 = p0 + leaf * (i + 0.15) / nw
+            w1 = p0 + leaf * (i + 0.85) / nw
+            z0, z1 = dh * 0.66, dh * 0.8
+            tm.quad("glass", W(w0, py - 0.03, z0), W(w1, py - 0.03, z0), W(w1, py - 0.03, z1), W(w0, py - 0.03, z1),
+                    [(0, 0), (1, 0), (1, 1), (0, 1)])
+            box("frame", (w0 - 0.05, py - 0.07, z0 - 0.05), (w1 + 0.05, py - 0.02, z0), tile=1.0)
+            box("frame", (w0 - 0.05, py - 0.07, z1), (w1 + 0.05, py - 0.02, z1 + 0.05), tile=1.0)
+    # reflectores sobre la viga del portón
+    for px in (-dx * 0.6, 0.0, dx * 0.6):
+        box("steel", (px - 0.05, -b - 0.45, dh + 1.0), (px + 0.05, -b - 1.0, dh + 1.08), tile=1.0)
+        box("lamp", (px - 0.3, -b - 1.15, dh + 0.85), (px + 0.3, -b - 0.85, dh + 1.05), tile=1.0)
     # letrero sobre el portón
     if sign_key is not None:
         sw = min(0.55 * ln, 22.0)
-        sh = min(1.6, ht - dh - 0.7)
+        sh = min(1.6, ht - dh - 1.2)
         if sh > 0.6:
-            z0 = dh + 0.55
-            tm.quad(f"sign:{sign_key}", W(-sw / 2, -b - 0.04, z0), W(sw / 2, -b - 0.04, z0),
-                    W(sw / 2, -b - 0.04, z0 + sh), W(-sw / 2, -b - 0.04, z0 + sh), [(1, 0), (0, 0), (0, 1), (1, 1)])
-    # puerta de personas y ventanas en el hastial +a
-    for px, pyd in ((a + 0.03, -b * 0.5),):
-        tm.quad("trim", W(px, pyd - 0.5, 0.02), W(px, pyd + 0.5, 0.02), W(px, pyd + 0.5, 2.15), W(px, pyd - 0.5, 2.15),
-                [(0, 0), (1, 0), (1, 1), (0, 1)], (0.7, 0.7, 0.9, 0.9))
-        for wy in (b * 0.1, b * 0.55):
-            tm.quad("glass", W(px, wy - 0.9, 2.6), W(px, wy + 0.9, 2.6), W(px, wy + 0.9, 3.6), W(px, wy - 0.9, 3.6),
-                    [(0, 0), (1, 0), (1, 1), (0, 1)])
-    # losa de concreto delante del portón
+            z0 = dh + 1.05
+            tm.quad(f"sign:{sign_key}", W(-sw / 2, -b - 0.05, z0), W(sw / 2, -b - 0.05, z0),
+                    W(sw / 2, -b - 0.05, z0 + sh), W(-sw / 2, -b - 0.05, z0 + sh), [(1, 0), (0, 0), (0, 1), (1, 1)])
+    # ---- oficina anexa sobre el hastial +a: bloque de una planta con ventanas, puerta con alero y aires
+    ow, od, oh = min(14.0, wd * 0.55), 5.0, 3.4
+    oy0 = -b + 1.5
+    ox0, ox1 = a, a + od
+    box("office", (ox0, oy0, 0.0), (ox1, oy0 + ow, oh), tile=3.0, ao=0.8)
+    box("trim", (ox0, oy0 - 0.1, oh), (ox1 + 0.1, oy0 + ow + 0.1, oh + 0.35), tile=1.0)          # pretil
+    box("plinth", (ox0, oy0 - 0.03, 0.0), (ox1 + 0.03, oy0 + ow + 0.03, 0.35), tile=2.0, ao=0.75)
+    for i in range(int(ow // 2.6)):                  # ventanas al frente de la oficina (cara +x)
+        w0 = oy0 + 0.9 + i * 2.6
+        w1 = w0 + 1.5
+        z0, z1 = 1.0, 2.3
+        px = ox1 + 0.02
+        tm.quad("glass", W(px, w0, z0), W(px, w1, z0), W(px, w1, z1), W(px, w0, z1), [(0, 0), (1, 0), (1, 1), (0, 1)])
+        box("frame", (px - 0.02, w0 - 0.06, z0 - 0.08), (px + 0.06, w1 + 0.06, z0), tile=1.0)    # alféizar
+        box("frame", (px - 0.02, w0 - 0.06, z1), (px + 0.05, w1 + 0.06, z1 + 0.06), tile=1.0)
+        box("frame", (px - 0.02, (w0 + w1) / 2 - 0.03, z0), (px + 0.04, (w0 + w1) / 2 + 0.03, z1), tile=1.0)
+    dy0 = oy0 + ow - 2.2                              # puerta con alero en la cara -y de la oficina
+    tm.quad("doorpers", W(ox0 + 1.5, oy0 - 0.02, 0.02), W(ox0 + 2.5, oy0 - 0.02, 0.02), W(ox0 + 2.5, oy0 - 0.02, 2.2),
+            W(ox0 + 1.5, oy0 - 0.02, 2.2), [(0, 0), (1, 0), (1, 1), (0, 1)])
+    box("trim", (ox0 + 1.1, oy0 - 1.2, 2.5), (ox0 + 2.9, oy0, 2.6), tile=1.0)                   # alero de la puerta
+    box("lamp", (ox0 + 1.85, oy0 - 0.12, 2.3), (ox0 + 2.15, oy0, 2.45), tile=1.0)
+    for i in range(2):                                # aires acondicionados en la pared lateral +y
+        py0 = oy0 + ow
+        px0 = ox0 + 1.0 + i * 2.2
+        box("ac", (px0, py0, 0.4), (px0 + 0.9, py0 + 0.35, 1.0), tile=1.0)
+        box("trim", (px0 + 0.1, py0 + 0.35, 0.5), (px0 + 0.8, py0 + 0.37, 0.9), tile=1.0)
+    _ = dy0
+    # ---- puerta de personas en el hastial -a, con alero y luz
+    px = -a - 0.03
+    tm.quad("doorpers", W(px, -b * 0.4 - 0.5, 0.02), W(px, -b * 0.4 + 0.5, 0.02), W(px, -b * 0.4 + 0.5, 2.15),
+            W(px, -b * 0.4 - 0.5, 2.15), [(0, 0), (1, 0), (1, 1), (0, 1)])
+    box("trim", (px - 1.0, -b * 0.4 - 0.9, 2.45), (px, -b * 0.4 + 0.9, 2.55), tile=1.0)
+    box("lamp", (px - 0.12, -b * 0.4 - 0.15, 2.25), (px, -b * 0.4 + 0.15, 2.4), tile=1.0)
+    for wy in (b * 0.15, b * 0.6):                    # ventanas altas del hastial
+        tm.quad("glass", W(px, wy - 0.9, 2.8), W(px, wy + 0.9, 2.8), W(px, wy + 0.9, 3.7), W(px, wy - 0.9, 3.7),
+                [(0, 0), (1, 0), (1, 1), (0, 1)])
+        box("frame", (px - 0.06, wy - 0.95, 2.72), (px, wy + 0.95, 2.8), tile=1.0)
+    # ---- losa de concreto delante del portón
     S = 6.0
-    tm.quad("concrete", W(-a - 2, -b - 14, 0.06), W(a + 2, -b - 14, 0.06), W(a + 2, -b, 0.06), W(-a - 2, -b, 0.06),
-            [(0, 0), ((ln + 4) / S, 0), ((ln + 4) / S, 14 / S), (0, 14 / S)], (1.0, 1.0, 0.8, 0.8))
+    tm.quad("concrete", W(-a - 2, -b - 16, 0.06), W(a + 2, -b - 16, 0.06), W(a + 2, -b, 0.06), W(-a - 2, -b, 0.06),
+            [(0, 0), ((ln + 4) / S, 0), ((ln + 4) / S, 16 / S), (0, 16 / S)], (1.0, 1.0, 0.85, 0.85))
+
+
+def _beam(tm, mat, p0, p1, w, h):
+    """Viga de sección rectangular entre dos puntos (mundo NED)."""
+    ax = p1 - p0
+    L = float(np.linalg.norm(ax))
+    if L < 1e-6:
+        return
+    ax = ax / L
+    up = np.array([0.0, 0.0, -1.0])
+    if abs(float(ax @ up)) > 0.95:
+        up = np.array([1.0, 0.0, 0.0])
+    side = np.cross(ax, up)
+    side /= np.linalg.norm(side)
+    upv = np.cross(side, ax)
+    sd, uv_ = side * w / 2, upv * h / 2
+    v = [p0 - sd - uv_, p0 + sd - uv_, p0 + sd + uv_, p0 - sd + uv_, p1 - sd - uv_, p1 + sd - uv_, p1 + sd + uv_, p1 - sd + uv_]
+    for f in ((0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)):
+        tm.quad(mat, *(v[i] for i in f), [(0, 0), (1, 0), (1, L), (0, L)])
 
 
 def add_tower(tm, x, y, gz, shaft_h=16.0):
@@ -348,7 +482,18 @@ MATERIALS = {
     "concrete": ((0.95, 0.95, 0.95, 1.0), "concrete", False),
     "tower": ((0.9, 0.88, 0.84, 1.0), "concrete", False),
     "towerglass": ((0.25, 0.4, 0.45, 0.42), None, True),
+    "plinth": ((0.78, 0.77, 0.74, 1.0), "concrete", False),
+    "interior": ((0.42, 0.43, 0.45, 1.0), "corrugated", False),
+    "interiorfloor": ((0.55, 0.55, 0.53, 1.0), "concrete", False),
+    "steel": ((0.38, 0.4, 0.43, 1.0), None, False),
+    "skylight": ((0.78, 0.82, 0.84, 1.0), None, False),
+    "frame": ((0.22, 0.23, 0.25, 1.0), None, False),
+    "lamp": ((0.95, 0.93, 0.85, 1.0), None, False),
+    "office": ((0.88, 0.86, 0.8, 1.0), "concrete", False),
+    "doorpers": ((0.45, 0.47, 0.5, 1.0), "door", False),
+    "ac": ((0.82, 0.82, 0.8, 1.0), None, False),
 }
+CORRUGATED = 26.0                 # ondas de la chapa por cuadro de textura (4 m): el shader las ilumina con el Sol
 
 
 def material(mat):
