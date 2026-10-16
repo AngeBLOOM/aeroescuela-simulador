@@ -1411,6 +1411,24 @@ void main() { f_color = texture(u_tex, v_uv); }
             fog_col = mix3(fog_col, cloud_in, puff)
             ov = max(ov, puff * 0.8)
         self.in_puff = puff
+        # luces propias dentro de la nube o de la niebla espesa: la nube devuelve la luz al piloto. Las
+        # estroboscópicas dan destellos blancos que desorientan (por eso se apagan en IMC), el anticolisión un pulso
+        # rojo y el faro de aterrizaje un resplandor que enceguece; de noche mucho más que de día
+        dense = max(1.0 if incloud else puff, clamp((500.0 - vis) / 400.0, 0.0, 1.0))
+        sysm = getattr(getattr(self.world, "ac", None), "sys", None)
+        if dense > 0.05 and sysm is not None and getattr(sysm, "electric_ok", False):
+            lt = getattr(sysm, "lights", {})
+            nk = dense * (0.2 + 0.8 * night)
+            ph = self.time % 1.2
+            glow = (0.0, 0.0, 0.0)
+            if lt.get("strobe") and (ph < 0.05 or 0.13 < ph < 0.18):
+                glow = (0.6, 0.62, 0.68)
+            if lt.get("beacon") and (self.time % 1.0) < 0.12:
+                glow = tuple(g + c for g, c in zip(glow, (0.22, 0.02, 0.01)))
+            if lt.get("landing") or lt.get("taxi"):
+                glow = tuple(g + c for g, c in zip(glow, (0.16, 0.15, 0.13)))
+            fog_col = tuple(f + g * nk for f, g in zip(fog_col, glow))
+            amb = tuple(a + g * nk * 0.3 for a, g in zip(amb, glow))
         dens = 1.987 / vis + 1.0 / 400000.0
         ground = mix3(hor, (0.25, 0.3, 0.25), 0.3)
         # niebla de valle (la misma que informa el METAR): capa sobre el aeródromo base, blanca y con la luz del día

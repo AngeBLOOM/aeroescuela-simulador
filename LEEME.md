@@ -135,6 +135,9 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
 - **Antenas en los cerros como obstáculos**: repetidoras de 60-90 m en las cimas cercanas a los aeródromos, pintadas
   en franjas rojas y blancas, con luz roja intermitente arriba y fija a media altura de noche (vuelo VFR nocturno y
   altura mínima sobre obstáculos).
+- **Luces propias dentro de la nube o la niebla**: con las estroboscópicas encendidas en IMC cada destello ilumina
+  toda la nube (desorienta, por eso se apagan), el anticolisión da un pulso rojo y el faro de aterrizaje un
+  resplandor que enceguece; de noche mucho más que de día.
 - **Bruma iluminada por el Sol**: mirando hacia el Sol la bruma del horizonte brilla como el cielo (luz dispersada
   hacia adelante) y el terreno lejano empalma con el cielo sin corte. **Manga de viento iluminada** de noche.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.
