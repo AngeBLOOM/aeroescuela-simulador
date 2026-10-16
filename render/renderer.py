@@ -671,7 +671,8 @@ class Renderer:
         hs = getattr(self.scn, "hangars", [])
         tw = getattr(self.scn, "towers", [])
         signs = getattr(self.scn, "taxi_signs", [])
-        if not hs and not tw and not signs:
+        dsigns = getattr(self.scn, "dist_signs", [])
+        if not hs and not tw and not signs and not dsigns:
             return
         tm = bl.TexMesh()
         for (x, y, gz, ln, wd, ht, yaw, col, sign) in hs:
@@ -680,6 +681,8 @@ class Renderer:
             bl.add_tower(tm, x, y, gz, h)
         for (x, y, gz, yaw, mand, loc) in signs:
             bl.add_taxi_sign(tm, x, y, gz, yaw, mand, loc)
+        for (x, y, gz, yaw, front, back) in dsigns:
+            bl.add_distance_sign(tm, x, y, gz, yaw, front, back)
         ctx = self.ctx
         texs, model = {}, []
         for mat, arr in tm.arrays().items():
@@ -698,8 +701,8 @@ class Renderer:
             vao = ctx.vertex_array(self.p_model, [(vbo, "3f 3f 2f 1f", "in_pos", "in_norm", "in_uv", "in_ao")])
             svao = None if blend else ctx.vertex_array(self.p_shadow, [(vbo, "3f 24x", "in_pos")])
             meta = dict(color=list(col), blend=blend, cutoff=0.0)
-            if mat.startswith("tsign:"):
-                meta["emis"] = 0.85                      # los carteles de rodaje tienen luz propia de noche
+            if mat.startswith("tsign:") or mat.startswith("dsign:"):
+                meta["emis"] = 0.85                      # los carteles de rodaje y de pista tienen luz propia de noche
             model.append((vao, tex, meta, svao))
         model.sort(key=lambda it: it[2]["blend"])
         self.buildings_model = model

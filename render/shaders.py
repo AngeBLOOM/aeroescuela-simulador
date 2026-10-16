@@ -612,7 +612,9 @@ void main() {
     vec3 p = in_pos + tocam / max(d, 0.001) * min(10.0, d * 0.4);
     gl_Position = u_proj * u_view * vec4(p, 1.0);
     v_logz = 1.0 + gl_Position.w;
-    v_fog = clamp(exp(-pow(d * u_fog_density * 0.55, 1.6)), 0.0, 1.0) * mix(1.0, gfog_trans(in_pos), 0.85);
+    // las luces más intensas (HIRL, aproximación) atraviesan más bruma que las de rodaje
+    float pen = 0.55 * sqrt(3.0 / max(in_size, 1.0));
+    v_fog = clamp(exp(-pow(d * u_fog_density * pen, 1.6)), 0.0, 1.0) * mix(1.0, gfog_trans(in_pos), 0.85);
     float s = in_size * u_px / max(gl_Position.w, 0.1);
     float ps = clamp(s * 2.2, 3.4, 20.0);
     gl_PointSize = ps * mix(0.6, 1.0, u_bright);

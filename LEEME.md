@@ -117,6 +117,11 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   normales) que responde al Sol: de cerca, al rodar o en la corta final, se ve el grano del asfalto, las juntas y
   las matas de pasto con su sombra. A media distancia el pasto tiene matas y manchas secas para que no se vea liso.
   Las texturas se preparan con `tools/texturas_suelo.py` (créditos en `assets/CREDITOS_TEXTURAS.md`).
+- **Carteles de distancia restante y luces de borde según la pista**: en pistas pavimentadas, iluminadas y de 1500 m
+  o más hay carteles negros con el número blanco cada 1000 ft (miles de pies que quedan; el dorso muestra los del
+  sentido contrario), con luz propia de noche: sirven para decidir a tiempo un despegue abortado. Las pistas con ILS
+  tienen luces de borde de alta intensidad (HIRL), con la zona de precaución amarilla en los últimos 600 m; las
+  demás, de intensidad media (MIRL) y todas blancas. Las luces más intensas se ven desde más lejos con bruma.
 - **Bruma iluminada por el Sol**: mirando hacia el Sol la bruma del horizonte brilla como el cielo (luz dispersada
   hacia adelante) y el terreno lejano empalma con el cielo sin corte. **Manga de viento iluminada** de noche.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.

@@ -107,6 +107,7 @@ class Scenery:
         self.parked, self.parked_code = [], np.zeros((0, 9), np.float32)
         self.hangars, self.towers = [], []                # los dibuja el renderizador con detalle (render/buildings.py)
         self.taxi_signs = []                              # carteles de posición de espera (x, y, z, rumbo, texto, calle)
+        self.dist_signs = self._distance_signs()          # carteles de distancia restante (x, y, z, rumbo, cara, dorso)
         self._paved = []                                  # calles de rodaje de asfalto (pos + uv)
         self._apron = []                                  # plataformas de losas de concreto (pos + uv)
         self.trees = None                                 # árboles: instancias con dos niveles de detalle
@@ -439,6 +440,28 @@ class Scenery:
                 out.append((ends[k] + away * t, away, W, rw, next(names)))
         return out
 
+    def _distance_signs(self):
+        """Carteles de distancia restante (FAA AC 150/5340-18) en pistas pavimentadas, iluminadas y de 1500 m o más:
+        cada 1000 ft a la izquierda de quien despega desde el primer extremo, 18 m afuera del borde. El sobrante de
+        largo que no llega a 1000 ft se reparte entre ambos extremos, así las dos caras muestran miles exactos: la
+        cara muestra lo que queda en un sentido y el dorso lo que queda en el otro."""
+        out = []
+        for ap in self.aps:
+            for rw in ap.runways:
+                if not (getattr(rw, "paved", True) and getattr(rw, "lighted", True)) or rw.length < 1500.0:
+                    continue
+                L_ft = rw.length / 0.3048
+                n = int(L_ft // 1000)
+                extra = (L_ft - n * 1000) / 2.0
+                left = -rw.right                          # izquierda de quien corre en el sentido rw.dir
+                face = math.atan2(-rw.dir[1], -rw.dir[0])  # la cara mira hacia el primer umbral
+                for j in range(1, n):
+                    s = (extra + j * 1000) * 0.3048
+                    p = rw.threshold + rw.dir * s + left * (rw.width / 2 + 18.0)
+                    g = max(self.terrain.height(p[0], p[1]), ap.elev)
+                    out.append((float(p[0]), float(p[1]), -g, face, str(n - j), str(j)))
+        return out
+
     def _hold_positions(self, mb):
         """Líneas de espera (dos continuas del lado de la calle, dos discontinuas del lado de la pista, amarillas de
         15 cm) y el cartel rojo de posición de espera con los números de pista a la izquierda del piloto, junto al
@@ -641,11 +664,16 @@ class Scenery:
                 thr = rw.threshold
                 d, r = rw.dir, rw.right
                 W, Ln = rw.width, rw.length
+                # luces de borde: de alta intensidad (HIRL) en pistas de aproximación de precisión, con la zona de
+                # precaución amarilla en los últimos 600 m; de intensidad media (MIRL), todas blancas, en las demás
+                hirl = self._ils_runway(rw)
+                es, ek = (3.8, 1.3) if hirl else (3.0, 1.0)
                 for s in np.arange(0, Ln + 1, 60.0):
                     for sg in (-1, 1):
                         p = thr + d * s + r * sg * (W / 2 + 1.5)
-                        caution = s > Ln - 600 or s < 600
-                        add((p[0], p[1], z), (1.0, 0.92, 0.6) if caution else (1.0, 1.0, 0.95), 3.0)
+                        caution = hirl and (s > Ln - 600 or s < 600)
+                        col = (1.0, 0.92, 0.6) if caution else (1.0, 1.0, 0.95)
+                        add((p[0], p[1], z), tuple(c * ek for c in col), es)
                 a0 = len(L)
                 for k in np.linspace(-W / 2, W / 2, 8):
                     p = thr - d * 1.0 + r * k

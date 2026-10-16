@@ -292,7 +292,7 @@ def material(mat):
     if mat.startswith("wall:"):
         col = tuple(float(v) for v in mat[5:].split(",")) + (1.0,)
         return col, "corrugated", False
-    if mat.startswith("sign:") or mat.startswith("tsign:"):
+    if mat.startswith("sign:") or mat.startswith("tsign:") or mat.startswith("dsign:"):
         return (1.0, 1.0, 1.0, 1.0), mat, False
     return MATERIALS[mat]
 
@@ -309,6 +309,8 @@ def make_texture(key):
     if key.startswith("tsign:"):
         mand, loc = key[6:].split("|")
         return tex_taxi_sign(mand, loc)
+    if key.startswith("dsign:"):
+        return tex_distance_sign(key[6:])
     raise KeyError(key)
 
 
@@ -482,3 +484,44 @@ def add_taxi_sign(tm, x, y, gz, yaw, mand, loc):
 
 
 MATERIALS["signframe"] = ((0.2, 0.2, 0.21, 1.0), None, False)
+
+
+def tex_distance_sign(num, w=192, h=160):
+    """Cartel de distancia restante: fondo negro y el número blanco (miles de pies que quedan de pista)."""
+    import pygame
+    if not pygame.font.get_init():
+        pygame.font.init()
+    surf = pygame.Surface((w, h))
+    surf.fill((14, 14, 14))
+    font = pygame.font.SysFont("arial,helvetica,dejavusans", int(h * 0.8), bold=True)
+    t = font.render(num, True, (250, 250, 250))
+    surf.blit(t, ((w - t.get_width()) // 2, (h - t.get_height()) // 2 + int(h * 0.03)))
+    arr = pygame.surfarray.array3d(surf).transpose(1, 0, 2)[::-1]
+    out = np.empty((h, w, 4), np.uint8)
+    out[..., :3] = arr
+    out[..., 3] = 255
+    return out
+
+
+def add_distance_sign(tm, x, y, gz, yaw, front, back):
+    """Cartel de distancia restante de doble cara junto a la pista: la cara que mira hacia yaw muestra `front` (para
+    quien corre hacia el cartel en ese sentido) y la otra `back` (para el sentido contrario)."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    fx, fy = c, s
+    rx, ry = -s, c
+    wdt, hgt, th, z0 = 1.5, 1.2, 0.3, 0.45
+
+    def P(u, t, h):
+        return (x + rx * u + fx * t, y + ry * u + fy * t, gz - h)
+    tm.quad(f"dsign:{front}", P(-wdt / 2, th / 2, z0), P(wdt / 2, th / 2, z0), P(wdt / 2, th / 2, z0 + hgt),
+            P(-wdt / 2, th / 2, z0 + hgt), [(1, 0), (0, 0), (0, 1), (1, 1)])
+    tm.quad(f"dsign:{back}", P(wdt / 2, -th / 2, z0), P(-wdt / 2, -th / 2, z0), P(-wdt / 2, -th / 2, z0 + hgt),
+            P(wdt / 2, -th / 2, z0 + hgt), [(1, 0), (0, 0), (0, 1), (1, 1)])
+    for u0 in (-wdt / 2, wdt / 2):
+        tm.quad("signframe", P(u0, -th / 2, z0), P(u0, th / 2, z0), P(u0, th / 2, z0 + hgt), P(u0, -th / 2, z0 + hgt),
+                [(0, 0), (1, 0), (1, 1), (0, 1)])
+    tm.quad("signframe", P(-wdt / 2, -th / 2, z0 + hgt), P(wdt / 2, -th / 2, z0 + hgt), P(wdt / 2, th / 2, z0 + hgt),
+            P(-wdt / 2, th / 2, z0 + hgt), [(0, 0), (1, 0), (1, 1), (0, 1)])
+    for u in (-wdt * 0.3, wdt * 0.3):              # patas frangibles
+        tm.quad("signframe", P(u - 0.04, 0, 0.0), P(u + 0.04, 0, 0.0), P(u + 0.04, 0, z0), P(u - 0.04, 0, z0),
+                [(0, 0), (1, 0), (1, 1), (0, 1)], (0.6, 0.6, 1.0, 1.0))
