@@ -23,6 +23,16 @@ TOWNS = [
 ]
 
 
+def _dist_poly(p, pts):
+    """Distancia de un punto (x, y) a una polilínea."""
+    best = 1e18
+    for a, b in zip(pts[:-1], pts[1:]):
+        ab = b - a
+        t = max(0.0, min(1.0, float((p - a) @ ab) / max(float(ab @ ab), 1e-9)))
+        best = min(best, float(np.hypot(*(a + ab * t - p))))
+    return best
+
+
 class Scenery:
     def __init__(self, world, rng_seed=21):
         self.world = world
@@ -197,10 +207,13 @@ class Scenery:
                          sign=("AEROESCUELA", "HANGAR 2", "HANGAR 3")[i])
         self.towers.append((-60.0, 215.0, ge, 16.0))                                # torre
         self.fuel = [(262.0, 238.0, ge, 0.0)]                                        # estación de combustible
-        mb.box((-60.0, 215.0, ge - 20.3), (11, 11, 0.6), (0.4, 0.4, 0.42))
-        mb.box((310.0, 160.0, ge - 3.5), (34, 22, 7), (0.88, 0.86, 0.8))         # terminal
-        mb.box((310.0, 160.0, ge - 7.2), (36, 24, 0.5), (0.5, 0.5, 0.52))
-        mb.box((290.0, 98.0, ge - 1.5), (6, 3, 3), (0.85, 0.2, 0.15))             # surtidor
+        if bl.load_model("terminal") is not None:       # edificio de la escuela (Blender), de frente a la plataforma
+            self.house_inst.append(("terminal", 310.0, 160.0, ge, -math.pi / 2, 1.0, 1.0, 1.0, 1.0))
+        else:
+            mb.box((-60.0, 215.0, ge - 20.3), (11, 11, 0.6), (0.4, 0.4, 0.42))
+            mb.box((310.0, 160.0, ge - 3.5), (34, 22, 7), (0.88, 0.86, 0.8))     # terminal
+            mb.box((310.0, 160.0, ge - 7.2), (36, 24, 0.5), (0.5, 0.5, 0.52))
+            mb.box((290.0, 98.0, ge - 1.5), (6, 3, 3), (0.85, 0.2, 0.15))         # surtidor
         # aeródromo norte
         gn = -vnt.elev
         self._hangar(mb, (17160.0, 3800.0, gn), 35.0, 28.0, 9.0, yaw=0.0, col=(0.93, 0.93, 0.91), sign="VALLE NORTE")
@@ -582,7 +595,7 @@ class Scenery:
             short_c = end + side * 2.25
             mb.box((short_c[0], short_c[1], z), (4.5, 1.0, 0.35), white, yaw=math.atan2(side[1], side[0]))
 
-    def _fences(self):
+    def _fences(self):  # noqa: C901
         """Cerca perimetral de los aeródromos de la escuela: rectángulo alrededor de pista, calles y plataforma,
         a 70 m del borde de la pista, con tramos de 3 m que siguen el terreno."""
         if not self.world.is_school:
@@ -612,10 +625,13 @@ class Scenery:
                 dd = (b - a) / L
                 yaw = math.atan2(dd[1], dd[0])
                 n = int(L // 3.0)
+                pieces = [a + dd * (i + 0.5) * 3.0 for i in range(n)]
+                # portones donde la cerca cruza una carretera (hueco de unos 12 m)
+                gate = [any(_dist_poly(q, rd) < 7.0 for rd in getattr(self, "road_lines", [])) for q in pieces]
                 for i in range(n):
-                    if k == 0 and abs(i - n // 2) <= 1:
-                        continue                           # portón de acceso (hueco de 9 m)
-                    p = a + dd * (i + 0.5) * 3.0
+                    if gate[i]:
+                        continue
+                    p = pieces[i]
                     g = float(self.terrain.height(p[0], p[1]))
                     self.house_inst.append(("valla", p[0], p[1], -g, yaw, 1.0, 1.0, 1.0, 1.0))
 

@@ -145,6 +145,8 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   ráfagas, para leer dirección e intensidad en la corta final.
 - **Cerca perimetral** de los aeródromos de la escuela (Blender): postes galvanizados, malla translúcida y alambre de
   púas, a 70 m del borde de la pista, siguiendo el terreno, con el portón de acceso.
+- **Edificio de la escuela de vuelo** (Blender) frente a la plataforma: vidriera en planta baja, marquesina, balcón
+  mirador con baranda y ventanas corridas arriba. La cerca perimetral tiene portones donde la cruzan las carreteras.
 - **Luz horneada en Blender** en hangares y torres: la luz del cielo con sus rebotes (Cycles) está calculada de
   antemano en un mapa de luz por edificio, así los rincones, el pie de las paredes, los aleros y el portón tienen
   la penumbra suave de una foto, y el suelo alrededor se oscurece un poco junto a las paredes. El Sol y sus sombras

@@ -775,7 +775,58 @@ def valla(p):
     return dict(grect_margin=1.0)
 
 
-BUILDERS.update({"valla": valla, "manga": manga, "luminaria": luminaria, "papi": papi, "casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
+def terminal(p):
+    """Edificio de la escuela de vuelo y operaciones (34 x 22 m, dos plantas): planta baja con frente de vidrio
+    hacia la plataforma (-y) y entrada con marquesina, planta alta con ventanas corridas y balcón mirador con baranda,
+    franjas azules, aires y tanques en la azotea."""
+    x0, x1, y0, y1 = -17.0, 17.0, -11.0, 11.0
+    h1, h2 = 3.6, 7.0
+    box("plinth", (x0 - 0.05, y0 - 0.05, 0.0), (x1 + 0.05, y1 + 0.05, 0.4), 0.02)
+    body = box("office", (x0, y0, 0.35), (x1, y1, h2), 0.03)
+    cuts = []
+    # planta baja: vidriera hacia la plataforma con parteluces
+    cuts.append(((x0 + 2.0, y0 - 0.3, 0.45), (x1 - 2.0, y0 + 0.5, 3.0)))
+    box("glass", (x0 + 2.0, y0 + 0.2, 0.45), (x1 - 2.0, y0 + 0.24, 3.0))
+    for xm in np.arange(x0 + 2.0, x1 - 1.9, 2.5):
+        box("frame", (xm - 0.05, y0 + 0.1, 0.45), (xm + 0.05, y0 + 0.3, 3.0))
+    box("frame", (x0 + 2.0, y0 + 0.1, 2.95), (x1 - 2.0, y0 + 0.3, 3.05))
+    # planta alta: ventanas corridas en el frente y en los costados
+    for k in range(9):
+        u = x0 + 1.8 + k * 3.6
+        cuts.append(window("y", y0, u, u + 2.4, 4.3, 6.0, 0.3))
+    for k in range(5):
+        v = y0 + 2.0 + k * 3.8
+        cuts.append(window("x", x0, v, v + 2.0, 4.3, 6.0, 0.3))
+        cuts.append(window("x", x1, v, v + 2.0, 4.3, 6.0, -0.3))
+        cuts.append(window("x", x0, v, v + 2.0, 1.0, 2.6, 0.3))
+        cuts.append(window("x", x1, v, v + 2.0, 1.0, 2.6, -0.3))
+    cut(body, cuts)
+    # marquesina de la entrada y balcón mirador con baranda
+    box("canopy", (-4.0, y0 - 3.5, 3.2), (4.0, y0, 3.45), 0.04)
+    for xx in (-3.7, 3.7):
+        cyl("steel", (xx, y0 - 3.2, 0.0), (xx, y0 - 3.2, 3.2), 0.1, 10)
+    box("slab", (x0 + 1.0, y0 - 1.6, 3.6), (x1 - 1.0, y0, 3.8), 0.02)
+    for z in (4.4, 4.75):
+        beam("railing", (x0 + 1.05, y0 - 1.55, z), (x1 - 1.05, y0 - 1.55, z), 0.05, 0.05)
+    for xx in np.linspace(x0 + 1.05, x1 - 1.05, 24):
+        beam("railing", (xx, y0 - 1.55, 3.8), (xx, y0 - 1.55, 4.75), 0.035, 0.035)
+    # franjas azules y pretil
+    box("trim", (x0 - 0.04, y0 - 0.04, 3.55), (x1 + 0.04, y1 + 0.04, 3.85), 0.01)
+    for (a0, b0, a1, b1) in ((x0 - 0.06, y0 - 0.06, x1 + 0.06, y0 + 0.2), (x0 - 0.06, y1 - 0.2, x1 + 0.06, y1 + 0.06),
+                             (x0 - 0.06, y0 - 0.06, x0 + 0.2, y1 + 0.06), (x1 - 0.2, y0 - 0.06, x1 + 0.06, y1 + 0.06)):
+        box("trim", (a0, b0, h2), (a1, b1, h2 + 0.55), 0.02)               # pretil (solo el borde)
+    box("roofdeck", (x0 + 0.1, y0 + 0.1, h2), (x1 - 0.1, y1 - 0.1, h2 + 0.08))
+    for k in range(4):
+        box("ac", (x0 + 3 + k * 4.0, y1 - 3.0, h2 + 0.08), (x0 + 4.4 + k * 4.0, y1 - 1.8, h2 + 0.85), 0.04)
+    for k in range(2):
+        cyl("tinaco", (x1 - 2.5 - k * 1.7, y1 - 2.5, h2 + 0.08), (x1 - 2.5 - k * 1.7, y1 - 2.5, h2 + 1.4), 0.65, 14)
+    cyl("steel", (x1 - 1.0, y0 + 1.0, h2), (x1 - 1.0, y0 + 1.0, h2 + 6.0), 0.05, 8)     # antena de radio
+    box("lamp", (-0.4, y0 - 3.2, 3.05), (0.4, y0 - 2.9, 3.2))
+    box("concrete", (x0 - 4.0, y0 - 6.0, 0.0), (x1 + 4.0, y0, 0.06))
+    return dict(grect_margin=10.0)
+
+
+BUILDERS.update({"terminal": terminal, "valla": valla, "manga": manga, "luminaria": luminaria, "papi": papi, "casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
 
 
 # ============================================================ árboles (plantillas para el dibujo por instancias)
