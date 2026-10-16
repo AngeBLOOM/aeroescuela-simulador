@@ -148,6 +148,9 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   señales de la OACI (verde, roja y blanca, fijas o intermitentes, y roja y verde alternadas) y su significado en
   vuelo o en tierra. Llegan solas con falla de radio cerca del aeródromo, o el instructor las manda desde la
   pestaña Fallas. El significado aparece en pantalla recién a los 8 s: primero el alumno debe interpretarla.
+- **Tránsito nocturno en las carreteras** del escenario de la escuela: autos en ambos sentidos, con faros blancos
+  hacia el piloto y luces traseras rojas al alejarse; de noche las carreteras se distinguen como en la realidad y
+  sirven de referencia para navegar.
 - **Bruma iluminada por el Sol**: mirando hacia el Sol la bruma del horizonte brilla como el cielo (luz dispersada
   hacia adelante) y el terreno lejano empalma con el cielo sin corte. **Manga de viento iluminada** de noche.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.

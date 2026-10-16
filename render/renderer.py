@@ -906,6 +906,35 @@ class Renderer:
         ctx.blend_func = moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA
         self.vao_smoke.render(instances=len(arr), vertices=6)
 
+    def _road_traffic(self, cam):
+        out = []
+        T = self.world.terrain
+        eye = np.asarray(cam.eye, float)
+        for li, pts in enumerate(self.scn.road_lines):
+            seg = np.diff(pts, axis=0)
+            ln = np.hypot(seg[:, 0], seg[:, 1])
+            cum = np.concatenate([[0.0], np.cumsum(ln)])
+            Ltot = float(cum[-1])
+            n = max(2, int(Ltot / 900.0))
+            for k in range(n):
+                for dirn in (1.0, -1.0):
+                    v = 19.0 + 6.0 * ((k * 7 + li * 3) % 5) / 4.0          # 70 a 90 km/h
+                    s = (k * Ltot / n + (0.5 if dirn < 0 else 0.0) * Ltot / n + dirn * v * self.time) % Ltot
+                    i = min(int(np.searchsorted(cum, s, side="right")) - 1, len(ln) - 1)
+                    d = seg[i] / max(ln[i], 1e-6)
+                    fwd = d * dirn
+                    right = np.array([-fwd[1], fwd[0]])
+                    p = pts[i] + d * (s - cum[i]) + right * 2.5          # carril de la derecha
+                    if math.hypot(p[0] - eye[0], p[1] - eye[1]) > 12000.0:
+                        continue
+                    z = -float(T.height(p[0], p[1])) - 0.8
+                    toward = (eye[0] - p[0]) * fwd[0] + (eye[1] - p[1]) * fwd[1] > 0.0
+                    if toward:
+                        out.append((p[0], p[1], z, 1.0, 0.95, 0.78, 2.6))
+                    else:
+                        out.append((p[0], p[1], z, 0.9, 0.06, 0.03, 2.0))
+        return out
+
     def _wind_vec(self):
         """Hacia dónde sopla el viento en superficie (unitario, NED) por su fuerza: 0 en calma, 1 con 25 kt o más.
         Lo usan el agua y los árboles, las referencias con que el piloto estima el viento desde el aire."""
@@ -2148,6 +2177,10 @@ void main() { f_color = texture(u_tex, v_uv); }
             if on:
                 rgb = {"verde": (0.25, 1.0, 0.4), "rojo": (1.0, 0.1, 0.06), "blanco": (1.0, 1.0, 0.95)}[col]
                 L.append((bx, by, bz + 3.0, *rgb, 9.0))
+        # tránsito nocturno en las carreteras: autos en ambos sentidos; se ven los faros (blancos) de los que vienen
+        # hacia el piloto y las luces traseras (rojas) de los que se alejan: referencia para navegar de noche
+        if getattr(self.scn, "road_lines", None) and self.env.get("night", 0.0) > 0.3:
+            L.extend(self._road_traffic(cam))
         # luces de obstáculo de las antenas: roja intermitente arriba (unos 30 destellos por minuto) y fija a media
         # altura; de noche o con poca luz
         if getattr(self.scn, "masts", None) and (self.env.get("night", 0.0) > 0.25 or self.env.get("overcast", 0.0) > 0.7):

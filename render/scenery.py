@@ -258,6 +258,7 @@ class Scenery:
         ]
         for rd in roads:
             self._road(mb, rd)
+        self.road_lines = [np.array(rd, float) for rd in roads]     # el renderizador mueve autos de noche
         return mb.array()
 
     # ---------------------------------------------------------------- mundo real
