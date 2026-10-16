@@ -134,6 +134,9 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   con balcones; cada casa con su color pastel. Se dibujan por instancias con dos niveles de detalle (el modelo
   completo hasta 2,5 km y una versión simple hasta 14 km). Las granjas del campo usan las mismas casas. De noche
   se encienden algunas ventanas con luz cálida, salteadas como en un pueblo real.
+- **Árboles de Blender**: pino, frondoso, samán (copa ancha de los llanos) y palma, con tronco, ramas y copa de
+  masas irregulares, la penumbra del interior de la copa calculada con rayos y normales de follaje suaves. De cerca
+  se usa el modelo detallado y de lejos la versión simple, por instancias.
 - **Luz horneada en Blender** en hangares y torres: la luz del cielo con sus rebotes (Cycles) está calculada de
   antemano en un mapa de luz por edificio, así los rincones, el pie de las paredes, los aleros y el portón tienen
   la penumbra suave de una foto, y el suelo alrededor se oscurece un poco junto a las paredes. El Sol y sus sombras

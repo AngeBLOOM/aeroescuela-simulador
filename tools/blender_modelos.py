@@ -723,6 +723,185 @@ def bloque(p):
 BUILDERS.update({"casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
 
 
+# ============================================================ árboles (plantillas para el dibujo por instancias)
+# Se arman con mallas (tronco, ramas, copa de masas irregulares) y se exportan en el formato de las plantillas de
+# árboles del simulador: altura 1, z hacia abajo, 9 floats por vértice (posición, normal, color). El color lleva la
+# oclusión ambiental calculada con rayos (el interior de la copa y la cara de abajo, más oscuros) y las normales de
+# la copa son "esféricas" (desde el centro de cada masa) para que el follaje se ilumine suave, sin facetas.
+TREE_PARTS = []                     # (bmesh, color, centro de copa o None)
+
+
+def _tree_reset():
+    TREE_PARTS.clear()
+
+
+def _tcyl(p0, p1, r0, r1, col, segs=7):
+    p0, p1 = Vector(p0), Vector(p1)
+    ax = p1 - p0
+    L = ax.length
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=False, segments=segs, radius1=r0, radius2=r1, depth=L)
+    rot = ax.to_track_quat("Z", "Y").to_matrix().to_4x4()
+    bmesh.ops.transform(bm, matrix=Matrix.Translation((p0 + p1) / 2) @ rot, verts=bm.verts)
+    TREE_PARTS.append((bm, col, None))
+
+
+def _blob(c, r, col, sub=1, flat=1.0, seed=0, jit=0.18):
+    """Masa de follaje: icoesfera deformada al azar (más chata con flat < 1)."""
+    rng = np.random.default_rng(seed)
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=sub, radius=1.0)
+    for v in bm.verts:
+        k = 1.0 + rng.uniform(-jit, jit)
+        v.co = Vector((v.co.x * r * k, v.co.y * r * k, v.co.z * r * k * flat)) + Vector(c)
+    TREE_PARTS.append((bm, col, Vector(c)))
+
+
+def _cone(zb, zt, r, col, segs=9, seed=0):
+    """Piso de conífera: cono con el borde algo caído e irregular."""
+    rng = np.random.default_rng(seed)
+    bm = bmesh.new()
+    tip = bm.verts.new((0, 0, zt))
+    ring = []
+    for i in range(segs):
+        a = 2 * math.pi * i / segs + rng.uniform(-0.12, 0.12)
+        rr = r * rng.uniform(0.85, 1.1)
+        ring.append(bm.verts.new((rr * math.cos(a), rr * math.sin(a), zb - rng.uniform(0.0, 0.05))))
+    for i in range(segs):
+        bm.faces.new((ring[i], ring[(i + 1) % segs], tip))
+    bm.faces.new(ring[::-1])
+    TREE_PARTS.append((bm, col, Vector((0, 0, (zb + zt) / 2))))
+
+
+def _frond(base, ang, length, col, droop=0.55, n=7, w=0.09):
+    """Hoja de palma: tira que sale del cogollo y se curva hacia abajo, con folíolos en zigzag."""
+    bm = bmesh.new()
+    d = Vector((math.cos(ang), math.sin(ang), 0.0))
+    side = Vector((-d.y, d.x, 0.0))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        p = Vector(base) + d * length * t + Vector((0, 0, length * (0.35 * t - droop * t * t)))
+        pts.append(p)
+    prev = None
+    for i, p in enumerate(pts):
+        ww = w * math.sin(math.pi * min(1.0, (i + 0.5) / n)) * (1.6 if i % 2 else 1.0)
+        a, b = bm.verts.new(p - side * ww), bm.verts.new(p + side * ww)
+        if prev is not None:
+            bm.faces.new((prev[0], prev[1], b, a))
+        prev = (a, b)
+    TREE_PARTS.append((bm, col, Vector(base) + d * length * 0.5))
+
+
+def pino(p):
+    _tcyl((0, 0, -0.02), (0, 0, 0.35), 0.035, 0.02, (0.3, 0.22, 0.15))
+    tiers = [(0.12, 0.47, 0.37), (0.28, 0.63, 0.31), (0.44, 0.78, 0.25), (0.58, 0.9, 0.18), (0.72, 1.0, 0.11)]
+    for k, (zb, zt, r) in enumerate(tiers):
+        g = 0.15 + 0.02 * k
+        _cone(zb, zt, r, (g * 0.75, g * 1.7, g * 0.7), seed=k)
+
+
+def frondoso(p):
+    bark = (0.32, 0.24, 0.16)
+    _tcyl((0, 0, -0.02), (0, 0, 0.42), 0.05, 0.035, bark)
+    for (x, y, z) in ((0.14, 0.06, 0.55), (-0.12, -0.08, 0.57), (0.02, 0.14, 0.6)):
+        _tcyl((0, 0, 0.32), (x, y, z), 0.025, 0.012, bark, segs=5)
+    leaf = (0.17, 0.32, 0.12)
+    for k, (c, r, sub) in enumerate((((0.0, 0.0, 0.68), 0.3, 2), ((0.17, 0.08, 0.6), 0.22, 2),
+                                     ((-0.16, -0.08, 0.6), 0.22, 2), ((0.02, -0.15, 0.82), 0.19, 1),
+                                     ((-0.05, 0.15, 0.8), 0.19, 1), ((0.1, -0.02, 0.88), 0.15, 1))):
+        _blob(c, r, tuple(x * (0.9 + 0.08 * k) for x in leaf), sub, seed=k)
+
+
+def saman(p):
+    """Samán: tronco corto y grueso, ramas que se abren y copa ancha como paraguas (el árbol de los llanos)."""
+    bark = (0.3, 0.23, 0.17)
+    _tcyl((0, 0, -0.02), (0, 0, 0.3), 0.07, 0.055, bark)
+    for a in np.linspace(0, 2 * math.pi, 5, endpoint=False):
+        _tcyl((0, 0, 0.26), (0.38 * math.cos(a), 0.38 * math.sin(a), 0.55), 0.035, 0.018, bark, segs=5)
+    leaf = (0.16, 0.3, 0.1)
+    rng = np.random.default_rng(7)
+    _blob((0, 0, 0.72), 0.55, leaf, 2, flat=0.42, seed=1, jit=0.12)
+    for k, a in enumerate(np.linspace(0, 2 * math.pi, 6, endpoint=False)):
+        c = (0.5 * math.cos(a), 0.5 * math.sin(a), 0.64 + rng.uniform(-0.04, 0.05))
+        _blob(c, 0.3, tuple(x * (0.92 + 0.05 * (k % 3)) for x in leaf), 1, flat=0.55, seed=k + 3)
+
+
+def palma(p):
+    """Palma: tronco anillado algo curvo, cogollo y una corona de hojas arqueadas."""
+    bark = (0.45, 0.4, 0.33)
+    pts = [Vector((0.0, 0.0, 0.0))]
+    for i in range(1, 7):
+        t = i / 6
+        pts.append(Vector((0.06 * t * t, 0.0, 0.82 * t)))
+    for i in range(6):
+        _tcyl(pts[i], pts[i + 1], 0.045 - 0.004 * i, 0.04 - 0.004 * i, tuple(c * (0.9 + 0.1 * (i % 2)) for c in bark), 7)
+    top = pts[-1]
+    _blob((top.x, 0.0, top.z + 0.02), 0.05, (0.2, 0.3, 0.12), 1, seed=9)
+    leaf = (0.2, 0.38, 0.12)
+    for k, a in enumerate(np.linspace(0, 2 * math.pi, 11, endpoint=False)):
+        _frond((top.x, 0.0, top.z + 0.03), a + 0.2 * (k % 2), 0.48 + 0.06 * (k % 3), leaf,
+               droop=0.75 + 0.25 * (k % 2))
+
+
+TREES = {"pino": pino, "frondoso": frondoso, "saman": saman, "palma": palma}
+
+
+def build_tree(name):
+    """Junta las piezas, calcula la oclusión por vértice con rayos y devuelve (N, 9) en el formato de plantilla."""
+    from mathutils.bvhtree import BVHTree
+    _tree_reset()
+    TREES[name]({})
+    allbm = bmesh.new()
+    info = []
+    for bm, col, ctr in TREE_PARTS:
+        bmesh.ops.triangulate(bm, faces=bm.faces)
+        me = bpy.data.meshes.new("t")
+        bm.to_mesh(me)
+        bm.free()
+        start = len(allbm.faces)
+        allbm.from_mesh(me)
+        info.append((start, len(allbm.faces), col, ctr))
+    allbm.faces.ensure_lookup_table()
+    tree = BVHTree.FromBMesh(allbm)
+    rng = np.random.default_rng(2)
+    dirs = [Vector(d / np.linalg.norm(d)) for d in rng.normal(size=(28, 3))]
+    H = max(v.co.z for v in allbm.verts)
+    out = []
+    for (a, b, col, ctr) in info:
+        for fi in range(a, b):
+            f = allbm.faces[fi]
+            fn = f.normal
+            for v in f.verts:
+                if ctr is not None:              # follaje: normal desde el centro de la masa, mezclada con la cara
+                    n = (v.co - ctr).normalized() * 0.75 + fn * 0.25
+                    n.normalize()
+                else:
+                    n = fn
+                o = v.co + n * 0.01
+                free = 0
+                cnt = 0
+                for d in dirs:
+                    if d.dot(n) < -0.2:
+                        continue
+                    cnt += 1
+                    if tree.ray_cast(o, d, 2.0)[0] is None:
+                        free += 1
+                ao = 0.35 + 0.65 * (free / max(cnt, 1))
+                shade = ao * (0.78 + 0.22 * (v.co.z / H))     # más claro arriba
+                c = [ch * shade for ch in col]
+                out.append((v.co.x / H, v.co.y / H, -v.co.z / H, n.x, n.y, -n.z, *c))
+    return np.array(out, np.float32)
+
+
+def main_trees(names, outdir):
+    for nm in names:
+        reset()
+        arr = build_tree(nm)
+        np.savez_compressed(os.path.join(outdir, "arbol_" + nm + ".npz"), v=arr)
+        print("MODELO", "arbol_" + nm, len(arr) // 3, "triángulos", flush=True)
+
+
 # ============================================================ coordenadas de textura y exportación
 def finalize(name):
     """Aplica modificadores, une todo, soldadura por material, normales con bordes vivos y uv en metros."""
@@ -967,6 +1146,9 @@ def main():
     spec = json.load(open(SPEC, encoding="utf-8"))
     os.makedirs(OUT, exist_ok=True)
     for item in spec:
+        if item["kind"] == "arbol":                  # plantilla de árbol (otro formato de salida)
+            main_trees([item["p"]["name"]], OUT)
+            continue
         reset()
         info = BUILDERS[item["kind"]](item["p"])
         ob = finalize(item["key"])

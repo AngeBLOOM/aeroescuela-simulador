@@ -970,11 +970,30 @@ class Renderer:
         inst[:, 4] = tr["yaw"]
         inst[:, 5:8] = tr["col"]
         self.tree_inst = inst
-        self.tree_kind = tr["kind"]
+        kind = np.asarray(tr["kind"]).copy()
+        # árboles de Blender (assets/edificios/arbol_*.npz): pino, frondoso, samán y palma; los frondosos se reparten
+        # entre las tres especies de hoja ancha. Sin ellos, las plantillas de código (dos especies)
+        tpl_bl = {}
+        for k, nm in enumerate(("pino", "frondoso", "saman", "palma")):
+            try:
+                with np.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "edificios",
+                                          f"arbol_{nm}.npz")) as z:
+                    tpl_bl[k] = z["v"]
+            except (OSError, KeyError):
+                pass
+        if len(tpl_bl) == 4:
+            rng = np.random.default_rng(17)
+            broad = np.nonzero(kind == 1)[0]
+            kind[broad] = rng.choice([1, 2, 3], len(broad), p=[0.55, 0.3, 0.15])
+        self.tree_kind = kind
+        self.tree_kinds = sorted(set(int(k) for k in np.unique(kind)) | {0, 1})
         ctx = self.ctx
         for lod in (0, 1):
-            for k in (0, 1):
-                tpl = geo.template_tree_detail(k) if lod == 0 else geo.template_tree(k)
+            for k in self.tree_kinds:
+                if lod == 0:
+                    tpl = tpl_bl[k] if k in tpl_bl else geo.template_tree_detail(min(k, 1))
+                else:
+                    tpl = geo.template_tree(min(k, 1))
                 tvbo = ctx.buffer(np.ascontiguousarray(tpl, np.float32).tobytes())
                 nk = max(1, int((self.tree_kind == k).sum()))
                 ibuf = ctx.buffer(reserve=nk * 32)
@@ -998,7 +1017,7 @@ class Renderer:
         if near.sum() > self.TREE_NEAR_MAX:
             near = d2 < np.partition(d2, self.TREE_NEAR_MAX)[self.TREE_NEAR_MAX]
         far = d2 < self.TREE_FAR ** 2
-        for k in (0, 1):
+        for k in self.tree_kinds:
             mk = self.tree_kind == k
             for lod, sel in ((0, near & mk), (1, ~near & far & mk)):
                 ent = self.tree_vaos[(lod, k)]
