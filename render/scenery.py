@@ -107,6 +107,7 @@ class Scenery:
         self.parked, self.parked_code = [], np.zeros((0, 9), np.float32)
         self.hangars, self.towers = [], []                # los dibuja el renderizador con detalle (render/buildings.py)
         self.taxi_signs = []                              # carteles de posición de espera (x, y, z, rumbo, texto, calle)
+        self.guide_signs = []                             # carteles amarillos de guía (x, y, z, rumbo, texto, flecha)
         self.dist_signs = self._distance_signs()          # carteles de distancia restante (x, y, z, rumbo, cara, dorso)
         self._paved = []                                  # calles de rodaje de asfalto (pos + uv)
         self._apron = []                                  # plataformas de losas de concreto (pos + uv)
@@ -441,7 +442,7 @@ class Scenery:
                 s0 = float((ends[k] - rw.center) @ rw.right)
                 sgn = 1.0 if float(away @ rw.right) > 0 else -1.0
                 t = (sgn * D - s0) / float(away @ rw.right)
-                out.append((ends[k] + away * t, away, W, rw, next(names)))
+                out.append((ends[k] + away * t, away, W, rw, next(names), ends[1 - k]))
         return out
 
     def _distance_signs(self):
@@ -466,6 +467,29 @@ class Scenery:
                     out.append((float(p[0]), float(p[1]), -g, face, str(n - j), str(j)))
         return out
 
+    def _guide_signs(self, ap, P, away, W, rw, name, far):
+        """Carteles amarillos de guía (letra negra): antes de cada salida de pista, en cada sentido de aterrizaje, la
+        letra de la calle con la flecha hacia el lado de la salida (70 m antes, del mismo lado); y al entrar a la calle
+        desde la plataforma, el destino: los números de pista con la flecha hacia adelante, a la izquierda."""
+        s = float((P - rw.center) @ rw.dir)
+        J = rw.center + rw.dir * s                        # cruce con el eje de la pista
+        side = rw.right if float(away @ rw.right) > 0 else -rw.right
+        for dl in (rw.dir, -rw.dir):
+            p = J - dl * 70.0 + side * (rw.width / 2 + 12.0)
+            if abs(float((p - rw.center) @ rw.dir)) > rw.length / 2 - 30.0:
+                continue                                  # antes del umbral no hace falta
+            right = np.array([-dl[1], dl[0]])
+            arrow = 90.0 if float(away @ right) > 0 else -90.0
+            g = max(self.terrain.height(p[0], p[1]), ap.elev)
+            self.guide_signs.append((float(p[0]), float(p[1]), -g, math.atan2(-dl[1], -dl[0]), name, arrow))
+        # desde la plataforma: el piloto entra a la calle mirando hacia la pista (-away)
+        h = -away
+        left = np.array([h[1], -h[0]])
+        p = np.asarray(far, float) + h * 10.0 + left * (W / 2 + 3.0)
+        g = max(self.terrain.height(p[0], p[1]), ap.elev)
+        self.guide_signs.append((float(p[0]), float(p[1]), -g, math.atan2(away[1], away[0]),
+                                 f"{rw.idents[0]}-{rw.idents[1]}", 0.0))
+
     def _hold_positions(self, mb):
         """Líneas de espera (dos continuas del lado de la calle, dos discontinuas del lado de la pista, amarillas de
         15 cm) y el cartel rojo de posición de espera con los números de pista a la izquierda del piloto, junto al
@@ -473,7 +497,7 @@ class Scenery:
         yellow = (0.86, 0.68, 0.12)
         for ap in self.aps:
             z = -(ap.elev + 0.075)
-            for (P, away, W, rw, name) in self._hold_points(ap):
+            for (P, away, W, rw, name, far) in self._hold_points(ap):
                 across = np.array([-away[1], away[0]])
                 half = W / 2 - 0.3
                 # 30 cm por línea y 30 cm de separación: desde la altura del ojo del piloto se ven como en la realidad
@@ -496,6 +520,7 @@ class Scenery:
                 gh = max(self.terrain.height(sp[0], sp[1]), ap.elev)
                 self.taxi_signs.append((float(sp[0]), float(sp[1]), -gh, math.atan2(away[1], away[0]),
                                         f"{left_ident}-{right_ident}", name))
+                self._guide_signs(ap, P, away, W, rw, name, far)
 
     def _segmented_circle(self, mb, ap):
         """Círculo segmentado (FAA AC 150/5340-5) alrededor de la manga de viento y, por cada sentido de aterrizaje,

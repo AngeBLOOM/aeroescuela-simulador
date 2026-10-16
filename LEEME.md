@@ -141,6 +141,9 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
 - **Tendido de alta tensión** al norte de Base Escuela: torres de celosía de 32 m, cables con su comba y esferas
   naranjas y blancas donde el vano cruza alto sobre el valle. Los cables son finos y cuesta verlos, como en la
   realidad: se aprende a buscar las torres (vuelo bajo, aterrizaje forzoso).
+- **Carteles amarillos de guía**: en la pista, 70 m antes de cada salida y para cada sentido de aterrizaje, la
+  letra de la calle con la flecha hacia el lado de la salida; al entrar a la calle desde la plataforma, el destino
+  (números de pista con flecha). Con luz propia de noche. Sirven para practicar las instrucciones de rodaje.
 - **Bruma iluminada por el Sol**: mirando hacia el Sol la bruma del horizonte brilla como el cielo (luz dispersada
   hacia adelante) y el terreno lejano empalma con el cielo sin corte. **Manga de viento iluminada** de noche.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.

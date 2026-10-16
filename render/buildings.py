@@ -356,7 +356,7 @@ def material(mat):
     if mat.startswith("wall:"):
         col = tuple(float(v) for v in mat[5:].split(",")) + (1.0,)
         return col, "corrugated", False
-    if mat.startswith("sign:") or mat.startswith("tsign:") or mat.startswith("dsign:"):
+    if mat.startswith(("sign:", "tsign:", "dsign:", "gsign:")):
         return (1.0, 1.0, 1.0, 1.0), mat, False
     return MATERIALS[mat]
 
@@ -375,6 +375,9 @@ def make_texture(key):
         return tex_taxi_sign(mand, loc)
     if key.startswith("dsign:"):
         return tex_distance_sign(key[6:])
+    if key.startswith("gsign:"):
+        text, arrow = key[6:].split("|")
+        return tex_guide_sign(text, float(arrow))
     raise KeyError(key)
 
 
@@ -548,6 +551,70 @@ def add_taxi_sign(tm, x, y, gz, yaw, mand, loc):
 
 
 MATERIALS["signframe"] = ((0.2, 0.2, 0.21, 1.0), None, False)
+
+
+def tex_guide_sign(text, arrow, w=384, h=128):
+    """Cartel de guía: fondo amarillo, letra negra y flecha negra (0 = adelante, -90 izquierda, 90 derecha) del lado
+    hacia el que apunta, con borde negro fino."""
+    import pygame
+    if not pygame.font.get_init():
+        pygame.font.init()
+    surf = pygame.Surface((w, h))
+    surf.fill((236, 190, 30))
+    pygame.draw.rect(surf, (20, 20, 20), (0, 0, w, h), 4)
+    font = pygame.font.SysFont("arial,helvetica,dejavusans", int(h * 0.66), bold=True)
+    t = font.render(text, True, (15, 15, 15))
+    aw = int(h * 0.62)
+    total = t.get_width() + aw + 18
+    x0 = (w - total) // 2
+    if arrow < 0:                                   # flecha a la izquierda del texto
+        ax, tx = x0, x0 + aw + 18
+    else:
+        tx, ax = x0, x0 + t.get_width() + 18
+    surf.blit(t, (tx, (h - t.get_height()) // 2))
+    cx, cy, r = ax + aw / 2, h / 2, aw / 2
+    a = math.radians(arrow)
+    d = (math.sin(a), -math.cos(a))                 # en la imagen: arriba = adelante
+    n = (-d[1], d[0])
+    tip = (cx + d[0] * r, cy + d[1] * r)
+    base = (cx - d[0] * r, cy - d[1] * r)
+    neck = (cx + d[0] * r * 0.05, cy + d[1] * r * 0.05)
+    shaft = 0.16 * r
+    head = 0.55 * r
+    pts = [(base[0] + n[0] * shaft, base[1] + n[1] * shaft), (neck[0] + n[0] * shaft, neck[1] + n[1] * shaft),
+           (neck[0] + n[0] * head, neck[1] + n[1] * head), tip,
+           (neck[0] - n[0] * head, neck[1] - n[1] * head), (neck[0] - n[0] * shaft, neck[1] - n[1] * shaft),
+           (base[0] - n[0] * shaft, base[1] - n[1] * shaft)]
+    pygame.draw.polygon(surf, (15, 15, 15), pts)
+    arr = pygame.surfarray.array3d(surf).transpose(1, 0, 2)[::-1]
+    out = np.empty((h, w, 4), np.uint8)
+    out[..., :3] = arr
+    out[..., 3] = 255
+    return out
+
+
+def add_guide_sign(tm, x, y, gz, yaw, text, arrow):
+    """Cartel de guía de una cara sobre dos patas (yaw = hacia dónde mira la cara); el dorso, gris."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    fx, fy = c, s
+    rx, ry = -s, c
+    wdt, hgt, th, z0 = 2.4, 0.85, 0.25, 0.35
+    key = f"gsign:{text}|{arrow:g}"
+
+    def P(u, t, h):
+        return (x + rx * u + fx * t, y + ry * u + fy * t, gz - h)
+    tm.quad(key, P(-wdt / 2, th / 2, z0), P(wdt / 2, th / 2, z0), P(wdt / 2, th / 2, z0 + hgt), P(-wdt / 2, th / 2, z0 + hgt),
+            [(1, 0), (0, 0), (0, 1), (1, 1)])
+    tm.quad("signframe", P(wdt / 2, -th / 2, z0), P(-wdt / 2, -th / 2, z0), P(-wdt / 2, -th / 2, z0 + hgt),
+            P(wdt / 2, -th / 2, z0 + hgt), [(0, 0), (1, 0), (1, 1), (0, 1)])
+    for u0 in (-wdt / 2, wdt / 2):
+        tm.quad("signframe", P(u0, -th / 2, z0), P(u0, th / 2, z0), P(u0, th / 2, z0 + hgt), P(u0, -th / 2, z0 + hgt),
+                [(0, 0), (1, 0), (1, 1), (0, 1)])
+    tm.quad("signframe", P(-wdt / 2, -th / 2, z0 + hgt), P(wdt / 2, -th / 2, z0 + hgt), P(wdt / 2, th / 2, z0 + hgt),
+            P(-wdt / 2, th / 2, z0 + hgt), [(0, 0), (1, 0), (1, 1), (0, 1)])
+    for u in (-wdt * 0.3, wdt * 0.3):
+        tm.quad("signframe", P(u - 0.04, 0, 0.0), P(u + 0.04, 0, 0.0), P(u + 0.04, 0, z0), P(u - 0.04, 0, z0),
+                [(0, 0), (1, 0), (1, 1), (0, 1)], (0.6, 0.6, 1.0, 1.0))
 
 
 def tex_distance_sign(num, w=192, h=160):

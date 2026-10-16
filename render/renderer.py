@@ -686,8 +686,9 @@ class Renderer:
         tw = getattr(self.scn, "towers", [])
         signs = getattr(self.scn, "taxi_signs", [])
         dsigns = getattr(self.scn, "dist_signs", [])
+        gsigns = getattr(self.scn, "guide_signs", [])
         self.decals = []
-        if not hs and not tw and not signs and not dsigns:
+        if not hs and not tw and not signs and not dsigns and not gsigns:
             return
         ctx = self.ctx
         # luz del cielo horneada en Blender (tools/hornear_luz.py): cada geometría tiene su mapa de luz; los
@@ -722,6 +723,8 @@ class Renderer:
             bl.add_taxi_sign(tm, x, y, gz, yaw, mand, loc)
         for (x, y, gz, yaw, front, back) in dsigns:
             bl.add_distance_sign(tm, x, y, gz, yaw, front, back)
+        for (x, y, gz, yaw, text, arrow) in gsigns:
+            bl.add_guide_sign(tm, x, y, gz, yaw, text, arrow)
         texs, model = {}, []
         lmaps = {}
         for key in groups:
@@ -757,7 +760,7 @@ class Renderer:
                                                    "in_uv2")])
             svao = None if blend else ctx.vertex_array(self.p_shadow, [(vbo, "3f 32x", "in_pos")])
             meta = dict(color=list(col), blend=blend, cutoff=0.0)
-            if mat.startswith("tsign:") or mat.startswith("dsign:"):
+            if mat.startswith(("tsign:", "dsign:", "gsign:")):
                 meta["emis"] = 0.85                      # los carteles de rodaje y de pista tienen luz propia de noche
             if key is not None:
                 meta["lmap"] = lmaps[key]
