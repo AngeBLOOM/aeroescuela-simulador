@@ -431,7 +431,7 @@ class Renderer:
                 blending = True
                 self.ctx.enable(moderngl.BLEND)
                 self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
-                self.ctx.depth_mask = False
+                self.ctx.fbo.depth_mask = False
             pm["u_base"].value = tuple(float(c) for c in m["color"])
             pm["u_emis"].value = float(m.get("emis", 0.0)) * float(self.env.get("night", 0.0))
             pm["u_cutoff"].value = float(m.get("cutoff", 0.0))
@@ -448,7 +448,7 @@ class Renderer:
                 pm["u_has_tex"].value = 0
             vao.render()
         if blending:
-            self.ctx.depth_mask = True
+            self.ctx.fbo.depth_mask = True
             self.ctx.disable(moderngl.BLEND)
 
     # ------------------------------------------------------------ tráfico IA
@@ -542,9 +542,9 @@ class Renderer:
         ctx = self.ctx
         ctx.enable(moderngl.BLEND)
         ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
-        ctx.depth_mask = False
+        ctx.fbo.depth_mask = False
         self.vao_speck.render(moderngl.POINTS, vertices=len(arr))
-        ctx.depth_mask = True
+        ctx.fbo.depth_mask = True
         ctx.disable(moderngl.BLEND)
 
     # ------------------------------------------------------------ calidad gráfica
@@ -1771,7 +1771,7 @@ void main() { f_color = texture(u_tex, v_uv); }
         # luces
         ctx.enable(moderngl.BLEND)
         ctx.blend_func = moderngl.ONE, moderngl.ONE
-        ctx.depth_mask = False
+        ctx.fbo.depth_mask = False
         px = h / (2 * math.tan(math.radians(fovy) / 2))
         pl = self.p_light
         pl["u_px"].value = float(px)
@@ -1824,7 +1824,7 @@ void main() { f_color = texture(u_tex, v_uv); }
             self.vao_cloud.render(instances=self.n_clouds, vertices=6)
         if w.storm:
             self._draw_storm(cam, env)
-        ctx.depth_mask = True
+        ctx.fbo.depth_mask = True
         ctx.disable(moderngl.BLEND)
         # cabina 3D por dentro
         if cockpit is not None:
