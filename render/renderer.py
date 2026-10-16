@@ -132,10 +132,12 @@ class Renderer:
         self.p_shadow = ctx.program(vertex_shader=sh.SHADOW_VS, fragment_shader=sh.SHADOW_FS)
         self.p_tree = ctx.program(vertex_shader=sh.TREE_VS, fragment_shader=sh.TREE_FS)
         self.p_bldg = ctx.program(vertex_shader=sh.BLDG_VS, fragment_shader=sh.BLDG_FS)
+        self.p_decal = ctx.program(vertex_shader=sh.DECAL_VS, fragment_shader=sh.DECAL_FS)
+        self.decals = []
         self.p_shadow_tree = ctx.program(vertex_shader=sh.SHADOW_TREE_VS, fragment_shader=sh.SHADOW_FS)
         self.p_bright = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BRIGHT_FS)
         self.p_blur = ctx.program(vertex_shader=sh.POST_VS, fragment_shader=sh.BLUR_FS)
-        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg):
+        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg, self.p_decal):
             prog["u_cloudmap"] = self.CLOUD_UNIT
             prog["u_shmap"] = self.SH_UNIT          # nunca en la misma unidad que una textura normal
             prog["u_shmap2"] = self.SH2_UNIT
@@ -433,6 +435,11 @@ class Renderer:
             pm["u_base"].value = tuple(float(c) for c in m["color"])
             pm["u_emis"].value = float(m.get("emis", 0.0)) * float(self.env.get("night", 0.0))
             pm["u_cutoff"].value = float(m.get("cutoff", 0.0))
+            lmap = m.get("lmap")
+            pm["u_lm_on"].value = 1 if lmap is not None else 0
+            if lmap is not None:
+                lmap.use(18)
+                pm["u_lmap"].value = 18
             if tex is not None:
                 tex.use(9)
                 pm["u_tex"].value = 9
@@ -672,20 +679,61 @@ class Renderer:
         tw = getattr(self.scn, "towers", [])
         signs = getattr(self.scn, "taxi_signs", [])
         dsigns = getattr(self.scn, "dist_signs", [])
+        self.decals = []
         if not hs and not tw and not signs and not dsigns:
             return
-        tm = bl.TexMesh()
+        ctx = self.ctx
+        # luz del cielo horneada en Blender (tools/hornear_luz.py): cada geometría tiene su mapa de luz; los
+        # edificios de igual forma lo comparten y se agrupan en la misma malla. Sin mapa, la penumbra por vértice
+        groups = {None: bl.TexMesh()}
+        ground = {}
+
+        def place(key, build, x, y, gz, yaw):
+            data = bl.load_light(key) if key else None
+            if data is None:
+                build(groups[None])
+                return
+            t1 = bl.TexMesh()
+            build(t1)
+            if not bl.apply_light(t1, data):
+                for m_, rows in t1.parts.items():
+                    groups[None].parts.setdefault(m_, []).extend(rows)
+                return
+            g = groups.setdefault(key, bl.TexMesh())
+            for m_, rows in t1.parts.items():
+                g.parts.setdefault(m_, []).extend(rows)
+            ground.setdefault(key, []).extend(bl.ground_quad(x, y, gz, yaw, data["grect"]))
+
         for (x, y, gz, ln, wd, ht, yaw, col, sign) in hs:
-            bl.add_hangar(tm, x, y, gz, ln, wd, ht, yaw, ",".join(f"{c:.3f}" for c in col), sign)
+            ck = ",".join(f"{c:.3f}" for c in col)
+            place(bl.hangar_key(ln, wd, ht),
+                  lambda t, a=(x, y, gz, ln, wd, ht, yaw, ck, sign): bl.add_hangar(t, *a), x, y, gz, yaw)
         for (x, y, gz, h) in tw:
-            bl.add_tower(tm, x, y, gz, h)
+            place(bl.tower_key(h), lambda t, a=(x, y, gz, h): bl.add_tower(t, *a), x, y, gz, 0.0)
+        tm = groups[None]
         for (x, y, gz, yaw, mand, loc) in signs:
             bl.add_taxi_sign(tm, x, y, gz, yaw, mand, loc)
         for (x, y, gz, yaw, front, back) in dsigns:
             bl.add_distance_sign(tm, x, y, gz, yaw, front, back)
-        ctx = self.ctx
         texs, model = {}, []
-        for mat, arr in tm.arrays().items():
+        lmaps = {}
+        for key in groups:
+            if key is None:
+                continue
+            data = bl.load_light(key)
+            img = np.ascontiguousarray(data["lm"])
+            t_ = ctx.texture((img.shape[1], img.shape[0]), 3, img.tobytes())
+            t_.build_mipmaps()
+            t_.repeat_x = t_.repeat_y = False
+            lmaps[key] = t_
+            gimg = np.ascontiguousarray(data["ground"])
+            gt = ctx.texture((gimg.shape[1], gimg.shape[0]), 1, gimg.tobytes())
+            gt.build_mipmaps()
+            gt.repeat_x = gt.repeat_y = False
+            vbo = ctx.buffer(np.asarray(ground[key], np.float32).tobytes())
+            self.decals.append((ctx.vertex_array(self.p_decal, [(vbo, "3f 2f", "in_pos", "in_uv")]), gt))
+        items = [(k, m_, a_) for k, t_ in groups.items() for m_, a_ in t_.arrays().items()]
+        for key, mat, arr in items:
             col, tkey, blend = bl.material(mat)
             tex = None
             if tkey:
@@ -698,11 +746,14 @@ class Renderer:
                     texs[tkey] = t_
                 tex = texs[tkey]
             vbo = ctx.buffer(np.ascontiguousarray(arr, np.float32).tobytes())
-            vao = ctx.vertex_array(self.p_model, [(vbo, "3f 3f 2f 1f", "in_pos", "in_norm", "in_uv", "in_ao")])
-            svao = None if blend else ctx.vertex_array(self.p_shadow, [(vbo, "3f 24x", "in_pos")])
+            vao = ctx.vertex_array(self.p_model, [(vbo, "3f 3f 2f 1f 2f", "in_pos", "in_norm", "in_uv", "in_ao",
+                                                   "in_uv2")])
+            svao = None if blend else ctx.vertex_array(self.p_shadow, [(vbo, "3f 32x", "in_pos")])
             meta = dict(color=list(col), blend=blend, cutoff=0.0)
             if mat.startswith("tsign:") or mat.startswith("dsign:"):
                 meta["emis"] = 0.85                      # los carteles de rodaje y de pista tienen luz propia de noche
+            if key is not None:
+                meta["lmap"] = lmaps[key]
             model.append((vao, tex, meta, svao))
         model.sort(key=lambda it: it[2]["blend"])
         self.buildings_model = model
@@ -1537,14 +1588,14 @@ void main() { f_color = texture(u_tex, v_uv); }
 
         # terreno y agua
         for prog in (self.p_terrain, self.p_water, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg,
-                     self.p_light, self.p_cloud):
+                     self.p_decal, self.p_light, self.p_cloud):
             self._set_common(prog, view, proj, cam.eye)
         if self.sh_tex is not None:
             self.sh_tex.use(self.SH_UNIT)
         if self.sh2_tex is not None:
             self.sh2_tex.use(self.SH2_UNIT)
         self._update_cloud_shadows(env)
-        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg):
+        for prog in (self.p_terrain, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg, self.p_decal):
             prog["u_sh_on"].value = self.sh_k if prog is not self.p_model else 0.0
             if self.sh_k > 0.0 and prog is not self.p_model:
                 prog["u_shmat"].write(gl_bytes(self.sh_mat))
@@ -1628,6 +1679,20 @@ void main() { f_color = texture(u_tex, v_uv); }
             m.render()
         self.p_tex["u_surf"].value = 0
         self.p_tex["u_wet"].value = 0.0
+
+        # penumbra horneada en el suelo alrededor de hangares y torres: multiplica lo ya dibujado (solo la parte de
+        # la luz del cielo; donde da el Sol casi no se nota)
+        if self.decals:
+            ctx.enable(moderngl.BLEND)
+            ctx.blend_func = moderngl.DST_COLOR, moderngl.ZERO
+            ctx.fbo.depth_mask = False                    # (moderngl: la máscara es del framebuffer activo)
+            for vao, gt in self.decals:
+                gt.use(18)
+                self.p_decal["u_gao"].value = 18
+                vao.render()
+            ctx.fbo.depth_mask = True
+            ctx.disable(moderngl.BLEND)
+            ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
 
         # objetos estáticos
         po = self.p_obj

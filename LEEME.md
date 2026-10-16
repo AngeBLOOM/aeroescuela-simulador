@@ -122,6 +122,11 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   sentido contrario), con luz propia de noche: sirven para decidir a tiempo un despegue abortado. Las pistas con ILS
   tienen luces de borde de alta intensidad (HIRL), con la zona de precaución amarilla en los últimos 600 m; las
   demás, de intensidad media (MIRL) y todas blancas. Las luces más intensas se ven desde más lejos con bruma.
+- **Luz horneada en Blender** en hangares y torres: la luz del cielo con sus rebotes (Cycles) está calculada de
+  antemano en un mapa de luz por edificio, así los rincones, el pie de las paredes, los aleros y el portón tienen
+  la penumbra suave de una foto, y el suelo alrededor se oscurece un poco junto a las paredes. El Sol y sus sombras
+  siguen siendo dinámicos (sirve a cualquier hora). Se rehace con `python tools/hornear_luz.py <blender.exe>`
+  (Blender 4.2 LTS, solo hace falta para volver a hornear si cambia la forma de los edificios); queda en `assets/luz`.
 - **Bruma iluminada por el Sol**: mirando hacia el Sol la bruma del horizonte brilla como el cielo (luz dispersada
   hacia adelante) y el terreno lejano empalma con el cielo sin corte. **Manga de viento iluminada** de noche.
   En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.

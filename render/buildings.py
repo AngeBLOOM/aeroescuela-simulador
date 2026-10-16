@@ -6,6 +6,7 @@ vértice (más oscuro al pie de las paredes y bajo los aleros). Las texturas se 
 archivos) y son blancas o grises: el color de cada edificio lo pone el material.
 """
 import math
+import os
 
 import numpy as np
 
@@ -103,7 +104,8 @@ def tex_sign(text, w=1024, h=128):
 
 # ---------------------------------------------------------------- geometría
 class TexMesh:
-    """Triángulos con [posición, normal, uv, penumbra] (9 floats), agrupados por material."""
+    """Triángulos con [posición, normal, uv, penumbra, uv del mapa de luz] (11 floats), agrupados por material. El
+    uv del mapa de luz vale -1 mientras el edificio no tenga luz horneada (ver apply_light)."""
 
     def __init__(self):
         self.parts = {}
@@ -112,14 +114,15 @@ class TexMesh:
         P = [np.asarray(p, np.float64) for p in (p0, p1, p2, p3)]
         n = np.cross(P[1] - P[0], P[3] - P[0])
         n = n / (np.linalg.norm(n) + 1e-12)
-        rows = [np.concatenate([P[i], n, uv[i], [ao[i]]]) for i in range(4)]
+        rows = [np.concatenate([P[i], n, uv[i], [ao[i], -1.0, -1.0]]) for i in range(4)]
         self.parts.setdefault(mat, []).extend([rows[0], rows[1], rows[2], rows[0], rows[2], rows[3]])
 
     def tri(self, mat, p0, p1, p2, uv, ao=(1.0, 1.0, 1.0)):
         P = [np.asarray(p, np.float64) for p in (p0, p1, p2)]
         n = np.cross(P[1] - P[0], P[2] - P[0])
         n = n / (np.linalg.norm(n) + 1e-12)
-        self.parts.setdefault(mat, []).extend([np.concatenate([P[i], n, uv[i], [ao[i]]]) for i in range(3)])
+        self.parts.setdefault(mat, []).extend([np.concatenate([P[i], n, uv[i], [ao[i], -1.0, -1.0]])
+                                               for i in range(3)])
 
     def box(self, mat, lo, hi, tile=2.0, ao_floor=1.0):
         """Caja alineada a los ejes entre lo y hi (NED); cada cara con uv en metros / tile."""
@@ -136,6 +139,67 @@ class TexMesh:
 
     def arrays(self):
         return {m: np.asarray(v, np.float32) for m, v in self.parts.items() if v}
+
+
+# ---------------------------------------------------------------- luz horneada (tools/hornear_luz.py)
+LIGHT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "luz")
+LIGHT_SCALE = 1.6                 # los mapas guardan luz / 1,6 en 8 bits (la luz pasa de 1 en techos con rebote)
+_light_cache = {}
+
+
+def hangar_key(ln, wd, ht):
+    return f"hangar_{ln:g}x{wd:g}x{ht:g}"
+
+
+def tower_key(h):
+    return f"torre_{h:g}"
+
+
+def role(mat):
+    """Papel de un material en la geometría (el mismo para todos los hangares de igual tamaño aunque cambien el
+    color o el letrero): así la luz horneada de uno sirve para todos."""
+    for pre, r in (("wall:", "wall"), ("sign:", "sign")):
+        if mat.startswith(pre):
+            return r
+    return mat
+
+
+def load_light(key):
+    """Mapa de luz horneado de una geometría: dict con 'lm' (S, S, 3) uint8, 'ground' (G, G) uint8, 'grect' (rectángulo
+    del parche de suelo en coordenadas locales x0, y0, x1, y1) y 'uv_<papel>' (n, 3, 2). None si no está horneada."""
+    if key not in _light_cache:
+        p = os.path.join(LIGHT_DIR, key + ".npz")
+        try:
+            with np.load(p) as z:
+                _light_cache[key] = {k: z[k] for k in z.files}
+        except (OSError, ValueError):
+            _light_cache[key] = None
+    return _light_cache[key]
+
+
+def apply_light(tm, data):
+    """Copia a cada vértice el uv de su mapa de luz (la malla debe ser la misma geometría que se horneó)."""
+    ok = False
+    for mat, rows in tm.parts.items():
+        uv = data.get("uv_" + role(mat))
+        if uv is None or len(uv) * 3 != len(rows):
+            continue
+        uv = uv.reshape(-1, 2)
+        for i, row in enumerate(rows):
+            row[9:11] = uv[i]
+        ok = True
+    return ok
+
+
+def ground_quad(x, y, gz, yaw, rect, lift=0.1):
+    """Parche de suelo con la penumbra horneada alrededor de un edificio: 6 vértices [pos, uv] (en el mundo)."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    x0, y0, x1, y1 = (float(v) for v in rect)
+    out = []
+    for (px, py) in ((x0, y0), (x1, y0), (x1, y1), (x0, y0), (x1, y1), (x0, y1)):
+        # u a lo largo del este local (y), v del norte local (x): así lo despliega el horneado
+        out.append((x + px * c - py * s, y + px * s + py * c, gz - lift, (py - y0) / (y1 - y0), (px - x0) / (x1 - x0)))
+    return out
 
 
 def _ao_h(h):
@@ -215,7 +279,7 @@ def add_hangar(tm, x, y, gz, ln, wd, ht, yaw, color_key, sign_key=None):
             tm.quad("glass", W(w0, py - 0.02, dh * 0.72), W(w1, py - 0.02, dh * 0.72), W(w1, py - 0.02, dh * 0.86),
                     W(w0, py - 0.02, dh * 0.86), [(0, 0), (1, 0), (1, 1), (0, 1)])
     # riel y marco del portón
-    tm.box("trim", W(-dx - 0.6, -b - 0.55, dh + 0.45), W(dx + 0.6, -b, dh), tile=1.0)
+    tm.box("trim", W(-dx - 0.6, -b - 0.55, dh + 0.45), W(dx + 0.6, -b - 0.02, dh), tile=1.0)
     for px in (-dx - 0.35, dx + 0.35):
         tm.box("trim", W(px - 0.25, -b - 0.4, dh), W(px + 0.25, -b, 0.0), tile=1.0, ao_floor=0.6)
     # letrero sobre el portón

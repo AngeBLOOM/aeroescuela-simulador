@@ -724,10 +724,12 @@ in vec3 in_pos;
 in vec3 in_norm;
 in vec2 in_uv;
 in float in_ao;
+in vec2 in_uv2;               // uv del mapa de luz horneado (solo hangares y torres; los aviones no lo traen)
 out vec3 v_pos;
 out vec3 v_norm;
 out vec2 v_uv;
 out float v_ao;
+out vec2 v_uv2;
 out float v_logz;
 void main() {
     vec4 wp = u_model * vec4(in_pos, 1.0);
@@ -735,6 +737,7 @@ void main() {
     v_norm = mat3(u_model) * in_norm;
     v_uv = in_uv;
     v_ao = in_ao;
+    v_uv2 = in_uv2;
     gl_Position = u_proj * u_view * wp;
     v_logz = 1.0 + gl_Position.w;
 }
@@ -748,10 +751,13 @@ uniform float u_cutoff;
 uniform float u_spec;
 uniform vec4 u_tint;
 uniform float u_emis;
+uniform sampler2D u_lmap;
+uniform int u_lm_on;
 in vec3 v_pos;
 in vec3 v_norm;
 in vec2 v_uv;
 in float v_ao;
+in vec2 v_uv2;
 in float v_logz;
 out vec4 f_color;
 void main() {
@@ -768,8 +774,54 @@ void main() {
     vec3 base = c.rgb * u_tint.rgb;
     // rendijas, uniones y el interior quedan en penumbra (oclusión horneada al importar el modelo)
     float ao = v_ao;
-    vec3 lit = base * (u_amb * ao + u_sun_col * diff * mix(1.0, ao, 0.45)) + u_sun_col * spec * ao + base * u_emis;
+    vec3 amb = u_amb * ao;
+    float aod = mix(1.0, ao, 0.45);
+    if (u_lm_on == 1 && v_uv2.x >= 0.0) {
+        // luz del cielo horneada en Blender (Cycles, con rebotes): rincones, aleros, el pie de las paredes y el
+        // interior del portón; vale 1 en un techo a cielo abierto y ~0,6 en una pared sin obstáculos
+        vec3 lm = texture(u_lmap, v_uv2).rgb * 1.6;
+        amb = u_amb * lm * 1.3;
+        ao = clamp(dot(lm, vec3(0.333)) * 1.5, 0.35, 1.0);
+        aod = 1.0;                                   // el Sol y sus sombras los pone el mapa de sombras
+    }
+    vec3 lit = base * (amb + u_sun_col * diff * aod) + u_sun_col * spec * ao + base * u_emis;
     f_color = vec4(apply_fog(lit, v_pos), c.a * u_tint.a);
+    gl_FragDepth = log2(v_logz) * u_logc * 0.5;
+}
+"""
+
+
+# ---------------------------------------------------------------- penumbra horneada en el suelo
+DECAL_VS = COMMON + """
+in vec3 in_pos;
+in vec2 in_uv;
+out vec3 v_pos;
+out vec2 v_uv;
+out float v_logz;
+void main() {
+    v_pos = in_pos;
+    v_uv = in_uv;
+    gl_Position = u_proj * u_view * vec4(in_pos, 1.0);
+    v_logz = 1.0 + gl_Position.w;
+}
+"""
+
+DECAL_FS = COMMON + FOG_FN + SHADOW_FN + """
+uniform sampler2D u_gao;
+in vec3 v_pos;
+in vec2 v_uv;
+in float v_logz;
+out vec4 f_color;
+void main() {
+    // luz del cielo que le llega al suelo junto al edificio (1 a cielo abierto); se oscurece solo esa parte: donde
+    // da el Sol la penumbra casi no se nota, a la sombra y con cielo cubierto sí
+    float a = clamp(texture(u_gao, v_uv).r * 1.6, 0.0, 1.0);
+    vec2 e = min(v_uv, 1.0 - v_uv);
+    a = mix(1.0, a, smoothstep(0.0, 0.06, min(e.x, e.y)));
+    float A = dot(u_amb, vec3(0.333));
+    float S = dot(u_sun_col, vec3(0.333)) * max(-u_sun.z, 0.0) * sun_shadow(v_pos);
+    float k = (A * a + S) / max(A + S, 1e-3);
+    f_color = vec4(vec3(mix(1.0, k, fog_factor(v_pos))), 1.0);
     gl_FragDepth = log2(v_logz) * u_logc * 0.5;
 }
 """
