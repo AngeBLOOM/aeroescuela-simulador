@@ -135,6 +135,8 @@ class Renderer:
         self.p_decal = ctx.program(vertex_shader=sh.DECAL_VS, fragment_shader=sh.DECAL_FS)
         self.p_smoke = ctx.program(vertex_shader=sh.SMOKE_VS, fragment_shader=sh.SMOKE_FS)
         self.p_inst = ctx.program(vertex_shader=sh.MODEL_INST_VS, fragment_shader=sh.MODEL_INST_FS)
+        self.p_pool = ctx.program(vertex_shader=sh.POOL_VS, fragment_shader=sh.POOL_FS)
+        self.vao_pool = None
         self.house_draw = []
         self.decals = []
         self.p_shadow_tree = ctx.program(vertex_shader=sh.SHADOW_TREE_VS, fragment_shader=sh.SHADOW_FS)
@@ -225,6 +227,7 @@ class Renderer:
         self._build_parked()
         self._build_buildings()
         self._build_houses()
+        self._build_pools()
         self._build_trees()
         self._build_casters()
         self.runway_meshes = []
@@ -792,7 +795,7 @@ class Renderer:
             # las radioayudas se ven desde lejos (son referencias de navegación) y son livianas
             near = r[d < (9000.0 if item["key"] in ("vor", "ndb", "localizador", "senda") else self.HOUSE_NEAR)]
             far = r[(d >= self.HOUSE_NEAR) & (d < self.HOUSE_FAR)]                 if item["key"] not in ("luminaria", "papi", "valla", "vor", "ndb", "localizador", "senda",
-                                       "barra_aprox") else r[:0]
+                                       "barra_aprox", "poste_luz") else r[:0]
             item["n"], item["nf"] = len(near), len(far)
             if len(near):
                 item["ib"].write(np.ascontiguousarray(near).tobytes())
@@ -844,6 +847,24 @@ class Renderer:
                 pi["u_itint_on"].value = 0
                 pi["u_base"].value = (0.66, 0.34, 0.24, 1.0) if item["tile"] else (0.6, 0.6, 0.58, 1.0)
                 item["far"].render(first=ns, vertices=item["total"] - ns, instances=item["nf"])
+
+    def _build_pools(self):
+        """Manchones de luz de las torres de iluminación: un círculo de 50 m delante de cada torre, apenas sobre la
+        plataforma (se suma al concreto de noche)."""
+        self.vao_pool = None
+        al = getattr(self.scn, "apron_lights", [])
+        if not al:
+            return
+        rows = []
+        R_ = 50.0
+        for (x, y, gz, face, h) in al:
+            cx, cy = x + math.cos(face) * 38.0, y + math.sin(face) * 38.0
+            z = gz - 0.12
+            c = [(cx - R_, cy - R_, z, 0, 0), (cx + R_, cy - R_, z, 1, 0), (cx + R_, cy + R_, z, 1, 1),
+                 (cx - R_, cy - R_, z, 0, 0), (cx + R_, cy + R_, z, 1, 1), (cx - R_, cy + R_, z, 0, 1)]
+            rows += c
+        vbo = self.ctx.buffer(np.asarray(rows, np.float32).tobytes())
+        self.vao_pool = self.ctx.vertex_array(self.p_pool, [(vbo, "3f 2f", "in_pos", "in_uv")])
 
     def _face_runway(self, x, y):
         """Giro para que el frente (-y local) de un edificio mire a la pista más cercana (torres de control)."""
@@ -1963,7 +1984,7 @@ void main() { f_color = texture(u_tex, v_uv); }
 
         # terreno y agua
         for prog in (self.p_terrain, self.p_water, self.p_obj, self.p_tex, self.p_model, self.p_tree, self.p_bldg,
-                     self.p_decal, self.p_inst, self.p_light, self.p_cloud):
+                     self.p_decal, self.p_inst, self.p_pool, self.p_light, self.p_cloud):
             self._set_common(prog, view, proj, cam.eye)
         if self.sh_tex is not None:
             self.sh_tex.use(self.SH_UNIT)
@@ -2070,6 +2091,18 @@ void main() { f_color = texture(u_tex, v_uv); }
                 gt.use(18)
                 self.p_decal["u_gao"].value = 18
                 vao.render()
+            ctx.fbo.depth_mask = True
+            ctx.disable(moderngl.BLEND)
+            ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+
+        # luz de las torres de iluminación de la plataforma (de noche o con cielo muy oscuro)
+        pool_k = clamp(env["night"] * 1.2 - 0.15, 0.0, 1.0)
+        if self.vao_pool is not None and pool_k > 0.0:
+            ctx.enable(moderngl.BLEND)
+            ctx.blend_func = moderngl.ONE, moderngl.ONE              # luz que se suma (de noche el suelo es casi negro)
+            ctx.fbo.depth_mask = False
+            self.p_pool["u_pool"].value = float(0.32 * pool_k)
+            self.vao_pool.render()
             ctx.fbo.depth_mask = True
             ctx.disable(moderngl.BLEND)
             ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
@@ -2418,6 +2451,12 @@ void main() { f_color = texture(u_tex, v_uv); }
         # hacia el piloto y las luces traseras (rojas) de los que se alejan: referencia para navegar de noche
         if getattr(self.scn, "road_lines", None) and self.env.get("night", 0.0) > 0.3:
             L.extend(self._road_traffic(cam))
+        # reflectores de las torres de iluminación de la plataforma
+        if getattr(self.scn, "apron_lights", None) and self.env.get("night", 0.0) > 0.2:
+            for (x, y, gz, face, h) in self.scn.apron_lights:
+                c, s_ = math.cos(face), math.sin(face)
+                for k in (-0.6, -0.2, 0.2, 0.6):
+                    L.append((x + c * 1.0 - s_ * k, y + s_ * 1.0 + c * k, gz - h - 0.55, 1.0, 0.86, 0.62, 3.2))
         # luces de obstáculo de las antenas: roja intermitente arriba (unos 30 destellos por minuto) y fija a media
         # altura; de noche o con poca luz
         if getattr(self.scn, "masts", None) and (self.env.get("night", 0.0) > 0.25 or self.env.get("overcast", 0.0) > 0.7):

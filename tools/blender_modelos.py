@@ -905,7 +905,27 @@ def barra_aprox(p):
     return dict(grect_margin=1.0)
 
 
-BUILDERS.update({"barra_aprox": barra_aprox, "vor": vor, "ndb": ndb, "localizador": localizador, "senda": senda, "terminal": terminal, "valla": valla, "manga": manga, "luminaria": luminaria, "papi": papi, "casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
+def poste_luz(p):
+    """Torre de iluminación de plataforma: base de concreto, mástil cónico de 18 m, plataforma con baranda y cuatro
+    reflectores inclinados hacia la plataforma (-y), con escalera de gato."""
+    box("concrete", (-0.7, -0.7, 0.0), (0.7, 0.7, 0.4), 0.03)
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=12, radius1=0.28, radius2=0.12, depth=17.6)
+    bmesh.ops.translate(bm, vec=(0, 0, 0.4 + 8.8), verts=bm.verts)
+    obj_from_bm(bm, "steel")
+    box("steel", (-0.9, -0.9, 17.9), (0.9, 0.9, 18.0), 0.02)
+    for z in (18.4, 18.9):
+        for (a0, b0, a1, b1) in ((-0.9, -0.9, 0.9, -0.9), (0.9, -0.9, 0.9, 0.9), (0.9, 0.9, -0.9, 0.9), (-0.9, 0.9, -0.9, -0.9)):
+            beam("railing", (a0, b0, z), (a1, b1, z), 0.03, 0.03)
+    for x in (-0.6, -0.2, 0.2, 0.6):
+        box("steel", (x - 0.17, -1.05, 18.3), (x + 0.17, -0.85, 18.75), 0.02)
+        box("lamp", (x - 0.15, -1.08, 18.33), (x + 0.15, -1.04, 18.72))
+    for z in np.arange(1.0, 17.8, 0.4):
+        beam("steel", (-0.18, 0.32, z), (0.18, 0.32, z), 0.02, 0.02)
+    return dict(grect_margin=2.0)
+
+
+BUILDERS.update({"poste_luz": poste_luz, "barra_aprox": barra_aprox, "vor": vor, "ndb": ndb, "localizador": localizador, "senda": senda, "terminal": terminal, "valla": valla, "manga": manga, "luminaria": luminaria, "papi": papi, "casa_a": casa_a, "casa_b": casa_b, "casa_c": casa_c, "casa_d": casa_d, "bloque": bloque})
 
 
 # ============================================================ árboles (plantillas para el dibujo por instancias)

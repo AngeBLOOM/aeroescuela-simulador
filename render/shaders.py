@@ -933,6 +933,8 @@ MODEL_INST_FS = MODEL_FS.replace("in float v_logz;", "in float v_logz;\nin vec3 
     .replace("    f_color = vec4(apply_fog(lit, v_pos), c.a * u_tint.a);", _WINLIT)
 
 
+# ---------------------------------------------------------------- luz de las torres de iluminación sobre el suelo
+
 # ---------------------------------------------------------------- penumbra horneada en el suelo
 DECAL_VS = COMMON + """
 in vec3 in_pos;
@@ -1299,6 +1301,25 @@ void main() {
     float a = v_alpha * (1.0 - smoothstep(0.55, 1.0, dot(q, q)));
     if (a < 0.01) discard;
     f_color = vec4(u_speck_col, a);
+    gl_FragDepth = log2(v_logz) * u_logc * 0.5;
+}
+"""
+
+
+# luz de las torres de iluminación: manchón cálido sobre la plataforma (se suma a lo dibujado)
+POOL_VS = DECAL_VS
+POOL_FS = COMMON + FOG_FN + """
+uniform float u_pool;          // intensidad (0 de día)
+in vec3 v_pos;
+in vec2 v_uv;
+in float v_logz;
+out vec4 f_color;
+void main() {
+    vec2 q = v_uv * 2.0 - 1.0;
+    float r2 = dot(q, q);
+    if (r2 > 1.0) discard;
+    float k = pow(1.0 - r2, 1.6) * u_pool * fog_factor(v_pos);
+    f_color = vec4(vec3(1.0, 0.82, 0.56) * k, 1.0);
     gl_FragDepth = log2(v_logz) * u_logc * 0.5;
 }
 """

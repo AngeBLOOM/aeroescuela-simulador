@@ -50,6 +50,7 @@ class Scenery:
         if bl.load_model("valla") is not None:
             self._fences()
         self._navaid_sites()
+        self.apron_lights = self._apron_lights()
         if bl.load_model("manga") is not None:          # mástil modelado en Blender (la manga la mueve el renderizador)
             for (x, y, z) in self.windsocks:
                 self.house_inst.append(("manga", x, y, z, 0.0, 1.0, 1.0, 1.0, 1.0))
@@ -595,6 +596,31 @@ class Scenery:
             end = base - d * 4.5                                              # extremo del brazo largo (lado de llegada)
             short_c = end + side * 2.25
             mb.box((short_c[0], short_c[1], z), (4.5, 1.0, 0.35), white, yaw=math.atan2(side[1], side[0]))
+
+    def _apron_lights(self):
+        """Torres de iluminación de 18 m en el borde de cada plataforma (del lado opuesto a la pista), cada ~60 m,
+        mirando hacia ella: (x, y, z del suelo, rumbo de la cara, altura). De noche alumbran el concreto."""
+        out = []
+        for ap in self.aps:
+            if ap.apron is None:
+                continue
+            (c, h, ln, wd) = ap.apron
+            hr = math.radians(h)
+            d = np.array([math.cos(hr), math.sin(hr)])
+            r = np.array([-d[1], d[0]])
+            c = np.asarray(c, float)
+            rw = ap.runways[0]
+            side = 1.0 if float((c - rw.center) @ r) > 0 else -1.0        # el lado de la plataforma lejos de la pista
+            n = max(2, int(ln // 60))
+            for i in range(n):
+                p = c + d * (-ln / 2 + ln * (i + 0.5) / n) + r * side * (wd / 2 + 4.0)
+                face = math.atan2(-r[1] * side, -r[0] * side)              # la cara mira hacia la plataforma
+                g = max(float(self.terrain.height(p[0], p[1])), ap.elev)
+                out.append((float(p[0]), float(p[1]), -g, face, 18.0))
+                if bl.load_model("poste_luz") is not None:
+                    self.house_inst.append(("poste_luz", float(p[0]), float(p[1]), -g, face + math.pi / 2,
+                                            1.0, 1.0, 1.0, 1.0))
+        return out
 
     def _navaid_sites(self):
         """Estaciones físicas de las radioayudas: VOR, NDB y, por cada ILS, la antena del localizador (detrás del
