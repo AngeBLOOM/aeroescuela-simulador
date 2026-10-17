@@ -303,7 +303,7 @@ class App(ScreensMixin):
         f.blit(s, "› " + msg, (cx, cy + rr + 60), 14, (150, 215, 238), tech=True, anchor="center")
         self.ctx.viewport = (0, 0, self.W, self.H)
         self.ctx.clear(0.04, 0.06, 0.1)
-        if hasattr(self, "renderer"):
+        if getattr(self, "renderer", None) is not None:   # (al cambiar de escenario se suelta antes del nuevo)
             self.renderer.draw_overlay(s)
         else:
             self._raw_overlay(s)
@@ -742,6 +742,16 @@ class App(ScreensMixin):
 
     # ------------------------------------------------------------ vuelo
     # ------------------------------------------------------------ ubicaciones
+    def _free_renderer(self):
+        """Suelta el renderizador actual antes de crear otro: con tarjetas de 1 GB no caben los dos a la vez."""
+        import gc
+        self.renderer = None
+        gc.collect()
+        try:
+            self.ctx.gc()
+        except Exception:
+            pass
+
     def switch_world(self, loc):
         """Sustituye el mundo y el renderizador (ubicación real o escenario escuela)."""
         aid = self.world.ac.t.id
@@ -751,6 +761,7 @@ class App(ScreensMixin):
         self.world.weather.copy_from(wx)
         self.configure_world()
         self.world.reposition("pista")
+        self._free_renderer()                            # suelta la memoria de video del escenario anterior
         self.renderer = Renderer(self.ctx, self.world, (self.W, self.H), progress=lambda m: self._loading(m, 0.97))
         self.apply_quality()
         self.panel.glass.map_img = None
@@ -1162,6 +1173,7 @@ class App(ScreensMixin):
         self._loading("Escenario siguiente · " + loc["name"], 0.95)
         self.world = transfer_to_scene(self.world, loc)
         self.configure_world()
+        self._free_renderer()                            # suelta la memoria de video del escenario anterior
         self.renderer = Renderer(self.ctx, self.world, (self.W, self.H), progress=lambda m: self._loading(m, 0.97))
         self.apply_quality()
         self.panel.glass.map_img = None
