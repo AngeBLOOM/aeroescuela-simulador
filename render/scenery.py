@@ -129,7 +129,8 @@ class Scenery:
     # ---------------------------------------------------------------- objetos
     def _objects(self):
         self.parked, self.parked_code = [], np.zeros((0, 9), np.float32)
-        self.fuel = []                                    # estación de combustible (modelo de Blender)
+        self._occupied = []                               # (punto, radio) ya ocupados junto a las plataformas reales
+        self.fuel = []                                  # estación de combustible (modelo de Blender)
         self.house_inst = []                              # casas y edificios de Blender: (clave, x, y, z, rumbo, escala, r, g, b)
         self.hangars, self.towers = [], []                # los dibuja el renderizador con detalle (render/buildings.py)
         self.taxi_signs = []                              # carteles de posición de espera (x, y, z, rumbo, texto, calle)
@@ -157,6 +158,8 @@ class Scenery:
         for ap in self.aps:
             z = -(ap.elev + 0.05)
             for rect in ap.paved_rects:
+                if rect is ap.apron and getattr(ap, "apron_photo", False):
+                    continue                              # la foto satelital nítida ya muestra el concreto real
                 c, hdg, ln, wd = rect
                 h = math.radians(hdg)
                 d = np.array([math.cos(h), math.sin(h)])
@@ -191,6 +194,7 @@ class Scenery:
             self._power_line(mb, (4200.0, -9000.0), (5200.0, 9000.0))
         if not world.is_school:
             loc = world.location
+            self._real_airfield()
             try:
                 if getattr(world, "buildings_3d", False):
                     self._real_buildings(mb, loc)
@@ -313,6 +317,169 @@ class Scenery:
         return mb.array()
 
     # ---------------------------------------------------------------- mundo real
+    def _in_site(self, x, y, trees=False):
+        """¿El punto (o los puntos) cae en la fila de edificios generada de un aeropuerto real? Ahí no se dibujan los
+        edificios de OpenStreetMap. Con trees=True, toda la zona de la plataforma (donde tampoco crecen árboles)."""
+        x, y = np.asarray(x, float), np.asarray(y, float)
+        out = np.zeros(np.broadcast(x, y).shape, bool)
+        for ap in self.aps:
+            if not trees and ap.ident not in getattr(self, "_row_sites", ()):
+                continue
+            site = ap.site_rect() if hasattr(ap, "site_rect") else None
+            if site is None:
+                continue
+            (cx, cy), hdg, ln, wd = site
+            hr = math.radians(hdg)
+            dx, dy = x - cx, y - cy
+            out |= (np.abs(dx * math.cos(hr) + dy * math.sin(hr)) < ln / 2) & \
+                   (np.abs(-dx * math.sin(hr) + dy * math.cos(hr)) < wd / 2)
+        return out
+
+    def _free(self, p, r):
+        """¿Hay r metros libres alrededor de p (sin edificios de OpenStreetMap ni modelos ya puestos)?"""
+        return all(math.hypot(p[0] - q[0], p[1] - q[1]) >= r + rq for q, rq in self._occupied)
+
+    def _osm_fits(self, ap, loc):
+        """Galpones de OpenStreetMap en la zona de la plataforma (contornos casi rectangulares de 250 a 20000 m² y
+        hasta 60 m de fondo; a veces una sola franja cubre toda la fila de hangares):
+        [(índice, centro, eje x a lo largo de la pista, largo, ancho)]. También anota los edificios de la zona como
+        ocupados, para no poner encima la torre ni el combustible."""
+        (cx, cy), hdg, sl, sw = ap.site_rect()
+        hr = math.radians(hdg)
+        d = np.array([math.cos(hr), math.sin(hr)])
+        r = np.array([-d[1], d[0]])
+        res = []
+        for idx, (poly, _major) in enumerate(loc.get("buildings", [])):
+            poly = np.asarray(poly, np.float64)
+            if len(poly) > 3 and np.allclose(poly[0], poly[-1]):
+                poly = poly[:-1]
+            if len(poly) < 3:
+                continue
+            m = poly.mean(0)
+            rel = m - (cx, cy)
+            if abs(rel @ d) > sl / 2 + 60 or abs(rel @ r) > sw / 2 + 60:
+                continue
+            x, y = poly[:, 0], poly[:, 1]
+            area = 0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
+            self._occupied.append((m, min(25.0, math.sqrt(area) / 2)))
+            if abs(rel @ d) > sl / 2 or abs(rel @ r) > sw / 2 or len(poly) < 4 or not 250 <= area <= 20000:
+                continue
+            best = None                                  # rectángulo mínimo que lo encierra
+            for ang in np.radians(np.arange(0.0, 90.0, 2.0)):
+                u = np.array([math.cos(ang), math.sin(ang)])
+                v = np.array([-u[1], u[0]])
+                pu, pv = poly @ u, poly @ v
+                ar = float(np.ptp(pu) * np.ptp(pv))
+                if best is None or ar < best[0]:
+                    best = (ar, u, v, pu, pv)
+            ar, u, v, pu, pv = best
+            if area / max(ar, 1.0) < 0.8:
+                continue
+            ctr = u * (pu.max() + pu.min()) / 2 + v * (pv.max() + pv.min()) / 2
+            eu, ev = float(np.ptp(pu)), float(np.ptp(pv))
+            ax, lx, wy = (u, eu, ev) if abs(u @ d) >= abs(v @ d) else (v, ev, eu)
+            if min(lx, wy) >= 12.0 and wy <= 60.0:
+                res.append((idx, ctr, ax, lx, wy))
+        return res
+
+    def _real_airfield(self):
+        """Hangares, torre de control, edificio de operaciones, combustible y aviones estacionados de los aeropuertos
+        reales, junto a la plataforma que se vio en la foto satelital y de frente a la pista. Donde OpenStreetMap
+        trae los galpones, el hangar modelado va en su lugar y con su orientación; donde no (lejos del centro del
+        escenario no se descargan edificios), van en fila detrás de la plataforma."""
+        T = self.terrain
+        loc = self.world.location or {}
+        self._row_sites, self._osm_skip, self._occupied = set(), set(), []
+        sizes_all = ((30.0, 24.0, 8.0), (35.0, 28.0, 9.0), (45.0, 34.0, 11.0))
+        cols = [(0.94, 0.94, 0.92), (0.92, 0.93, 0.95), (0.95, 0.93, 0.88)]
+        for ap in self.aps:
+            side = getattr(ap, "site_side", 0)
+            if not side or ap.apron is None:
+                continue
+            (c, hdg, ln, wd) = ap.apron
+            c = np.asarray(c, float)
+            hr = math.radians(hdg)
+            d = np.array([math.cos(hr), math.sin(hr)])
+            out = np.array([-d[1], d[0]]) * side                 # de la plataforma hacia afuera (lejos de la pista)
+            yaw = math.atan2(-out[0], out[1])                   # el frente de los modelos (-y local) mira a la pista
+            nose = math.atan2(-out[1], -out[0])                 # aviones estacionados: la nariz hacia la pista
+            L = ap.site_rw.length
+
+            def ground(p):
+                return -max(float(T.height(p[0], p[1])), ap.elev)
+
+            def park(p):
+                self.parked.append((float(p[0]), float(p[1]), max(float(T.height(p[0], p[1])), ap.elev), nose))
+
+            def hangar(p, hl, hw, hh, hy, i, sign):
+                self.hangars.append((float(p[0]), float(p[1]), ground(p), hl, hw, hh, hy, cols[i % 3], sign))
+                self._occupied.append((p, math.hypot(hl, hw) / 2))
+            fits = self._osm_fits(ap, loc)
+            if len(fits) >= 2:
+                # galpones reales: hangares de Blender del fondo más parecido, con el portón hacia la pista; una
+                # franja larga se llena con varios, uno al lado del otro
+                fits.sort(key=lambda f: float(np.hypot(*(f[1] - c))))
+                n_h = 0
+                for (idx, p, ax, lx, wy) in fits:
+                    hl, hw, hh = min(sizes_all, key=lambda sz: abs(sz[1] - wy) + 0.3 * max(0.0, sz[0] - lx))
+                    hy = math.atan2(ax[1], ax[0])
+                    front = np.array([math.sin(hy), -math.cos(hy)])
+                    if front @ out > 0:
+                        hy += math.pi
+                        front = -front
+                    n = max(1, int((lx + 8.0) // (hl + 8.0)))
+                    for k in range(n):
+                        q = p + ax * (-lx / 2 + lx * (k + 0.5) / n)
+                        if any(math.hypot(q[0] - h_[0], q[1] - h_[1]) < 0.4 * (max(hl, hw) + max(h_[3], h_[4]))
+                               for h_ in self.hangars[len(self.hangars) - n_h:]):
+                            continue                     # se encimaría con otro ya puesto
+                        hangar(q, hl, hw, hh, hy, n_h, ap.ident if n_h == 0 else None)
+                        if n_h < 3:
+                            park(q + front * (hw / 2 + 16.0))
+                        n_h += 1
+                    self._osm_skip.add(idx)
+                towers_end = -1.0
+            else:
+                self._row_sites.add(ap.ident)
+                sizes = ([sizes_all[2], sizes_all[2], sizes_all[1]] if L >= 2400 else
+                         [sizes_all[2], sizes_all[1], sizes_all[0]] if L >= 1200 else [sizes_all[1], sizes_all[0]])
+                gap = 14.0
+                while len(sizes) > 1 and sum(sz[0] for sz in sizes) + gap * (len(sizes) - 1) > ln - 10.0:
+                    sizes.pop()
+                total = sum(sz[0] for sz in sizes) + gap * (len(sizes) - 1)
+                s = -total / 2
+                for i, (hl, hw, hh) in enumerate(sizes):
+                    hangar(c + d * (s + hl / 2) + out * (wd / 2 + 6.0 + hw / 2), hl, hw, hh, yaw, i,
+                           ap.ident if i == 0 else f"HANGAR {i + 1}")
+                    s += hl + gap
+                lat = max(0.0, wd / 2 - 16.0)
+                for k in range(min(3, int(total // 30))):
+                    park(c + d * (-total / 2 + 16.0 + 30.0 * k) + out * lat)
+                towers_end = 1.0
+            # torre, combustible y edificio de operaciones en sitios libres junto a la plataforma
+            spots = [c + d * s_ + out * (wd / 2 + o_) for o_ in (16.0, 30.0)
+                     for s_ in np.linspace(-ln / 2 - 50.0, ln / 2 + 50.0, 29)]
+
+            def take(r, sg):
+                cand = [p for p in spots if self._free(p, r)]
+                if not cand:
+                    return None
+                p = min(cand, key=lambda q: abs(float((q - c) @ d) - sg * (ln / 2 + 30.0)))
+                self._occupied.append((p, r))
+                return p
+            if L >= 1200:
+                p = take(9.0, towers_end)
+                if p is not None:
+                    self.towers.append((float(p[0]), float(p[1]), ground(p), 16.0 if L >= 2000 else 12.0))
+            if bl.load_model("combustible") is not None:
+                p = take(12.0, towers_end)
+                if p is not None:
+                    self.fuel.append((float(p[0]), float(p[1]), ground(p), yaw))
+            if bl.load_model("terminal") is not None:
+                p = take(21.0, -towers_end)
+                if p is not None:
+                    self.house_inst.append(("terminal", float(p[0]), float(p[1]), ground(p), yaw, 1.0, 1.0, 1.0, 1.0))
+
     def _sat_color(self, loc, n, e):
         """Color de la foto satelital en un punto (para que los tejados casen con la imagen)."""
         for img, rect in reversed(loc["sat"]):
@@ -329,16 +496,17 @@ class Scenery:
         T = self.terrain
         runways = [rw for ap in self.aps for rw in ap.runways]
         lights = []
-        for poly, major in loc.get("buildings", [])[:60000]:
+        skip = getattr(self, "_osm_skip", ())
+        for i, (poly, major) in enumerate(loc.get("buildings", [])[:60000]):
             poly = np.asarray(poly, np.float64)
-            if len(poly) < 3:
+            if len(poly) < 3 or i in skip:
                 continue
             cn, ce = float(poly[:, 0].mean()), float(poly[:, 1].mean())
             hsh = (int(cn * 7.13) * 73856093 ^ int(ce * 3.71) * 19349663) & 0xFFFF
             if hsh / 65535.0 < (0.25 if major else 0.5):
                 continue
             if any(abs(cn - rw.center[0]) < rw.length and abs(ce - rw.center[1]) < rw.length and rw.contains(cn, ce, 60.0)
-                   for rw in runways):
+                   for rw in runways) or self._in_site(cn, ce):
                 continue
             lights.append((cn, ce, -(T.height(cn, ce) + 4.0)))
             if len(lights) >= 30000:
@@ -352,7 +520,10 @@ class Scenery:
         RC, RA, RB, RZ, RCOL = [], [], [], [], []      # tejados (abanicos)
         lights = []
         count = 0
-        for poly, major in loc.get("buildings", [])[:40000]:
+        skip = getattr(self, "_osm_skip", ())          # galpones reemplazados por hangares modelados
+        for i, (poly, major) in enumerate(loc.get("buildings", [])[:40000]):
+            if i in skip:
+                continue
             poly = np.asarray(poly, np.float64)
             if len(poly) > 3 and abs(poly[0, 0] - poly[-1, 0]) < 1e-6 and abs(poly[0, 1] - poly[-1, 1]) < 1e-6:
                 poly = poly[:-1]
@@ -369,7 +540,7 @@ class Scenery:
                 if abs(cn - rw.center[0]) < rw.length and abs(ce - rw.center[1]) < rw.length and rw.contains(cn, ce, 40.0):
                     near_rw = True
                     break
-            if near_rw:
+            if near_rw or self._in_site(cn, ce):         # en la plataforma van los hangares y la torre modelados
                 continue
             hsh = (int(cn * 7.13) * 73856093 ^ int(ce * 3.71) * 19349663) & 0xFFFF
             r01 = hsh / 65535.0
@@ -448,6 +619,7 @@ class Scenery:
                 al = np.abs(dx * rw.dir[0] + dy * rw.dir[1])
                 la = np.abs(dx * rw.right[0] + dy * rw.right[1])
                 keep &= ~((al < rw.length / 2 + 300) & (la < rw.width / 2 + 150))
+        keep &= ~self._in_site(P[:, 0], P[:, 1], trees=True)
         P = P[keep]
         h = np.array([T.height(a, b) for a, b in P])
         X = np.column_stack([P[:, 0], P[:, 1], -h + 0.3])
@@ -614,6 +786,8 @@ class Scenery:
             n = max(2, int(ln // 60))
             for i in range(n):
                 p = c + d * (-ln / 2 + ln * (i + 0.5) / n) + r * side * (wd / 2 + 4.0)
+                if not self._free(p, 1.5):                 # no encima de un hangar o de la torre
+                    continue
                 face = math.atan2(-r[1] * side, -r[0] * side)              # la cara mira hacia la plataforma
                 g = max(float(self.terrain.height(p[0], p[1])), ap.elev)
                 out.append((float(p[0]), float(p[1]), -g, face, 18.0))

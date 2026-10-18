@@ -64,6 +64,18 @@ class Airport:
         self.taxi = taxi or []            # lista de (centro, rumbo, largo, ancho)
         self.paved_rects = ([apron] if apron else []) + self.taxi
 
+    def site_rect(self):
+        """Zona de la plataforma y los edificios detrás de ella en un aeropuerto real (centro, rumbo, largo, ancho),
+        o None: ahí se aplana el terreno y se quitan los edificios y árboles de OpenStreetMap."""
+        side = getattr(self, "site_side", 0)
+        if not side or self.apron is None:
+            return None
+        c, hdg, ln, wd = self.apron
+        hr = math.radians(hdg)
+        out = np.array([-math.sin(hr), math.cos(hr)]) * side          # hacia afuera, lejos de la pista
+        cc = np.asarray(c, float) + out * 40.0
+        return (float(cc[0]), float(cc[1])), hdg, ln + 130.0, wd + 80.0
+
     def paved(self, x, y):
         for r in self.runways:
             if r.paved and r.contains(x, y):

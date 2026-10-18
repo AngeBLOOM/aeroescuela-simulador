@@ -74,6 +74,9 @@ class Terrain:
             for ap in airports:
                 for rw in ap.runways:
                     h = self._flatten_strip(h, X, Y, rw, ap.elev)
+                site = ap.site_rect() if hasattr(ap, "site_rect") else None
+                if site is not None:                 # plataforma, hangares y torre al nivel del aeródromo
+                    h = self._flatten_rect(h, X, Y, site, ap.elev)
             self.h = h
             self.forest = np.zeros_like(h, dtype=bool)
             if sat is not None:
@@ -94,6 +97,18 @@ class Terrain:
         ea = np.clip(along - (rw.length / 2 + 120.0), 0, None)
         el = np.clip(lat - (rw.width / 2 + 60.0), 0, None)
         w = 1.0 - smoothstep(0.0, 350.0, np.sqrt(ea ** 2 + el ** 2))
+        return h * (1 - w) + elev * w
+
+    def _flatten_rect(self, h, X, Y, rect, elev):
+        """Aplana un rectángulo (centro, rumbo, largo, ancho) con una orilla suave de 250 m."""
+        (cx, cy), hdg, ln, wd = rect
+        hr = math.radians(hdg)
+        dx, dy = X - cx, Y - cy
+        along = np.abs(dx * math.cos(hr) + dy * math.sin(hr))
+        lat = np.abs(-dx * math.sin(hr) + dy * math.cos(hr))
+        ea = np.clip(along - (ln / 2 + 60.0), 0, None)
+        el = np.clip(lat - (wd / 2 + 60.0), 0, None)
+        w = 1.0 - smoothstep(0.0, 250.0, np.sqrt(ea ** 2 + el ** 2))
         return h * (1 - w) + elev * w
 
     # ------------------------------------------------------------ generación
@@ -224,7 +239,15 @@ class Terrain:
                 ea = np.clip(np.abs(dx * rw.dir[0] + dy * rw.dir[1]) - (rw.length / 2 + 200.0), 0, None)
                 el = np.clip(np.abs(dx * rw.right[0] + dy * rw.right[1]) - 220.0, 0, None)
                 amp *= smoothstep(150.0, 900.0, np.sqrt(ea ** 2 + el ** 2))
-        amp *= smoothstep(3.0, 15.0, h)                           # costas y orillas lisas
+            site = ap.site_rect() if hasattr(ap, "site_rect") else None
+            if site is not None:                         # plataforma y hangares de un aeropuerto real
+                (cx, cy), hdg, ln, wd = site
+                hr = math.radians(hdg)
+                dx, dy = X - cx, Y - cy
+                ea = np.clip(np.abs(dx * math.cos(hr) + dy * math.sin(hr)) - ln / 2, 0, None)
+                el = np.clip(np.abs(-dx * math.sin(hr) + dy * math.cos(hr)) - wd / 2, 0, None)
+                amp *= smoothstep(100.0, 500.0, np.sqrt(ea ** 2 + el ** 2))
+        amp *= smoothstep(3.0, 15.0, h)                          # costas y orillas lisas
         if self.water is not None:
             m, (rx, ry, rw_, rh) = self.water
             i = np.clip(((X - rx) / rw_ * m.shape[0]).astype(int), 0, m.shape[0] - 1)

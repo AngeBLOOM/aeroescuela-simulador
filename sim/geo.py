@@ -469,6 +469,98 @@ def navaid_from_row(n, proj, lat0, lon0):
     return vor
 
 
+def _sat_sample(layers, n, e):
+    """Color (0-1) de la foto satelital en los puntos (n, e), de la capa más fina que los cubre."""
+    out = np.zeros(n.shape + (3,), np.float32)
+    done = np.zeros(n.shape, bool)
+    for img, (n0, e0, sn, se) in reversed(layers):
+        h, w = img.shape[:2]
+        u = (e - e0) / se
+        v = (n - n0) / sn
+        ok = (~done) & (u >= 0) & (u < 1) & (v >= 0) & (v < 1)
+        out[ok] = img[(v[ok] * h).astype(int), (u[ok] * w).astype(int)] / 255.0
+        done |= ok
+    return out
+
+
+def _box_mean(m, a, b):
+    """Media de m en cada ventana de a x b celdas (la esquina de la ventana en [i, j])."""
+    c = np.cumsum(np.cumsum(np.pad(m, ((1, 0), (1, 0))), 0), 1)
+    return (c[a:, b:] - c[:-a, b:] - c[a:, :-b] + c[:-a, :-b]) / (a * b)
+
+
+def detect_apron(ap, layers, st=8.0):
+    """Plataforma de un aeropuerto real vista en la foto satelital: la franja de concreto (clara y poco saturada)
+    más grande al costado de una pista pavimentada, a menos de 750 m de su eje. Devuelve (centro, rumbo, largo,
+    ancho, lado, pista), con lado = +1 si queda a la derecha del rumbo de la pista, o None si no se ve ninguna."""
+    best = None
+    a, b = int(240 / st), int(48 / st)               # ventana de búsqueda: 240 m a lo largo, 48 m a lo ancho
+    for rw in ap.runways:
+        if not rw.paved or rw.length < 800:
+            continue
+        S = np.arange(-rw.length / 2 + 60.0, rw.length / 2 - 60.0, st)
+        L = np.arange(rw.width / 2 + 50.0, 750.0, st)
+        if len(S) <= a or len(L) <= b:
+            continue
+        for side in (-1, 1):
+            SS, LL = np.meshgrid(S, L * side, indexing="ij")
+            P = rw.center + SS[..., None] * rw.dir + LL[..., None] * rw.right
+            c = _sat_sample(layers, P[..., 0], P[..., 1])
+            m = ((c.mean(-1) > 0.52) & (c.max(-1) - c.min(-1) < 0.17)).astype(np.float32)
+            f = _box_mean(m, a, b)
+            score = f - np.arange(f.shape[1])[None, :] * st / 4000.0     # a igualdad, la más cercana a la pista
+            i, j = np.unravel_index(int(np.argmax(score)), score.shape)
+            if f[i, j] >= 0.6 and (best is None or score[i, j] > best[0]):
+                best = (float(score[i, j]), rw, side, m, S, L, i, j)
+    if best is None:
+        return None
+    _s, rw, side, m, S, L, i, j = best
+    # se estira a lo largo y a lo ancho mientras siga el concreto (hasta 420 x 90 m)
+    band = m[:, j:j + b].mean(1)
+    i0, i1 = i, i + a
+    while i0 > 0 and band[i0 - 1] >= 0.45 and (i1 - i0) * st < 420:
+        i0 -= 1
+    while i1 < len(band) and band[i1] >= 0.45 and (i1 - i0) * st < 420:
+        i1 += 1
+    row = m[i0:i1].mean(0)
+    j0, j1 = j, j + b
+    while j0 > 0 and row[j0 - 1] >= 0.5 and (j1 - j0) * st < 90:
+        j0 -= 1
+    while j1 < len(row) and row[j1] >= 0.5 and (j1 - j0) * st < 90:
+        j1 += 1
+    s0 = (S[i0] + S[i1 - 1]) / 2
+    l0 = (L[j0] + L[j1 - 1]) / 2 * side
+    c = rw.center + rw.dir * s0 + rw.right * l0
+    return (float(c[0]), float(c[1])), rw.heading, float((i1 - i0) * st), max(40.0, float((j1 - j0) * st)), side, rw
+
+
+def airfield_site(ap, layers):
+    """Plataforma de un aeropuerto real (para poner detrás sus hangares, torre y combustible): la de la foto
+    satelital o, si no se ve, una de 180 x 60 m al costado de la pista principal. Solo en pistas pavimentadas
+    de 900 m o más; deja ap.apron, ap.site_side, ap.site_rw y ap.apron_photo (la foto es tan nítida que el
+    concreto ya se ve en ella: no hace falta dibujar las losas encima)."""
+    rw = ap.runways[0]
+    if ap.apron is not None or not rw.paved or rw.length < 900:
+        return
+    det = None
+    try:
+        det = detect_apron(ap, layers)
+    except Exception as ex:
+        print("No se pudo buscar la plataforma en la foto:", ex)
+    if det is None:
+        c = rw.center - rw.dir * rw.length / 4 + rw.right * (rw.width / 2 + 140.0)
+        det = (float(c[0]), float(c[1])), rw.heading, 180.0, 60.0, 1, rw
+    c, hdg, ln, wd, side, srw = det
+    ap.apron = (c, hdg, ln, wd)
+    ap.paved_rects = [ap.apron] + ap.taxi
+    ap.site_side, ap.site_rw = side, srw
+    ap.apron_photo = False
+    for img, (n0, e0, sn, se) in reversed(layers):
+        if 0 <= (c[0] - n0) / sn < 1 and 0 <= (c[1] - e0) / se < 1:
+            ap.apron_photo = sn / img.shape[0] < 3.0
+            break
+
+
 def build_location(code, data_dir, progress=None, db=None, center=None):
     """Prepara todo lo necesario para volar en un aeropuerto real.
 
@@ -556,6 +648,7 @@ def build_location(code, data_dir, progress=None, db=None, center=None):
         elev = dem_e if abs(dem_e - elev) < 120 else elev
         ap = Airport(b["ident"].upper(), b["name"], (nn, ee), elev, rws)
         ap.real = True
+        airfield_site(ap, layers)                    # plataforma (foto satelital) para sus hangares y torre
         airports.append(ap)
     if not airports and center is not None:
         # tramo de ruta sin aeródromos: el más cercano (hasta 90 km) sirve de referencia de radio, fuera del paisaje
