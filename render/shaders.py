@@ -220,6 +220,9 @@ uniform sampler2D u_sat2;
 uniform vec4 u_rect0;
 uniform vec4 u_rect1;
 uniform vec4 u_rect2;
+uniform int u_sat3_on;
+uniform sampler2D u_sat3;
+uniform vec4 u_rect3;
 uniform int u_water_on;
 uniform sampler2D u_water;
 uniform vec4 u_wrect;
@@ -287,6 +290,13 @@ void main() {
         float w2 = smoothstep(0.0, 0.08, min(min(uv2.x, 1.0 - uv2.x), min(uv2.y, 1.0 - uv2.y)));
         if (w2 > 0.0)
             c = mix(c, textureGrad(u_sat2, uv2, rect_d(dx, u_rect2), rect_d(dy, u_rect2)).rgb, w2);
+        if (u_sat3_on == 1) {
+            // foto nítida de otro aeródromo del escenario (lejos del centro la general es de 12 m/px)
+            vec2 uv3 = vec2((v_pos.y - u_rect3.y) / u_rect3.w, (v_pos.x - u_rect3.x) / u_rect3.z);
+            float w3 = smoothstep(0.0, 0.1, min(min(uv3.x, 1.0 - uv3.x), min(uv3.y, 1.0 - uv3.y)));
+            if (w3 > 0.0)
+                c = mix(c, textureGrad(u_sat3, uv3, rect_d(dx, u_rect3), rect_d(dy, u_rect3)).rgb, w3);
+        }
         c = pow(c, vec3(1.08)) * (0.93 + 0.14 * nd);
         lit = c * (u_amb * 1.25 + u_sun_col * (0.32 + 0.45 * diff) * mix(0.3, 1.0, shf));
         alb = c;

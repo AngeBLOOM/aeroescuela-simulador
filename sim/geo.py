@@ -568,6 +568,38 @@ def airfield_site(ap, layers):
             break
 
 
+AP_LAYER = (3000.0, 2048)          # foto nítida de otro aeródromo del escenario: ±3 km en 2048 px (2,9 m/px)
+
+
+def airport_layer(ap, data_dir, proj, key, progress=None):
+    """Capa satelital nítida centrada en la pista principal de un aeródromo lejos del centro del escenario (allí la
+    foto general es de 12 m/px): (imagen, rect) o None si no se pudo descargar."""
+    R, size = AP_LAYER
+    cn, ce = (round(float(v) / 100.0) * 100.0 for v in ap.runways[0].center)
+    cache = os.path.join(_cache_dir(data_dir), f"satap_{key}_{ap.ident}.npz")
+    rect = (cn - R, ce - R, 2 * R, 2 * R)
+    try:
+        if os.path.exists(cache):
+            with np.load(cache) as z:
+                return z["img"], tuple(float(v) for v in z["rect"])
+        if progress:
+            progress(f"Descargando la foto de {ap.ident}…", 0.95)
+        lat_c, lon_c = proj.to_geo(np.array([cn]), np.array([ce]))
+        lat_c, lon_c = float(lat_c[0]), float(lon_c[0])
+        la = (lat_c - R / proj.k_lat * 1.02, lat_c + R / proj.k_lat * 1.02)
+        lo = (lon_c - R / proj.k_lon * 1.02, lon_c + R / proj.k_lon * 1.02)
+        zz = _zoom_for(2 * R / size, lat_c)
+        tf = TileFetcher(data_dir, progress)
+        tf.total = TileFetcher.count(zz, la, lo)
+        mos, x0, y0 = tf.mosaic("img", zz, la, lo)
+        img = resample(mos, x0, y0, zz, proj, cn - R, cn + R, ce - R, ce + R, size).astype(np.uint8)
+        np.savez_compressed(cache, img=img, rect=np.array(rect))
+        return img, rect
+    except Exception as ex:
+        print("Sin foto nítida de", ap.ident, ex)
+        return None
+
+
 def build_location(code, data_dir, progress=None, db=None, center=None):
     """Prepara todo lo necesario para volar en un aeropuerto real.
 
@@ -655,7 +687,6 @@ def build_location(code, data_dir, progress=None, db=None, center=None):
         elev = dem_e if abs(dem_e - elev) < 120 else elev
         ap = Airport(b["ident"].upper(), b["name"], (nn, ee), elev, rws)
         ap.real = True
-        airfield_site(ap, layers)                    # plataforma (foto satelital) para sus hangares y torre
         airports.append(ap)
     if not airports and center is not None:
         # tramo de ruta sin aeródromos: el más cercano (hasta 90 km) sirve de referencia de radio, fuera del paisaje
@@ -690,6 +721,18 @@ def build_location(code, data_dir, progress=None, db=None, center=None):
     if a is None:
         a = db.get(airports[0].ident)
         ident = airports[0].ident
+    # foto nítida del aeródromo más importante fuera de la capa de 1,2 m/px del centro (el destino típico)
+    sat_ap = []
+    far = [ap for ap in airports if not getattr(ap, "offscene", False)
+           and max(abs(ap.runways[0].center[0]), abs(ap.runways[0].center[1])) > SAT_LAYERS[2][0] - 400.0
+           and ap.runways[0].paved and ap.runways[0].length >= 900]
+    if far:
+        lay = airport_layer(max(far, key=lambda a_: a_.runways[0].length), data_dir, proj, key, progress)
+        if lay is not None:
+            sat_ap.append(lay)
+    for ap in airports:
+        if not getattr(ap, "offscene", False):
+            airfield_site(ap, layers + sat_ap)       # plataforma (foto satelital) para sus hangares y torre
     # ILS sintéticos (las frecuencias reales no están en la base pública)
     freqs = iter([110.30, 108.90, 109.50, 111.10, 110.70, 109.10, 111.50, 108.50, 110.10, 109.70, 111.90, 108.30])
     for ap in airports[:3]:
@@ -743,7 +786,7 @@ def build_location(code, data_dir, progress=None, db=None, center=None):
     return dict(name=name, ident=ident, key=key, route=center is not None, lat0=lat0, lon0=lon0,
                 magvar=local_variation(db.navaids, lat0, lon0), country=a.get("iso_country", ""), freqs=freqs,
                 municipality=a.get("municipality", ""), airports=airports, navaids=navaids,
-                heights=heights.astype(np.float64), sat=layers, proj=proj, buildings=buildings, forests=forests,
+                heights=heights.astype(np.float64), sat=layers, sat_ap=sat_ap, proj=proj, buildings=buildings, forests=forests,
                 water=water)
 
 

@@ -195,6 +195,7 @@ class Renderer:
         self.scn = Scenery(world)
         self.m_terrain = GPUMesh(ctx, self.p_terrain, self.scn.terrain_vertices, index=self.scn.terrain_indices)
         self.sat = []
+        self.sat_ap = None
         loc = getattr(world, "location", None)
         if loc is not None:
             self._progress("Cargando fotografía satelital…")
@@ -205,6 +206,13 @@ class Renderer:
                 t.anisotropy = 16.0
                 t.repeat_x = t.repeat_y = False
                 self.sat.append((t, tuple(float(v) for v in rect)))
+            for img, rect in loc.get("sat_ap", [])[:1]:     # foto nítida del otro aeródromo
+                img = np.ascontiguousarray(img, dtype=np.uint8)
+                t = ctx.texture((img.shape[1], img.shape[0]), 3, img.tobytes())
+                t.build_mipmaps()
+                t.anisotropy = 16.0
+                t.repeat_x = t.repeat_y = False
+                self.sat_ap = (t, tuple(float(v) for v in rect))
             self.t_lake = None
             if loc.get("water") is not None:
                 m, rect = loc["water"]
@@ -2022,6 +2030,12 @@ void main() { f_color = texture(u_tex, v_uv); }
                 tex.use(3 + i)
                 pt[f"u_sat{i}"] = 3 + i
                 pt[f"u_rect{i}"].value = rect
+            if "u_sat3_on" in pt:
+                pt["u_sat3_on"].value = 1 if self.sat_ap is not None else 0
+                if self.sat_ap is not None:
+                    self.sat_ap[0].use(12)
+                    pt["u_sat3"] = 12
+                    pt["u_rect3"].value = self.sat_ap[1]
         elif "u_sat_on" in pt:
             pt["u_sat_on"].value = 0
         ll = self._landing_light(env)

@@ -507,7 +507,7 @@ class Scenery:
 
     def _sat_color(self, loc, n, e):
         """Color de la foto satelital en un punto (para que los tejados casen con la imagen)."""
-        for img, rect in reversed(loc["sat"]):
+        for img, rect in list(loc.get("sat_ap", [])) + list(reversed(loc["sat"])):
             n0, e0, sn, se = rect
             u = (e - e0) / se
             v = (n - n0) / sn
