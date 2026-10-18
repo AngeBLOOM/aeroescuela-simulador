@@ -643,7 +643,18 @@ class Scenery:
                 dx, dy = P[:, 0] - rw.center[0], P[:, 1] - rw.center[1]
                 al = np.abs(dx * rw.dir[0] + dy * rw.dir[1])
                 la = np.abs(dx * rw.right[0] + dy * rw.right[1])
-                keep &= ~((al < rw.length / 2 + 300) & (la < rw.width / 2 + 150))
+                # franja despejada a los lados de la pista (sin árboles que tapen la vista del aeródromo)
+                keep &= ~((al < rw.length / 2 + 300) & (la < rw.width / 2 + 280))
+            side = getattr(ap, "site_side", 0)
+            if side and ap.apron is not None:             # todo el campo entre la pista y la plataforma: pasto
+                rw = ap.site_rw
+                (c, _h, ln, wd) = ap.apron
+                rel_c = np.asarray(c, float) - rw.center
+                cl = float(rel_c @ rw.right)
+                dx, dy = P[:, 0] - rw.center[0], P[:, 1] - rw.center[1]
+                al = dx * rw.dir[0] + dy * rw.dir[1]
+                la = (dx * rw.right[0] + dy * rw.right[1]) * side
+                keep &= ~((np.abs(al) < rw.length / 2 + 300) & (la > 0) & (la < abs(cl) + wd / 2 + 120))
         keep &= ~self._in_site(P[:, 0], P[:, 1])
         P = P[keep]
         h = np.array([T.height(a, b) for a, b in P])
