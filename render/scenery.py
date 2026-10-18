@@ -543,6 +543,7 @@ class Scenery:
         runways = [rw for ap in self.aps for rw in ap.runways]
         A, B, G, HT, STY, WC = [], [], [], [], [], []   # paredes (por arista)
         RC, RA, RB, RZ, RCOL = [], [], [], [], []      # tejados (abanicos)
+        GP, GS, GY, GW, GR, GST = [], [], [], [], [], []  # casas con techo a dos aguas
         lights = []
         count = 0
         skip = getattr(self, "_osm_skip", ())          # galpones reemplazados por hangares modelados
@@ -581,11 +582,28 @@ class Scenery:
             roof = self._sat_color(loc, cn, ce) * 0.95
             wall = np.clip(roof * 0.5 + np.array([0.48, 0.46, 0.43]) * (0.75 + 0.3 * r01), 0, 1)
             b = np.roll(poly, -1, axis=0)
+            kind = (bl.TOWER if r01 > 0.5 else bl.BLOCK) if major else (bl.BLOCK if (area > 700 or ht > 9) else bl.HOUSE)
+            if kind == bl.HOUSE and k == 4 and 30.0 <= area <= 320.0 and (roof[0] > roof[1] + 0.03 or (hsh >> 5) % 100 < 55):
+                # casa rectangular con techo a dos aguas (teja o zinc, del color de la foto); las demás, de platabanda
+                e = b - poly
+                el = np.hypot(e[:, 0], e[:, 1])
+                lx, wy = (el[0] + el[2]) / 2, (el[1] + el[3]) / 2
+                if lx * wy > 0 and area / (lx * wy) > 0.85:
+                    ax = 0 if lx >= wy else 1
+                    GP.append((cn, ce, -g))
+                    GS.append((max(lx, wy), min(lx, wy), min(ht, 6.0) / 0.72))
+                    GY.append(math.atan2(e[ax, 1], e[ax, 0]))
+                    GW.append(wall)
+                    GR.append(roof * 0.92)
+                    GST.append(kind + 0.1 + 0.8 * ((hsh >> 3) % 97) / 97.0)
+                    count += 1
+                    if r01 > 0.55:
+                        lights.append((cn, ce, -(g + ht) - 0.5))
+                    continue
             A.append(poly)
             B.append(b)
             G.append(np.full(k, g))
             HT.append(np.full(k, ht))
-            kind = (bl.TOWER if r01 > 0.5 else bl.BLOCK) if major else (bl.BLOCK if (area > 700 or ht > 9) else bl.HOUSE)
             STY.append(np.full(k, kind + 0.1 + 0.8 * ((hsh >> 3) % 97) / 97.0))
             WC.append(np.repeat(wall[None], k, axis=0))
             RC.append(np.repeat(np.array([[cn, ce]]), k, axis=0))
@@ -600,10 +618,16 @@ class Scenery:
         if not count:
             return
         # paredes con fachada (ventanas por piso, vidrieras abajo) y techos planos
-        self._bparts.append(bl.facade_walls(np.vstack(A), np.vstack(B), np.concatenate(G), np.full(sum(map(len, A)), -1.0),
-                                            np.concatenate(HT), np.vstack(WC), np.concatenate(STY)))
-        self._bparts.append(bl.fan_roofs(np.vstack(RC), np.vstack(RA), np.vstack(RB), np.concatenate(RZ), np.vstack(RCOL)))
-        print(f"  edificios 3D: {count}")
+        if A:
+            self._bparts.append(bl.facade_walls(np.vstack(A), np.vstack(B), np.concatenate(G),
+                                                np.full(sum(map(len, A)), -1.0), np.concatenate(HT), np.vstack(WC),
+                                                np.concatenate(STY)))
+            self._bparts.append(bl.fan_roofs(np.vstack(RC), np.vstack(RA), np.vstack(RB), np.concatenate(RZ),
+                                             np.vstack(RCOL)))
+        if GP:
+            self._bparts.append(bl.box_buildings(np.array(GP), np.array(GS), np.array(GY), np.array(GW), np.array(GR),
+                                                 np.array(GST), gable_frac=0.28))
+        print(f"  edificios 3D: {count} ({len(GP)} con techo a dos aguas)")
 
     def _real_trees(self, mb, loc):
         T = self.terrain
