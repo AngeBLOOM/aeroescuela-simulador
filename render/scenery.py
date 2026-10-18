@@ -34,6 +34,7 @@ def _dist_poly(p, pts):
 
 
 class Scenery:
+    MAX_BUILDINGS = 28000                                # edificios 3D reales (los más cercanos al centro y a los aeródromos)
     def __init__(self, world, rng_seed=21):
         self.world = world
         # aeródromos dentro del paisaje (en un tramo de ruta, el de referencia puede quedar fuera y no se dibuja)
@@ -317,14 +318,12 @@ class Scenery:
         return mb.array()
 
     # ---------------------------------------------------------------- mundo real
-    def _in_site(self, x, y, trees=False):
-        """¿El punto (o los puntos) cae en la fila de edificios generada de un aeropuerto real? Ahí no se dibujan los
-        edificios de OpenStreetMap. Con trees=True, toda la zona de la plataforma (donde tampoco crecen árboles)."""
+    def _in_site(self, x, y):
+        """¿El punto (o los puntos) cae en la plataforma o en la zona de edificios de un aeropuerto real? (ahí no
+        se plantan árboles)."""
         x, y = np.asarray(x, float), np.asarray(y, float)
         out = np.zeros(np.broadcast(x, y).shape, bool)
         for ap in self.aps:
-            if not trees and ap.ident not in getattr(self, "_row_sites", ()):
-                continue
             site = ap.site_rect() if hasattr(ap, "site_rect") else None
             if site is None:
                 continue
@@ -337,17 +336,15 @@ class Scenery:
 
     def _free(self, p, r):
         """¿Hay r metros libres alrededor de p (sin edificios de OpenStreetMap ni modelos ya puestos)?"""
-        return all(math.hypot(p[0] - q[0], p[1] - q[1]) >= r + rq for q, rq in self._occupied)
+        return all(math.hypot(p[0] - q[0], p[1] - q[1]) >= r + rq for q, rq, _i in self._occupied)
 
     def _osm_fits(self, ap, loc):
-        """Galpones de OpenStreetMap en la zona de la plataforma (contornos casi rectangulares de 250 a 20000 m² y
-        hasta 60 m de fondo; a veces una sola franja cubre toda la fila de hangares):
-        [(índice, centro, eje x a lo largo de la pista, largo, ancho)]. También anota los edificios de la zona como
-        ocupados, para no poner encima la torre ni el combustible."""
-        (cx, cy), hdg, sl, sw = ap.site_rect()
-        hr = math.radians(hdg)
-        d = np.array([math.cos(hr), math.sin(hr)])
-        r = np.array([-d[1], d[0]])
+        """Galpones de OpenStreetMap junto a las pistas (hasta 320 m del eje) o en la zona de la plataforma: contornos
+        casi rectangulares de 250 a 20000 m², de 16 a 60 m de fondo (a veces una sola franja cubre toda una fila de
+        hangares) → [(índice, centro, eje x a lo largo de la pista, largo, ancho)]. Anota además los edificios
+        cercanos como ocupados, para no poner encima la torre, el combustible ni otros hangares."""
+        site = ap.site_rect() if hasattr(ap, "site_rect") else None
+        rws = [rw for rw in ap.runways if rw.paved]
         res = []
         for idx, (poly, _major) in enumerate(loc.get("buildings", [])):
             poly = np.asarray(poly, np.float64)
@@ -356,13 +353,29 @@ class Scenery:
             if len(poly) < 3:
                 continue
             m = poly.mean(0)
-            rel = m - (cx, cy)
-            if abs(rel @ d) > sl / 2 + 60 or abs(rel @ r) > sw / 2 + 60:
+            if abs(m[0] - ap.ref[0]) > 4000 or abs(m[1] - ap.ref[1]) > 4000:
+                continue
+            near = None                                  # pista junto a la que está (o la de la plataforma)
+            for rw in rws:
+                rel = m - rw.center
+                if abs(rel @ rw.dir) < rw.length / 2 + 200 and rw.width / 2 + 60 < abs(rel @ rw.right) < 320:
+                    near = rw
+                    break
+            in_site = False
+            if site is not None:
+                (cx, cy), hdg, sl, sw = site
+                hr = math.radians(hdg)
+                rel = m - (cx, cy)
+                in_site = (abs(rel[0] * math.cos(hr) + rel[1] * math.sin(hr)) < sl / 2 + 60 and
+                           abs(-rel[0] * math.sin(hr) + rel[1] * math.cos(hr)) < sw / 2 + 60)
+                if in_site and near is None:
+                    near = ap.site_rw
+            if near is None:
                 continue
             x, y = poly[:, 0], poly[:, 1]
             area = 0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
-            self._occupied.append((m, min(25.0, math.sqrt(area) / 2)))
-            if abs(rel @ d) > sl / 2 or abs(rel @ r) > sw / 2 or len(poly) < 4 or not 250 <= area <= 20000:
+            self._occupied.append((m, min(25.0, math.sqrt(area) / 2), idx))
+            if len(poly) < 4 or not 250 <= area <= 20000:
                 continue
             best = None                                  # rectángulo mínimo que lo encierra
             for ang in np.radians(np.arange(0.0, 90.0, 2.0)):
@@ -377,23 +390,70 @@ class Scenery:
                 continue
             ctr = u * (pu.max() + pu.min()) / 2 + v * (pv.max() + pv.min()) / 2
             eu, ev = float(np.ptp(pu)), float(np.ptp(pv))
+            d = near.dir
             ax, lx, wy = (u, eu, ev) if abs(u @ d) >= abs(v @ d) else (v, ev, eu)
-            if min(lx, wy) >= 12.0 and wy <= 60.0:
-                res.append((idx, ctr, ax, lx, wy))
+            if lx >= 16.0 and 16.0 <= wy <= 60.0:
+                res.append((idx, ctr, ax, lx, wy, near))
         return res
 
     def _real_airfield(self):
         """Hangares, torre de control, edificio de operaciones, combustible y aviones estacionados de los aeropuertos
-        reales, junto a la plataforma que se vio en la foto satelital y de frente a la pista. Donde OpenStreetMap
-        trae los galpones, el hangar modelado va en su lugar y con su orientación; donde no (lejos del centro del
-        escenario no se descargan edificios), van en fila detrás de la plataforma."""
+        reales, de frente a la pista. Los galpones que OpenStreetMap trae junto a las pistas se cambian por hangares
+        modelados en su lugar y con su orientación; si son pocos, se completa con una fila detrás de la plataforma que
+        se vio en la foto satelital (sin pisar los edificios reales)."""
         T = self.terrain
         loc = self.world.location or {}
-        self._row_sites, self._osm_skip, self._occupied = set(), set(), []
+        self._osm_skip, self._occupied = set(), []
         sizes_all = ((30.0, 24.0, 8.0), (35.0, 28.0, 9.0), (45.0, 34.0, 11.0))
         cols = [(0.94, 0.94, 0.92), (0.92, 0.93, 0.95), (0.95, 0.93, 0.88)]
         for ap in self.aps:
+            rw0 = ap.runways[0]
+            if not rw0.paved or rw0.length < 900:
+                continue
             side = getattr(ap, "site_side", 0)
+            n0 = len(self.hangars)
+
+            def ground(p):
+                return -max(float(T.height(p[0], p[1])), ap.elev)
+
+            def park(p, nose):
+                self.parked.append((float(p[0]), float(p[1]), max(float(T.height(p[0], p[1])), ap.elev), nose))
+
+            def overlaps(q, hl, hw):
+                return any(math.hypot(q[0] - h_[0], q[1] - h_[1]) < 0.45 * (max(hl, hw) + max(h_[3], h_[4]))
+                           for h_ in self.hangars[n0:])
+
+            def hangar(p, hl, hw, hh, hy, sign):
+                i = len(self.hangars) - n0
+                self.hangars.append((float(p[0]), float(p[1]), ground(p), hl, hw, hh, hy, cols[i % 3], sign))
+                # los edificios de OpenStreetMap que quedan debajo ya no se dibujan
+                c_, s_ = math.cos(hy), math.sin(hy)
+                for q, _r, idx in self._occupied:
+                    rel = np.asarray(q) - p
+                    if abs(rel[0] * c_ + rel[1] * s_) < hl / 2 + 3 and abs(-rel[0] * s_ + rel[1] * c_) < hw / 2 + 3:
+                        if idx is not None:
+                            self._osm_skip.add(idx)
+                self._occupied.append((p, math.hypot(hl, hw) / 2, None))
+            # galpones reales junto a las pistas: el hangar de Blender de fondo más parecido, con el portón hacia la
+            # pista; una franja larga se llena con varios, uno al lado del otro
+            fits = self._osm_fits(ap, loc)
+            fits.sort(key=lambda f: -f[3] * f[4])
+            for (idx, p, ax, lx, wy, rw) in fits:
+                hl, hw, hh = min(sizes_all, key=lambda sz: abs(sz[1] - wy) + 0.3 * max(0.0, sz[0] - lx))
+                hy = math.atan2(ax[1], ax[0])
+                front = np.array([math.sin(hy), -math.cos(hy)])
+                if front @ (rw.center - p) < 0:
+                    hy += math.pi
+                    front = -front
+                n = max(1, int((lx + 8.0) // (hl + 8.0)))
+                for k in range(n):
+                    q = p + ax * (-lx / 2 + lx * (k + 0.5) / n)
+                    if overlaps(q, hl, hw):
+                        continue
+                    hangar(q, hl, hw, hh, hy, None)
+                    if len(self.hangars) - n0 <= 4:
+                        park(q + front * (hw / 2 + 16.0), math.atan2(front[1], front[0]))
+                self._osm_skip.add(idx)
             if not side or ap.apron is None:
                 continue
             (c, hdg, ln, wd) = ap.apron
@@ -404,43 +464,8 @@ class Scenery:
             yaw = math.atan2(-out[0], out[1])                   # el frente de los modelos (-y local) mira a la pista
             nose = math.atan2(-out[1], -out[0])                 # aviones estacionados: la nariz hacia la pista
             L = ap.site_rw.length
-
-            def ground(p):
-                return -max(float(T.height(p[0], p[1])), ap.elev)
-
-            def park(p):
-                self.parked.append((float(p[0]), float(p[1]), max(float(T.height(p[0], p[1])), ap.elev), nose))
-
-            def hangar(p, hl, hw, hh, hy, i, sign):
-                self.hangars.append((float(p[0]), float(p[1]), ground(p), hl, hw, hh, hy, cols[i % 3], sign))
-                self._occupied.append((p, math.hypot(hl, hw) / 2))
-            fits = self._osm_fits(ap, loc)
-            if len(fits) >= 2:
-                # galpones reales: hangares de Blender del fondo más parecido, con el portón hacia la pista; una
-                # franja larga se llena con varios, uno al lado del otro
-                fits.sort(key=lambda f: float(np.hypot(*(f[1] - c))))
-                n_h = 0
-                for (idx, p, ax, lx, wy) in fits:
-                    hl, hw, hh = min(sizes_all, key=lambda sz: abs(sz[1] - wy) + 0.3 * max(0.0, sz[0] - lx))
-                    hy = math.atan2(ax[1], ax[0])
-                    front = np.array([math.sin(hy), -math.cos(hy)])
-                    if front @ out > 0:
-                        hy += math.pi
-                        front = -front
-                    n = max(1, int((lx + 8.0) // (hl + 8.0)))
-                    for k in range(n):
-                        q = p + ax * (-lx / 2 + lx * (k + 0.5) / n)
-                        if any(math.hypot(q[0] - h_[0], q[1] - h_[1]) < 0.4 * (max(hl, hw) + max(h_[3], h_[4]))
-                               for h_ in self.hangars[len(self.hangars) - n_h:]):
-                            continue                     # se encimaría con otro ya puesto
-                        hangar(q, hl, hw, hh, hy, n_h, ap.ident if n_h == 0 else None)
-                        if n_h < 3:
-                            park(q + front * (hw / 2 + 16.0))
-                        n_h += 1
-                    self._osm_skip.add(idx)
-                towers_end = -1.0
-            else:
-                self._row_sites.add(ap.ident)
+            if len(self.hangars) - n0 < 3:
+                # pocos galpones en el mapa: fila de hangares detrás de la plataforma, donde haya lugar
                 sizes = ([sizes_all[2], sizes_all[2], sizes_all[1]] if L >= 2400 else
                          [sizes_all[2], sizes_all[1], sizes_all[0]] if L >= 1200 else [sizes_all[1], sizes_all[0]])
                 gap = 14.0
@@ -448,16 +473,16 @@ class Scenery:
                     sizes.pop()
                 total = sum(sz[0] for sz in sizes) + gap * (len(sizes) - 1)
                 s = -total / 2
-                for i, (hl, hw, hh) in enumerate(sizes):
-                    hangar(c + d * (s + hl / 2) + out * (wd / 2 + 6.0 + hw / 2), hl, hw, hh, yaw, i,
-                           ap.ident if i == 0 else f"HANGAR {i + 1}")
+                for (hl, hw, hh) in sizes:
+                    q = c + d * (s + hl / 2) + out * (wd / 2 + 6.0 + hw / 2)
                     s += hl + gap
-                lat = max(0.0, wd / 2 - 16.0)
-                for k in range(min(3, int(total // 30))):
-                    park(c + d * (-total / 2 + 16.0 + 30.0 * k) + out * lat)
-                towers_end = 1.0
+                    if overlaps(q, hl, hw):
+                        continue
+                    first = len(self.hangars) == n0
+                    hangar(q, hl, hw, hh, yaw, ap.ident if first else f"HANGAR {len(self.hangars) - n0 + 1}")
+                    park(q - out * (hw / 2 + 18.0), nose)
             # torre, combustible y edificio de operaciones en sitios libres junto a la plataforma
-            spots = [c + d * s_ + out * (wd / 2 + o_) for o_ in (16.0, 30.0)
+            spots = [c + d * s_ + out * (wd / 2 + o_) for o_ in (16.0, 30.0, 48.0)
                      for s_ in np.linspace(-ln / 2 - 50.0, ln / 2 + 50.0, 29)]
 
             def take(r, sg):
@@ -465,18 +490,18 @@ class Scenery:
                 if not cand:
                     return None
                 p = min(cand, key=lambda q: abs(float((q - c) @ d) - sg * (ln / 2 + 30.0)))
-                self._occupied.append((p, r))
+                self._occupied.append((p, r, None))
                 return p
             if L >= 1200:
-                p = take(9.0, towers_end)
+                p = take(9.0, 1.0)
                 if p is not None:
                     self.towers.append((float(p[0]), float(p[1]), ground(p), 16.0 if L >= 2000 else 12.0))
             if bl.load_model("combustible") is not None:
-                p = take(12.0, towers_end)
+                p = take(12.0, 1.0)
                 if p is not None:
                     self.fuel.append((float(p[0]), float(p[1]), ground(p), yaw))
             if bl.load_model("terminal") is not None:
-                p = take(21.0, -towers_end)
+                p = take(21.0, -1.0)
                 if p is not None:
                     self.house_inst.append(("terminal", float(p[0]), float(p[1]), ground(p), yaw, 1.0, 1.0, 1.0, 1.0))
 
@@ -506,7 +531,7 @@ class Scenery:
             if hsh / 65535.0 < (0.25 if major else 0.5):
                 continue
             if any(abs(cn - rw.center[0]) < rw.length and abs(ce - rw.center[1]) < rw.length and rw.contains(cn, ce, 60.0)
-                   for rw in runways) or self._in_site(cn, ce):
+                   for rw in runways):
                 continue
             lights.append((cn, ce, -(T.height(cn, ce) + 4.0)))
             if len(lights) >= 30000:
@@ -521,7 +546,7 @@ class Scenery:
         lights = []
         count = 0
         skip = getattr(self, "_osm_skip", ())          # galpones reemplazados por hangares modelados
-        for i, (poly, major) in enumerate(loc.get("buildings", [])[:40000]):
+        for i, (poly, major) in enumerate(loc.get("buildings", [])[:self.MAX_BUILDINGS]):
             if i in skip:
                 continue
             poly = np.asarray(poly, np.float64)
@@ -540,7 +565,7 @@ class Scenery:
                 if abs(cn - rw.center[0]) < rw.length and abs(ce - rw.center[1]) < rw.length and rw.contains(cn, ce, 40.0):
                     near_rw = True
                     break
-            if near_rw or self._in_site(cn, ce):         # en la plataforma van los hangares y la torre modelados
+            if near_rw:
                 continue
             hsh = (int(cn * 7.13) * 73856093 ^ int(ce * 3.71) * 19349663) & 0xFFFF
             r01 = hsh / 65535.0
@@ -619,7 +644,7 @@ class Scenery:
                 al = np.abs(dx * rw.dir[0] + dy * rw.dir[1])
                 la = np.abs(dx * rw.right[0] + dy * rw.right[1])
                 keep &= ~((al < rw.length / 2 + 300) & (la < rw.width / 2 + 150))
-        keep &= ~self._in_site(P[:, 0], P[:, 1], trees=True)
+        keep &= ~self._in_site(P[:, 0], P[:, 1])
         P = P[keep]
         h = np.array([T.height(a, b) for a, b in P])
         X = np.column_stack([P[:, 0], P[:, 1], -h + 0.3])

@@ -346,20 +346,27 @@ def fetch_water(data_dir, proj, progress=None, r=HALF, z=13):
 
 
 # ======================================================================= edificios y bosques
-def fetch_features(data_dir, proj, progress=None, r_build=3800.0, r_forest=8000.0):
-    """Contornos de edificios y bosques (OpenStreetMap vía mosaicos vectoriales de Esri)."""
+def fetch_features(data_dir, proj, progress=None, r_build=3800.0, r_forest=8000.0, extra=(), r_extra=2600.0):
+    """Contornos de edificios y bosques (OpenStreetMap vía mosaicos vectoriales de Esri): alrededor del centro del
+    escenario y, con extra = [(norte, este)], también alrededor de los demás aeródromos (sus hangares y edificios)."""
     import json
     from . import mvt
     d = os.path.join(_cache_dir(data_dir), "vt")
     lat0, lon0 = proj.lat0, proj.lon0
 
-    def tiles(z, r):
-        la = (lat0 - r / proj.k_lat, lat0 + r / proj.k_lat)
-        lo = (lon0 - r / proj.k_lon, lon0 + r / proj.k_lon)
+    def tiles(z, r, n=0.0, e=0.0):
+        la0, lo0 = lat0 + n / proj.k_lat, lon0 + e / proj.k_lon
+        la = (la0 - r / proj.k_lat, la0 + r / proj.k_lat)
+        lo = (lo0 - r / proj.k_lon, lo0 + r / proj.k_lon)
         x0, y0 = merc_px(la[1], lo[0], z)
         x1, y1 = merc_px(la[0], lo[1], z)
         return [(z, x, y) for y in range(int(y0 // 256), int(y1 // 256) + 1) for x in range(int(x0 // 256), int(x1 // 256) + 1)]
-    jobs = [(t, "b") for t in tiles(15, r_build)] + [(t, "f") for t in tiles(14, r_forest)]
+    tb = set(tiles(15, r_build))
+    tf = set(tiles(14, r_forest))
+    for (n, e) in extra:
+        tb |= set(tiles(15, r_extra, n, e))
+        tf |= set(tiles(14, r_extra, n, e))
+    jobs = [(t, "b") for t in sorted(tb)] + [(t, "f") for t in sorted(tf)]
 
     def get(job):
         (z, x, y), kind = job
@@ -699,17 +706,24 @@ def build_location(code, data_dir, progress=None, db=None, center=None):
         if nv is not None:
             navaids.append(nv)
     # edificios y bosques reales (si el servicio no responde, el escenario sigue sin ellos)
-    feat_cache = os.path.join(_cache_dir(data_dir), f"feat_{key}.npz")
+    feat_cache = os.path.join(_cache_dir(data_dir), f"feat2_{key}.npz")   # 2: también junto a cada aeródromo
     buildings, forests = [], []
     try:
         if os.path.exists(feat_cache):
             z = np.load(feat_cache, allow_pickle=True)
             buildings, forests = list(z["b"]), list(z["f"])
         else:
-            buildings, forests = fetch_features(data_dir, proj, progress)
+            extra = [tuple(ap.ref) for ap in airports if not getattr(ap, "offscene", False)
+                     and float(np.hypot(*ap.ref)) > 2500.0]
+            buildings, forests = fetch_features(data_dir, proj, progress, extra=extra)
             np.savez_compressed(feat_cache, b=np.array(buildings, dtype=object), f=np.array(forests, dtype=object))
     except Exception as ex:
         print("Sin edificios/bosques:", ex)
+    if buildings:                                    # los más cercanos al centro o a un aeródromo, primero
+        anchors = np.array([(0.0, 0.0)] + [tuple(ap.ref) for ap in airports if not getattr(ap, "offscene", False)])
+        cen = np.array([np.asarray(p_, np.float64).mean(0) for p_, _m in buildings])
+        dist = np.min(np.hypot(cen[:, None, 0] - anchors[None, :, 0], cen[:, None, 1] - anchors[None, :, 1]), axis=1)
+        buildings = [buildings[i] for i in np.argsort(dist, kind="stable")]
     water = None
     w_cache = os.path.join(_cache_dir(data_dir), f"agua_{key}.npz")
     try:
