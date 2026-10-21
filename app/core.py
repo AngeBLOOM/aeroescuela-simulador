@@ -275,6 +275,8 @@ class App(ScreensMixin):
         self.renderer.set_quality(scale, samples)
         # efectos de imagen y sombra fina salvo en «rendimiento» (tarjetas muy modestas)
         self.renderer.set_effects(q != "rendimiento", 2048 if q == "alta" else 1024)
+        # distancia hasta la que se dibujan los edificios reales (más allá la bruma y la foto bastan)
+        self.renderer.bldg_far = {"alta": 9000.0, "media": 7000.0}.get(q, 5000.0)
 
     def save_settings(self):
         try:

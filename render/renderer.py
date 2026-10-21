@@ -82,6 +82,26 @@ def mix3(a, b, t):
     return tuple(a[i] + (b[i] - a[i]) * t for i in range(3))
 
 
+def tile_mesh(data, size=1000.0):
+    """Ordena una malla de triángulos sueltos por cuadros de size metros (según el centro de cada triángulo) y
+    devuelve (malla ordenada, cuadros); cada cuadro es [centro x, y, z, radio, primer vértice, n.º de vértices]."""
+    data = np.asarray(data, np.float32)
+    tri = data.reshape(-1, 3, data.shape[1])
+    cen = tri[:, :, :3].mean(axis=1)
+    key = np.floor(cen[:, 0] / size).astype(np.int64) * 100003 + np.floor(cen[:, 1] / size).astype(np.int64)
+    order = np.argsort(key, kind="stable")
+    tri, key = tri[order], key[order]
+    starts = np.flatnonzero(np.r_[True, key[1:] != key[:-1]])
+    ends = np.r_[starts[1:], len(key)]
+    tiles = []
+    for a, b in zip(starts, ends):
+        p = tri[a:b, :, :3].reshape(-1, 3)
+        lo, hi = p.min(axis=0), p.max(axis=0)
+        c = (lo + hi) / 2
+        tiles.append((*c, float(np.linalg.norm(hi - lo) / 2), 3 * a, 3 * (b - a)))
+    return tri.reshape(-1, data.shape[1]), np.array(tiles, np.float64)
+
+
 class GPUMesh:
     def __init__(self, ctx, prog, data, fmt="3f 3f 3f", attrs=("in_pos", "in_norm", "in_col"), index=None):
         self.ctx = ctx
@@ -229,7 +249,9 @@ class Renderer:
         self.m_objects = GPUMesh(ctx, self.p_obj, self.scn.objects)
         bm = getattr(self.scn, "buildings_mesh", None)
         self.m_bldg = None
+        self.bldg_tiles = None
         if bm is not None and len(bm):
+            bm, self.bldg_tiles = tile_mesh(bm)          # por cuadros de 1 km: solo se dibujan los que se ven
             self.m_bldg = GPUMesh(ctx, self.p_bldg, bm, fmt="3f 3f 3f 3f 1f",
                                   attrs=("in_pos", "in_norm", "in_col", "in_uvh", "in_style"))
         self._build_parked()
@@ -477,7 +499,11 @@ class Renderer:
                 pm["u_has_tex"].value = 1
             else:
                 pm["u_has_tex"].value = 0
-            vao.render()
+            tiles = m.get("tiles")
+            if tiles is not None and getattr(self, "_cam", None) is not None:
+                self._draw_tiles(vao, tiles, self._cam, m.get("far", self.bldg_far))
+            else:
+                vao.render()
         if blending:
             self.ctx.fbo.depth_mask = True
             self.ctx.disable(moderngl.BLEND)
@@ -515,8 +541,8 @@ class Renderer:
             po["u_skin"].value = 1
         for p in planes.planes:
             d = p.pos - cam_eye
-            if float(d @ d) > 16000.0 ** 2:
-                continue
+            if float(d @ d) > 16000.0 ** 2 or not self._visible(p.pos, 25.0, 16000.0):
+                continue                                  # lejos o fuera de cuadro
             M = model_matrix(quat_to_mat(p.quat), p.pos)
             real = None if p.type_id in geo.JETS else self.aircraft_model(p.type_id)
             if real is not None:
@@ -759,8 +785,11 @@ class Renderer:
                                         tile="tile" in data["parts"]))
         self._house_ref = None
 
-    HOUSE_NEAR = 2500.0          # hasta aquí el modelo completo de Blender…
+    HOUSE_NEAR = 1600.0          # hasta aquí el modelo completo de Blender…
     HOUSE_FAR = 14000.0          # …y hasta aquí la versión simple (más lejos la bruma ya los borra)
+    # objetos chicos: de lejos no se ven (la cerca de alambre a 600 m ya no ocupa ni un píxel)
+    NEAR_BY_KEY = {"valla": 600.0, "luminaria": 1500.0, "poste_luz": 2500.0, "papi": 3000.0, "barra_aprox": 3000.0,
+                   "vor": 9000.0, "ndb": 9000.0, "localizador": 9000.0, "senda": 9000.0}
 
     def _house_lod(self, data):
         """Malla simple de una variante (para lejos): paredes con color propio (las primeras filas, que toman el
@@ -801,14 +830,58 @@ class Renderer:
             r = item["rows"]
             d = np.hypot(r[:, 0] - eye[0], r[:, 1] - eye[1])
             # las radioayudas se ven desde lejos (son referencias de navegación) y son livianas
-            near = r[d < (9000.0 if item["key"] in ("vor", "ndb", "localizador", "senda") else self.HOUSE_NEAR)]
-            far = r[(d >= self.HOUSE_NEAR) & (d < self.HOUSE_FAR)]                 if item["key"] not in ("luminaria", "papi", "valla", "vor", "ndb", "localizador", "senda",
-                                       "barra_aprox", "poste_luz") else r[:0]
+            nd = self.NEAR_BY_KEY.get(item["key"], self.HOUSE_NEAR)
+            near = r[d < nd]
+            far = r[(d >= nd) & (d < self.HOUSE_FAR)] if item["key"] not in self.NEAR_BY_KEY else r[:0]
             item["n"], item["nf"] = len(near), len(far)
             if len(near):
                 item["ib"].write(np.ascontiguousarray(near).tobytes())
             if len(far):
                 item["ibf"].write(np.ascontiguousarray(far).tobytes())
+
+    bldg_far = 9000.0            # edificios reales: más lejos no se dibujan (la calidad lo baja)
+    DETAIL_MATS = {"trim", "frame", "gutter", "lamp", "steelin", "railing", "ac", "plinth", "pump", "red"}
+    DETAIL_FAR = 700.0           # los detalles chicos de los modelos de Blender, hasta esta distancia
+
+    def _frustum(self):
+        """Planos del campo de visión de la vista actual (normalizados), calculados una vez por vista."""
+        key = self.last_view.tobytes() + self.last_proj.tobytes()
+        if getattr(self, "_fr_key", None) != key:
+            PV = self.last_proj @ self.last_view
+            P = np.array([PV[3] + PV[0], PV[3] - PV[0], PV[3] + PV[1], PV[3] - PV[1], PV[3] + PV[2]])
+            P /= np.linalg.norm(P[:, :3], axis=1, keepdims=True)
+            self._fr_key, self._fr = key, P
+        return self._fr
+
+    def _visible(self, c, r, far):
+        """¿La esfera (c, r) cae en el campo de visión y a menos de far metros de la cámara?"""
+        cam = getattr(self, "_cam", None)
+        if cam is None or self.last_view is None:
+            return True
+        c = np.asarray(c, float)
+        if math.hypot(c[0] - cam.eye[0], c[1] - cam.eye[1]) - r > far:
+            return False
+        P = self._frustum()
+        return bool(np.all(P[:, :3] @ c + P[:, 3] > -r))
+
+    def _draw_tiles(self, vao, tiles, cam, far):
+        """Dibuja solo los cuadros de la malla que caen en el campo de visión y a menos de far metros."""
+        if tiles is None or not len(tiles):
+            vao.render()
+            return
+        P = self._frustum()
+        C, R = tiles[:, :3], tiles[:, 3]
+        vis = np.all(C @ P[:, :3].T + P[:, 3] > -R[:, None], axis=1)
+        vis &= np.hypot(C[:, 0] - cam.eye[0], C[:, 1] - cam.eye[1]) - R < far
+        idx = np.flatnonzero(vis)
+        if not len(idx):
+            return
+        # tramos seguidos de cuadros visibles en una sola llamada
+        first, count = tiles[idx, 4].astype(np.int64), tiles[idx, 5].astype(np.int64)
+        brk = np.flatnonzero(first[1:] != first[:-1] + count[:-1]) + 1
+        for a, b in zip(np.r_[0, brk], np.r_[brk, len(idx)]):
+            n = int(first[b - 1] + count[b - 1] - first[a])
+            vao.render(vertices=n, first=int(first[a]))
 
     def _draw_houses(self, cam):
         if not self.house_draw:
@@ -982,11 +1055,14 @@ class Renderer:
                     t_.anisotropy = 8.0
                     texs[tkey] = t_
                 tex = texs[tkey]
+            arr, tiles = tile_mesh(arr, 300.0)          # por cuadros: solo se dibujan los hangares que se ven
             vbo = ctx.buffer(np.ascontiguousarray(arr, np.float32).tobytes())
             vao = ctx.vertex_array(self.p_model, [(vbo, "3f 3f 2f 1f 2f", "in_pos", "in_norm", "in_uv", "in_ao",
                                                    "in_uv2")])
             svao = None if blend else ctx.vertex_array(self.p_shadow, [(vbo, "3f 32x", "in_pos")])
-            meta = dict(color=list(col), blend=blend, cutoff=0.0)
+            meta = dict(color=list(col), blend=blend, cutoff=0.0, tiles=tiles)
+            if mat in self.DETAIL_MATS:                  # molduras, marcos, lámparas...: de lejos no se ven
+                meta["far"] = self.DETAIL_FAR
             if mat.startswith(("tsign:", "dsign:", "gsign:")):
                 meta["emis"] = 0.85                      # los carteles de rodaje y de pista tienen luz propia de noche
             elif mat == "lamp":
@@ -1931,6 +2007,7 @@ void main() { f_color = texture(u_tex, v_uv); }
     # ------------------------------------------------------------ dibujo principal
     def render(self, cam, viewport, extra=None, pose=None, show_aircraft=True, dt=0.016, cockpit=None):
         """Dibuja la escena 3D en 'viewport' (x, y, w, h en píxeles GL)."""
+        self._cam = cam
         ctx = self.ctx
         world = self.world
         ac = world.ac
@@ -2131,12 +2208,13 @@ void main() { f_color = texture(u_tex, v_uv); }
         if self.m_parked is not None:
             self.m_parked.render()
         for model, M in self.parked_real:
-            self._draw_model(model, M)
+            if self._visible(M[:3, 3], 12.0, 2500.0):    # los lejanos o fuera de cuadro no se dibujan
+                self._draw_model(model, M)
         if self.buildings_model:
             self._draw_model(self.buildings_model, np.identity(4))
         if self.m_bldg is not None:                      # edificios y casas con fachada
             self.p_bldg["u_night"].value = float(env["night"])
-            self.m_bldg.render()
+            self._draw_tiles(self.m_bldg.vao, self.bldg_tiles, cam, self.bldg_far)
         self._draw_houses(cam)
         self._draw_trees()
 
