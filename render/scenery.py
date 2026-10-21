@@ -600,6 +600,12 @@ class Scenery:
                     if r01 > 0.55:
                         lights.append((cn, ce, -(g + ht) - 0.5))
                     continue
+            if kind == bl.HOUSE and area <= 400.0 and (hsh >> 9) % 100 < 45:
+                # tinaco negro en la platabanda, cerca de una esquina
+                p0 = poly[(hsh >> 2) % k]
+                tq = p0 + (np.array([cn, ce]) - p0) * min(0.6, 2.2 / max(1.0, float(np.hypot(*(np.array([cn, ce]) - p0)))))
+                mb.box((float(tq[0]), float(tq[1]), -(g + ht) - 0.7), (1.3, 1.3, 1.4), (0.11, 0.11, 0.12),
+                       yaw=r01 * 1.57)
             A.append(poly)
             B.append(b)
             G.append(np.full(k, g))
