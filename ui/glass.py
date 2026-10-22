@@ -139,13 +139,13 @@ class GlassCockpit:
         tr = getattr(world, "traffic", None)
         if tr is not None and tr.ta_alert:
             tb = pygame.Rect(0, 0, 118, 26)
-            tb.midtop = (c[0] - rect.w * 0.2, rect.y + h * 0.1)
+            tb.midtop = (c[0] - rect.w * 0.2, self._tape_y(rect))
             pygame.draw.rect(surf, (255, 210, 0), tb, border_radius=3)
             f.blit(surf, "TRÁFICO", tb.center, 16, (0, 0, 0), bold=True, anchor="center")
         if getattr(ap, "minspd", False) and ap.engaged:
-            f.blit(surf, "MINSPD", (rect.x + 58, rect.y + h * 0.1 - 4), 14, (255, 200, 0), bold=True, anchor="midbottom")
+            f.blit(surf, "MINSPD", (rect.x + 58, self._tape_y(rect) - 4), 14, (255, 200, 0), bold=True, anchor="midbottom")
         if ap.disconnect_alert > 0 and int(ap.disconnect_alert * 3) % 2 == 0:
-            f.blit(surf, "AP OFF", (c[0], rect.y + 34), 18, (255, 200, 0), bold=True, anchor="midtop")
+            f.blit(surf, "AP OFF", (c[0], rect.y + (34 if rect.w < 560 else self.BAR_H + 8)), 18, (255, 200, 0), bold=True, anchor="midtop")
         surf.set_clip(clip)
 
     def _speed_tape(self, surf, rect, world):
@@ -154,7 +154,8 @@ class GlassCockpit:
         v = world.ind.ias
         vs = ac.t.v
         h = rect.h
-        tape = pygame.Rect(rect.x + 22, rect.y + h * 0.1, 64, h * 0.52)
+        ty = self._tape_y(rect)
+        tape = pygame.Rect(rect.x + 22, ty, 64, rect.y + h * 0.62 - ty)
         s = pygame.Surface(tape.size, pygame.SRCALPHA)
         s.fill(TAPE_BG)
         ppk = tape.h / 60.0
@@ -210,7 +211,8 @@ class GlassCockpit:
         ap = world.ap
         alt = world.ind.alt_ft
         h = rect.h
-        tape = pygame.Rect(rect.right - 140, rect.y + h * 0.1, 80, h * 0.52)
+        ty = self._tape_y(rect)
+        tape = pygame.Rect(rect.right - 140, ty, 80, rect.y + h * 0.62 - ty)
         s = pygame.Surface(tape.size, pygame.SRCALPHA)
         s.fill(TAPE_BG)
         ppf = tape.h / 600.0
@@ -385,29 +387,82 @@ class GlassCockpit:
             world.ap.hdg_bug = (world.ap.hdg_bug + d * 5) % 360
 
     def _top_bar(self, surf, rect, world):
+        """Barra superior del PFD. En la pantalla ancha (la de la consola) va en dos filas, como en el G1000: NAV 1 y
+        NAV 2 a la izquierda y COM 1, ADF y transpondedor a la derecha, cada radio con su frecuencia activa (verde) y
+        la de reserva (blanca); la radio que se está sintonizando con las perillas lleva un recuadro cian."""
         f = self.f
         ap = world.ap
-        bar = pygame.Rect(rect.x, rect.y, rect.w, 26)
+        narrow = rect.w < 560
+        bar = pygame.Rect(rect.x, rect.y, rect.w, 26 if narrow else self.BAR_H)
         pygame.draw.rect(surf, (0, 0, 0), bar)
+        pygame.draw.line(surf, (60, 66, 76), (bar.x, bar.bottom - 1), (bar.right, bar.bottom - 1))
         # en PFD estrechos (panel 2D) letra más chica, sin el rótulo NAV1/COM1 y los modos del PA más juntos
-        narrow = bar.w < 560
         fs, fa = (11, 12) if narrow else (13, 15)
-        f.blit(surf, ("" if narrow else "NAV1 ") + f"{world.nav1.freq:6.2f}", (bar.x + 6, bar.centery), fs, GREEN,
-               mono=True, anchor="midleft")
-        f.blit(surf, ("" if narrow else "COM1 ") + f"{world.com_freq:7.3f}", (bar.right - 6, bar.centery), fs, GREEN,
-               mono=True, anchor="midright")
         mid = bar.centerx
         k = bar.w / 640.0                                # posiciones proporcionales al ancho
+        if narrow:
+            f.blit(surf, f"{world.nav1.freq:6.2f}", (bar.x + 6, bar.centery), fs, GREEN, mono=True, anchor="midleft")
+            f.blit(surf, f"{world.com_freq:7.3f}", (bar.right - 6, bar.centery), fs, GREEN, mono=True, anchor="midright")
+            ya = bar.centery
+        else:
+            ya = bar.y + 11
+            self._radio_rows(surf, bar, world)
+            k *= 0.78                                    # los modos del PA entre las radios de la primera fila
         if ap.engaged or ap.fd:
-            f.blit(surf, ap.lat, (mid - 70 * k, bar.centery), fa, GREEN, mono=True, bold=True, anchor="center")
+            f.blit(surf, ap.lat, (mid - 70 * k, ya), fa, GREEN, mono=True, bold=True, anchor="center")
             if ap.nav_armed and not narrow:
-                f.blit(surf, "LOC" if ap.gs_armed else "VOR", (mid - 120 * k, bar.centery), fs, WHITE, mono=True, anchor="center")
-            f.blit(surf, "AP" if ap.engaged else "FD", (mid, bar.centery), fa, GREEN, mono=True, bold=True, anchor="center")
+                f.blit(surf, "LOC" if ap.gs_armed else "VOR", (mid - 120 * k, ya), fs, WHITE, mono=True, anchor="center")
+            f.blit(surf, "AP" if ap.engaged else "FD", (mid, ya), fa, GREEN, mono=True, bold=True, anchor="center")
             vt = ap.vert + ("" if narrow else
                             (f" {ap.vs_sel:+.0f}FPM" if ap.vert == "VS" else (f" {ap.alt_sel:.0f}FT" if ap.vert == "ALT" else "")))
-            f.blit(surf, vt, (mid + 70 * k, bar.centery), fa, GREEN, mono=True, bold=True, anchor="center")
+            f.blit(surf, vt, (mid + 70 * k, ya), fa, GREEN, mono=True, bold=True, anchor="center")
             if (ap.alt_armed or ap.gs_armed) and not narrow:
-                f.blit(surf, "ALTS" if ap.alt_armed else "GS", (mid + 170 * k, bar.centery), fs, WHITE, mono=True, anchor="center")
+                f.blit(surf, "ALTS" if ap.alt_armed else "GS", (mid + 170 * k, ya), fs, WHITE, mono=True, anchor="center")
+
+    BAR_H = 44                  # alto de la barra superior de dos filas
+
+    def _tape_y(self, rect):
+        """Borde superior de las cintas de velocidad y altitud: debajo de la barra superior y de la altitud elegida."""
+        return rect.y + (rect.h * 0.1 if rect.w < 560 else max(rect.h * 0.1, self.BAR_H + 28))
+
+    def _radio_rows(self, surf, bar, world):
+        f = self.f
+        sel = getattr(world, "radio_sel", None)
+        fn = f.get(13, mono=True)
+        gap = 10
+
+        def pair(x, y, label, act, stb, key, right=False):
+            """Rótulo, activa y reserva; con right=True se escribe de derecha a izquierda desde x."""
+            parts = [(label, COL["grey"]), (act, GREEN), (stb, WHITE)]
+            if right:
+                parts = [(act, GREEN), (stb, WHITE), (label, COL["grey"])]
+                x -= sum(fn.size(t)[0] for t, _ in parts) + gap * 2
+            for t, c in parts:
+                w = fn.size(t)[0]
+                f.blit(surf, t, (x, y), 13, c, mono=True, anchor="midleft")
+                if t == stb and key == sel:              # radio que mueven las perillas compartidas
+                    pygame.draw.rect(surf, CYAN, (x - 3, y - 9, w + 6, 18), 1, border_radius=2)
+                x += w + gap
+            return x
+
+        y1, y2 = bar.y + 11, bar.y + 32
+        pair(bar.x + 6, y1, "NAV1", f"{world.nav1.freq:6.2f}", f"{world.nav1.standby:6.2f}", "nav1")
+        pair(bar.x + 6, y2, "NAV2", f"{world.nav2.freq:6.2f}", f"{world.nav2.standby:6.2f}", "nav2")
+        pair(bar.right - 6, y1, "COM1", f"{world.com_freq:7.3f}", f"{world.com_standby:7.3f}", "com1", right=True)
+        # transpondedor: código (el dígito que se está cambiando, subrayado) y modo; IDENT durante 18 s
+        code = f"{int(world.xpdr):04d}"
+        ident = world.sim_time - getattr(world, "xpdr_ident_t", -99.0) < 18.0
+        mode = "IDNT" if ident else ("ALT" if world.ac.sys.avionics_ok else "STBY")
+        x = bar.right - 6 - fn.size(f"{code} {mode}")[0]
+        f.blit(surf, "XPDR", (x - gap - fn.size("XPDR")[0], y2), 13, COL["grey"], mono=True, anchor="midleft")
+        f.blit(surf, code, (x, y2), 13, GREEN, mono=True, anchor="midleft")
+        dg = getattr(world, "xpdr_digit", None)
+        if dg is not None:
+            cw = fn.size("0")[0]
+            pygame.draw.line(surf, CYAN, (x + dg * cw, y2 + 8), (x + (dg + 1) * cw - 1, y2 + 8), 2)
+        f.blit(surf, mode, (x + fn.size(code + " ")[0], y2), 13, (255, 200, 0) if ident else WHITE, mono=True, anchor="midleft")
+        xa = x - gap - fn.size("XPDR")[0] - 18
+        pair(xa, y2, "ADF", f"{world.adf.freq:4.0f}", f"{world.adf.standby:4.0f}", "adf", right=True)
 
     # ================================================================ MFD
     def _build_map(self, world):
@@ -617,6 +672,10 @@ class GlassCockpit:
         else:
             self.gps_page, self.gps_query, self.gps_cursor = None, "", 0
 
+    def _first_row(self, n, vis):
+        """Primera fila que se dibuja en una lista más larga que la caja, para que el cursor siempre se vea."""
+        return max(0, min(self.gps_cursor - vis + 1, n - vis))
+
     def map_range_step(self, d):
         """Perilla RANGE: + aleja el mapa, − lo acerca."""
         opts = self.MAP_RANGES
@@ -667,12 +726,13 @@ class GlassCockpit:
             if ui.hover(box):
                 ui.tooltip = "Teclee un identificador (VLC, SVBS…) o parte del nombre · Enter: el primero · Esc: cerrar"
             yy += rh
-            results = gps.search(self.gps_query, max(3, int((box.bottom - yy - 8) / rh)))
+            results = gps.search(self.gps_query, 12)
             if not results:
                 f.blit(surf, "Ningún punto coincide", (box.x + 8, yy + 2), 11, COL["grey"])
-            for wp, dis, brg in results:
+            first = self._first_row(len(results), max(3, int((box.bottom - yy - 8) / rh)))
+            for i, (wp, dis, brg) in list(enumerate(results))[first:first + max(3, int((box.bottom - yy - 8) / rh))]:
                 lab = f"{wp.ident} {dis:.1f}" if narrow else f"{wp.ident:5s} {wp.kind:3s} {dis:5.1f} NM {brg:03.0f}°"
-                if ui.cockpit_button(surf, (box.x + 6, yy, box.w - 12, rh - 2), lab, size=11,
+                if ui.cockpit_button(surf, (box.x + 6, yy, box.w - 12, rh - 2), lab, size=11, active=i == self.gps_cursor,
                                      tip=f"{wp.kind} {wp.name} · {dis:.1f} NM · rumbo {brg:03.0f}°"):
                     self.gps_choose(gps, wp)
                 yy += rh
@@ -685,8 +745,11 @@ class GlassCockpit:
             ac = world.ac
             aprs = sorted(rnav.for_world(world), key=lambda a: math.hypot(a.airport.ref[0] - ac.pos[0],
                                                                            a.airport.ref[1] - ac.pos[1]))
-            for apr in aprs[:max(1, int((box.bottom - yy - 8) / rh))]:
+            vis = max(1, int((box.bottom - yy - 8) / rh))
+            first = self._first_row(len(aprs), vis)
+            for i, apr in list(enumerate(aprs))[first:first + vis]:
                 if ui.cockpit_button(surf, (box.x + 6, yy, box.w - 12, rh - 2), apr.short, size=11,
+                                     active=i == self.gps_cursor,
                                      tip=f"{apr.title} · desde el IAF del lado por el que llega · DA "
                                          f"{apr.da_ft:.0f} ft (LPV), MDA {apr.mda_ft:.0f} ft (LNAV)"):
                     gps.load_approach(apr, *rnav.entry(apr, ac.pos))
@@ -699,8 +762,12 @@ class GlassCockpit:
             if not gps.plan:
                 f.blit(surf, "Vacío: añada puntos con «+ Añadir».", (box.x + 8, yy + 2), 11, COL["grey"])
                 yy += rh
-            for i, wp in enumerate(gps.plan):
+            vis = max(1, int((box.bottom - yy - 2 * rh) / rh) + 1)
+            first = self._first_row(len(gps.plan), vis) if self.gps_cursor < len(gps.plan) else max(0, len(gps.plan) - vis)
+            for i, wp in list(enumerate(gps.plan))[first:]:
                 on = i == gps.active and gps.direct is None
+                if i == self.gps_cursor:      # fila elegida con la perilla FMS
+                    pygame.draw.rect(surf, COL["button_on"], (box.x + 4, yy, box.w - 70, rh - 2), border_radius=4)
                 f.blit(surf, ("▶ " if on else "  ") + (wp.ident if narrow else f"{wp.ident} {wp.kind}"), (box.x + 8, yy + 3),
                        12, MAG if on else WHITE, mono=True, bold=on)
                 if ui.cockpit_button(surf, (box.right - 62, yy, 28, rh - 2), "▶", size=10,
@@ -714,14 +781,15 @@ class GlassCockpit:
                     break
             by = box.bottom - rh - 4
             third = (box.w - 20) / 3
+            cur = self.gps_cursor - len(gps.plan)       # 0, 1 o 2: uno de los botones de abajo, elegido con la perilla
             if ui.cockpit_button(surf, (box.x + 6, by, third, rh - 2), "+" if narrow else "+ Añadir", size=11,
-                                 tip="Añadir un punto (tecleando o de la lista)"):
+                                 active=cur == 0, tip="Añadir un punto (tecleando o de la lista)"):
                 self.gps_page = "add"
                 self.gps_query = ""
-            if ui.cockpit_button(surf, (box.x + 10 + third, by, third, rh - 2), "RNAV", size=11,
+            if ui.cockpit_button(surf, (box.x + 10 + third, by, third, rh - 2), "RNAV", size=11, active=cur == 1,
                                  tip="Cargar una aproximación RNAV (GPS) de entrenamiento"):
                 self.gps_page = "apr"
-            if ui.cockpit_button(surf, (box.x + 14 + 2 * third, by, third, rh - 2), "Borrar", size=11):
+            if ui.cockpit_button(surf, (box.x + 14 + 2 * third, by, third, rh - 2), "Borrar", size=11, active=cur == 2):
                 gps.clear()
 
     def mfd(self, surf, rect, world, ui):

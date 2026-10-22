@@ -27,7 +27,11 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   - setas asignables y frenos de pie diferenciales;
   - interruptores sincronizados al empezar el vuelo;
   - mandos conectados en caliente y mandos iguales distinguidos por número de serie o puerto;
-  - el joystick genérico ya no pisa a los mandos asignados.
+  - el joystick genérico ya no pisa a los mandos asignados;
+  - **teclas y perillas del G1000** del C172S: piloto automático, HDG / CRS / BARO, radios (una perilla por radio o
+    una compartida con selector), transpondedor y GPS (D→, FPL, PROC, FMS, ENT, CLR, RANGE); las perillas giratorias
+    se leen clic a clic aunque se giren rápido. La barra superior del PFD muestra activa y reserva de cada radio y
+    el transpondedor.
   Ver `docs/GUIA_CABINA_FISICA.md`.
 - **Física:**
   - el centro de gravedad de la hoja de peso y balance cambia la estabilidad y la fuerza de profundidad;
@@ -384,7 +388,8 @@ dispositivo USB (volante, cuadrante de gases, pedales con frenos de pie, placas 
 cabeceo, timón, frenos, gases (uno por motor), mezcla, hélice, flaps y compensador; interruptores de batería,
 alternador, aviónica, bomba, luces, pitot, tren, freno de estacionamiento, ENGINE MASTER; posiciones de la llave de
 magnetos y del selector de combustible; pulsadores de flaps, desconexión del PA, radio (abrir, siguiente opción,
-transmitir), PTT de voz, pausa y reinicio. Pulse *Asignar* y mueva el mando real. Con esto y el puesto del
+transmitir), PTT de voz, pausa y reinicio; y las teclas y perillas del G1000 (`app/consola_g1000.py`). Pulse
+*Asignar* y mueva el mando real. Con esto y el puesto del
 instructor en red, la cabina se maneja sin ratón ni teclado.
 
 **Pantallas para cabina física:** F2 alterna *paisaje + instrumentos*, *solo instrumentos* y *2.º monitor*;

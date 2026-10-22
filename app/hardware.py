@@ -18,6 +18,8 @@ import pygame
 
 from sim.mathx import clamp
 
+from .consola_g1000 import FUNCTIONS as G1000_FUNCTIONS, KEYS as G1000_KEYS, ConsolaG1000
+
 # La consola física reproduce la cabina del Cessna 172S, el avión de referencia. Los demás aviones se pueden volar,
 # pero sin ella: con teclado, ratón, el panel 2D o un joystick USB aparte.
 CONSOLE_AIRCRAFT = "c172"
@@ -80,7 +82,7 @@ FUNCTIONS = [
     ("btn_xpdr_1200", "Transpondedor 1200 (VFR)", "pulsador"),
     ("btn_pausa", "Pausa", "pulsador"),
     ("btn_reiniciar", "Reiniciar la lección", "pulsador"),
-]
+] + [(k, n, "pulsador") for k, n in G1000_FUNCTIONS]     # teclas y perillas del G1000 (app/consola_g1000.py)
 NAMES = {k: n for k, n, _ in FUNCTIONS}
 KIND = {k: t for k, _, t in FUNCTIONS}
 CENTERED = ("eje_alabeo", "eje_cabeceo", "eje_timon", "eje_trim")     # ejes con centro (el resto son palancas)
@@ -156,6 +158,9 @@ class Hardware:
         self.radio_sel = 0
         self.brake_cmd = 0.0         # botón de frenos (los dos lados)
         self.brake_l = self.brake_r = 0.0   # frenos de pie, cada uno en su rueda
+        self.g1000 = ConsolaG1000()
+        self.pulses = {}             # (mando, botón) -> pulsaciones llegadas como evento desde la última lectura
+        self.events_seen = False     # llegan eventos de botón: las perillas se cuentan por evento, no por sondeo
         self.refresh()
 
     # ------------------------------------------------------------ dispositivos
@@ -433,9 +438,34 @@ class Hardware:
         """La consola solo manda en el avión que reproduce (CONSOLE_AIRCRAFT); con otro no se lee nada de ella."""
         return aircraft_id == CONSOLE_AIRCRAFT
 
+    # ------------------------------------------------------------ eventos (perillas giratorias)
+    def on_events(self, events):
+        """Cuenta las pulsaciones de botón que llegan como evento. Una perilla giratoria (encoder) da pulsos de
+        pocos milisegundos: leyendo solo el estado una vez por cuadro se perderían clics al girarla rápido."""
+        for ev in events:
+            if ev.type == pygame.JOYBUTTONDOWN:
+                self.events_seen = True
+                k = (getattr(ev, "instance_id", getattr(ev, "joy", None)), ev.button)
+                self.pulses[k] = self.pulses.get(k, 0) + 1
+
+    def presses(self, key, pulses):
+        """Pulsaciones de un pulsador desde la última lectura: por evento si llegan, si no, por flanco del estado."""
+        b = self.bindings.get(key)
+        if not b:
+            return 0
+        if "btn" in b and self.events_seen:
+            j = self.devices.get(b.get("dev"))
+            try:
+                return pulses.get((j.get_instance_id(), b["btn"]), 0) if j is not None else 0
+            except pygame.error:
+                return 0
+        _, pr, _ = self.button(key)
+        return int(pr)
+
     # ------------------------------------------------------------ aplicar al avión
     def update(self, dt, world, app):
         self.brake_cmd = self.brake_l = self.brake_r = 0.0   # sin lectura (mando quitado) no queda frenado
+        pulses, self.pulses = self.pulses, {}
         if self.capture:
             self._poll_capture()
             return
@@ -578,6 +608,17 @@ class Hardware:
             if pr:
                 world.xpdr = code
                 app.flash(f"Transpondedor {code}", 1.5)
+        if app.state == "flight":
+            self._g1000(world, app, pulses)
+
+    def _g1000(self, world, app, pulses):
+        """Teclas y perillas del G1000: cada pulso (o clic de perilla) es una pulsación."""
+        msg = None
+        for key in G1000_KEYS:
+            for _ in range(self.presses(key, pulses)):
+                msg = self.g1000.press(key, world, app) or msg
+        if msg:
+            app.flash(msg, 1.5)
 
     def request_sync(self):
         """Al empezar un vuelo: la próxima lectura compara los interruptores reales con el avión."""

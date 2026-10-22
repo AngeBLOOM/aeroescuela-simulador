@@ -1,6 +1,7 @@
 """Prueba de la cabina física con mandos USB simulados (sin ventana ni mandos reales): calibración de ejes,
-sincronización de los interruptores al empezar el vuelo, conexión en caliente y que el joystick genérico no lea
-un mando que ya está asignado en «Cabina física»."""
+sincronización de los interruptores al empezar el vuelo, conexión en caliente, que el joystick genérico no lea
+un mando que ya está asignado en «Cabina física» y las teclas y perillas del G1000 (radios, transpondedor, piloto
+automático, perillas HDG / CRS / BARO y GPS), también girando rápido (por eventos)."""
 import os
 import sys
 import types
@@ -277,4 +278,141 @@ plugged[:] = [v]
 hw5.refresh()
 assert hw5.console_connected()                             # vuelto a enchufar
 print("detección de consola OK")
+
+# ---------------------------------------------------------------- 6. teclas y perillas del G1000
+from app.consola_g1000 import KEYS as G1000_KEYS          # noqa: E402
+from ui.glass import GlassCockpit                         # noqa: E402
+from ui.ui import Fonts                                   # noqa: E402
+
+g1 = FakeJoy(40, "Panel G1000", nbtn=len(G1000_KEYS))
+plugged[:] = [g1]
+hw6 = Hardware({})
+gk = next(iter(hw6.devices))
+for i, k in enumerate(G1000_KEYS):
+    hw6.bindings[k] = dict(dev=gk, btn=i)
+w6 = World("c172")
+w6.reposition("plataforma")
+w6.ac.sys.master = w6.ac.sys.avionics = True
+app6 = FakeApp()
+app6.panel = types.SimpleNamespace(starter_held=False, glass=GlassCockpit(Fonts()))
+gl = app6.panel.glass
+hw6.update(0.016, w6, app6)                    # primera lectura: todo suelto
+
+
+def tap(key, n=1):
+    """Pulsa y suelta n veces (por sondeo, como un botón normal)."""
+    for _ in range(n):
+        g1.btns[G1000_KEYS.index(key)] = 1
+        hw6.update(0.016, w6, app6)
+        g1.btns[G1000_KEYS.index(key)] = 0
+        hw6.update(0.016, w6, app6)
+
+
+# radios, una perilla por radio: se sintoniza la reserva y ⇄ la pasa a activa
+w6.com_freq, w6.com_standby = 118.3, 121.9
+tap("r_com1_mhz_mas")
+tap("r_com1_khz_mas", 2)
+assert abs(w6.com_standby - 122.95) < 1e-6, w6.com_standby
+tap("r_com1_cambio")
+assert abs(w6.com_freq - 122.95) < 1e-6 and abs(w6.com_standby - 118.3) < 1e-6
+w6.nav1.standby = 110.30
+tap("r_nav1_khz_menos")
+assert abs(w6.nav1.standby - 110.25) < 1e-6, w6.nav1.standby
+f2 = w6.nav2.freq
+tap("r_nav2_cambio")
+assert w6.nav2.standby == f2
+w6.adf.standby = 280
+tap("r_adf_mhz_mas")
+tap("r_adf_khz_mas", 3)
+assert w6.adf.standby == 383 and w6.show_adf, w6.adf.standby
+# radios compartidas: el selector elige la radio y la perilla doble la sintoniza
+tap("r_sel", 2)                                # COM 1 → NAV 1
+assert w6.radio_sel == "nav1"
+tap("r_grande_mas")
+assert abs(w6.nav1.standby - 111.25) < 1e-6, w6.nav1.standby
+tap("r_cambio")
+assert abs(w6.nav1.freq - 111.25) < 1e-6
+print("radios por radio y compartidas OK")
+
+# transpondedor dígito a dígito, en octal, e IDENT
+w6.xpdr = 1200
+tap("x_digito")
+tap("x_mas")                                   # 1 → 2
+tap("x_digito")
+tap("x_menos")                                 # 2 → 1
+tap("x_digito", 2)
+tap("x_menos")                                 # 0 → 7
+assert w6.xpdr == 2107 and w6.xpdr_digit == 3, w6.xpdr
+tap("x_ident")
+assert w6.xpdr_ident_t == w6.sim_time
+print("transpondedor OK")
+
+# piloto automático y perillas
+ap = w6.ap
+tap("g_hdg")
+assert ap.engaged and ap.lat == "HDG"
+a0 = ap.alt_sel
+tap("g_alt_1000_mas")
+tap("g_alt_100_menos", 3)
+assert ap.alt_sel == round(a0 / 100) * 100 + 700, ap.alt_sel
+tap("g_ap")
+assert not ap.engaged
+tap("g_hdg_sync")
+b0 = ap.hdg_bug
+tap("g_hdg_mas", 5)
+assert (ap.hdg_bug - b0) % 360 == 5, (b0, ap.hdg_bug)
+w6.cdi_src = "VLOC"
+o1, o2 = w6.nav1.obs, w6.nav2.obs
+tap("g_crs_menos", 2)
+tap("g_crs2_mas")
+assert (o1 - w6.nav1.obs) % 360 == 2 and (w6.nav2.obs - o2) % 360 == 1
+tap("g_baro_std")
+tap("g_baro_mas")
+assert w6.kollsman == 1014, w6.kollsman
+print("piloto automático y perillas HDG / CRS / BARO OK")
+
+# GPS con la perilla FMS: D→, deletrear «VN» y ENT
+tap("g_direct")
+assert gl.gps_page == "dto"
+tap("g_fms_p_mas", 22)                         # A + 21: V
+tap("g_fms_push")
+tap("g_fms_p_mas", 14)                         # A + 13: N
+assert gl.gps_query == "VN", gl.gps_query
+tap("g_ent")
+assert w6.gps.direct is not None and w6.gps.direct.ident == "VN" and gl.gps_page is None
+tap("g_fpl")
+assert gl.gps_page == "fpl"
+tap("g_clr")
+assert gl.gps_page is None
+r0 = gl.map_range_nm
+tap("g_rango_mas")
+assert gl.map_range_nm > r0
+tap("g_cdi")
+assert w6.cdi_src == "GPS"
+print("teclas del GPS OK")
+
+# perilla girada rápido: varios pulsos entre dos lecturas llegan como eventos y no se pierde ninguno
+b0 = ap.hdg_bug
+i = G1000_KEYS.index("g_hdg_mas")
+hw6.on_events([pygame.event.Event(pygame.JOYBUTTONDOWN, instance_id=40, button=i, joy=0)] * 7)
+hw6.update(0.016, w6, app6)
+assert (ap.hdg_bug - b0) % 360 == 7, (b0, ap.hdg_bug)
+hw6.update(0.016, w6, app6)                    # ya contados: no se repiten
+assert (ap.hdg_bug - b0) % 360 == 7
+# solo en vuelo, con la aviónica encendida y en el C172S
+for setup in ("pausa", "sin aviónica"):
+    app6.state = "pause" if setup == "pausa" else "flight"
+    w6.ac.sys.avionics = setup != "sin aviónica"
+    b0 = ap.hdg_bug
+    hw6.on_events([pygame.event.Event(pygame.JOYBUTTONDOWN, instance_id=40, button=i, joy=0)])
+    hw6.update(0.016, w6, app6)
+    assert ap.hdg_bug == b0, setup
+app6.state, w6.ac.sys.avionics = "flight", True
+da = World("da42")
+da.ac.sys.master = da.ac.sys.avionics = True
+b0 = da.ap.hdg_bug
+hw6.on_events([pygame.event.Event(pygame.JOYBUTTONDOWN, instance_id=40, button=i, joy=0)])
+hw6.update(0.016, da, app6)
+assert da.ap.hdg_bug == b0
+print("perillas por eventos (giro rápido) OK")
 print("TODO OK")
