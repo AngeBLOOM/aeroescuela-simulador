@@ -106,5 +106,41 @@ g.clear()
 w.step(1 / 60)
 check(not g.valid and g.ident == "----", "plan borrado: sin guía")
 
+print("Escribir un identificador (teclado del G1000)")
+import pygame                                                   # noqa: E402
+from ui.glass import GlassCockpit                               # noqa: E402
+
+r = g.search("VN")
+check([p.ident for p, _, _ in r][:3] and all(p.ident.startswith("VN") for p, _, _ in r) and
+      [d for _, d, _ in r] == sorted(d for _, d, _ in r), f"«VN»: {[f'{p.ident} {p.kind}' for p, _, _ in r]}")
+name = next(a.name for a in w.airports if a.ident == "VNT")
+frag = name.split()[-1][:5]
+check(any(p.ident == "VNT" for p, _, _ in g.search(frag)), f"por el nombre: «{frag}» encuentra VNT ({name})")
+ids_of = lambda rows: [(p.ident, p.kind) for p, _, _ in rows]                     # noqa: E731
+check(ids_of(g.search("")) == ids_of(g.nearest(12)) and g.search("ZZZQ") == [],
+      "vacío: los cercanos; sin coincidencias: nada")
+check(ids_of(g.search("ES"))[0] == ("ES", "NDB"), f"la coincidencia exacta primero: «ES» → {ids_of(g.search('ES'))[:2]}")
+
+gc = GlassCockpit.__new__(GlassCockpit)                         # solo la lógica del teclado, sin dibujar
+gc.gps_page, gc.gps_query = "dto", ""
+for ch in "vnt":
+    gc.gps_key(g, ord(ch), ch)
+gc.gps_key(g, pygame.K_BACKSPACE, "")
+gc.gps_key(g, ord("t"), "t")
+check(gc.gps_query == "VNT", f"teclear v-n-t, borrar y t: «{gc.gps_query}»")
+check(not gc.gps_key(g, pygame.K_F7, ""), "F7 no es para el GPS: sigue cambiando el CDI")
+gc.gps_key(g, pygame.K_RETURN, "\r")
+check(g.direct is not None and g.direct.ident == "VNT" and gc.gps_page is None and gc.gps_query == "",
+      "Enter: directo a VNT y la lista se cierra")
+gc.gps_page = "add"
+for ch in "es":
+    gc.gps_key(g, ord(ch), ch)
+gc.gps_key(g, pygame.K_RETURN, "\r")
+check([p.ident for p in g.plan] == ["ES"] and gc.gps_page == "fpl", f"añadir al plan «ES»: {[p.ident for p in g.plan]}")
+gc.gps_page = "dto"
+gc.gps_key(g, ord("x"), "x")
+gc.gps_key(g, pygame.K_ESCAPE, "")
+check(gc.gps_page is None and gc.gps_query == "", "Esc cierra la lista sin elegir")
+
 print("\nFALLOS: " + "; ".join(fallos) if fallos else "\nTODO OK")
 sys.exit(1 if fallos else 0)

@@ -29,6 +29,7 @@ class GlassCockpit:
         self.track_t = 0.0
         self.rose_cache = {}
         self.gps_page = None        # lista abierta en el mapa: None, "dto", "fpl" o "add"
+        self.gps_query = ""         # identificador que se escribe con el teclado en D→ / añadir (vacío: los cercanos)
 
     # ================================================================ PFD
     def pfd(self, surf, rect, world, ui):
@@ -418,20 +419,55 @@ class GlassCockpit:
         pygame.surfarray.pixels_alpha(s)[...] = arr[..., 3]
         self.taws_img = s
 
+    # ------------------------------------------------------------ GPS: elegir y escribir puntos
+    def gps_typing(self):
+        """La lista D→ o «añadir al plan» está abierta: el teclado escribe en el GPS y no mueve el avión."""
+        return self.gps_page in ("dto", "add")
+
+    def gps_choose(self, gps, wp):
+        if self.gps_page == "dto":
+            gps.direct_to(wp)
+        else:
+            gps.add(wp)
+        self.gps_page = "fpl" if self.gps_page == "add" else None
+        self.gps_query = ""
+
+    def gps_key(self, gps, key, text):
+        """Una tecla con la lista abierta: letras y números escriben, Retroceso borra, Enter elige el primer punto que
+        coincide y Esc cierra. Devuelve True si la tecla era para el GPS."""
+        if key == pygame.K_ESCAPE:
+            self.gps_page, self.gps_query = None, ""
+            return True
+        if key == pygame.K_BACKSPACE:
+            self.gps_query = self.gps_query[:-1]
+            return True
+        if key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            found = gps.search(self.gps_query, 1) if self.gps_query else []
+            if found:
+                self.gps_choose(gps, found[0][0])
+            return True
+        if text and (text.isalnum() or text in " -") and len(self.gps_query) < 12:
+            self.gps_query += text.upper()
+            return True
+        return False
+
     def _gps_keys(self, surf, mp, world, ui):
         """Teclas del GPS en el mapa: D→ (directo a), FPL (plan de vuelo), OBS y selector CDI GPS/VLOC; y sus
-        listas, que se eligen con el ratón (los puntos más cercanos)."""
+        listas, que se eligen con el ratón: los puntos más cercanos o, al escribir un identificador con el teclado,
+        los que coinciden (core.App.gps_typing)."""
         f = self.f
         gps = world.gps
         # fila de teclas encima de la de TAWS, repartida en el ancho del mapa (en pantallas estrechas el mapa es angosto)
         y = mp.bottom - 54
         bw = (mp.w - 16 - 12) / 4
         narrow = mp.w < 360
-        keys = [("D→", "dto", "Directo a un punto cercano"), ("FPL", "fpl", "Plan de vuelo: añadir, activar y quitar puntos")]
+        keys = [("D→", "dto", "Directo a: teclee el identificador o elija un punto cercano"),
+                ("FPL", "fpl", "Plan de vuelo: añadir (tecleando o de la lista), activar y quitar puntos")]
         x = mp.x + 8
         for lab, page, tip in keys:
             if ui.cockpit_button(surf, (x, y, bw, 22), lab, active=self.gps_page == page, size=11, tip=tip):
                 self.gps_page = None if self.gps_page == page else page
+                self.gps_query = ""
             x += bw + 4
         if ui.cockpit_button(surf, (x, y, bw, 22), "OBS", active=gps.obs_mode, size=11,
                              tip="Modo OBS: curso elegido hacia el punto activo (rueda sobre la caja GPS del HSI)"):
@@ -452,15 +488,21 @@ class GlassCockpit:
         if self.gps_page in ("dto", "add"):
             f.blit(surf, "DIRECTO A" if self.gps_page == "dto" else "AÑADIR AL PLAN", (box.x + 8, yy), 13, MAG, bold=True)
             yy += rh
-            for wp, dis, brg in gps.nearest(max(3, int((box.bottom - yy - 8) / rh))):
+            # línea de escritura: el identificador (o parte del nombre) que se teclea; con el cursor parpadeando
+            cursor = "_" if int(pygame.time.get_ticks() / 500) % 2 == 0 else " "
+            hint = self.gps_query + cursor if self.gps_query else ("Escriba: " if not narrow else "") + "ID…" + cursor
+            f.blit(surf, hint, (box.x + 8, yy + 2), 12, WHITE if self.gps_query else COL["grey"], mono=True, bold=True)
+            if ui.hover(box):
+                ui.tooltip = "Teclee un identificador (VLC, SVBS…) o parte del nombre · Enter: el primero · Esc: cerrar"
+            yy += rh
+            results = gps.search(self.gps_query, max(3, int((box.bottom - yy - 8) / rh)))
+            if not results:
+                f.blit(surf, "Ningún punto coincide", (box.x + 8, yy + 2), 11, COL["grey"])
+            for wp, dis, brg in results:
                 lab = f"{wp.ident} {dis:.1f}" if narrow else f"{wp.ident:5s} {wp.kind:3s} {dis:5.1f} NM {brg:03.0f}°"
                 if ui.cockpit_button(surf, (box.x + 6, yy, box.w - 12, rh - 2), lab, size=11,
                                      tip=f"{wp.kind} {wp.name} · {dis:.1f} NM · rumbo {brg:03.0f}°"):
-                    if self.gps_page == "dto":
-                        gps.direct_to(wp)
-                    else:
-                        gps.add(wp)
-                    self.gps_page = "fpl" if self.gps_page == "add" else None
+                    self.gps_choose(gps, wp)
                 yy += rh
         else:
             f.blit(surf, "PLAN DE VUELO", (box.x + 8, yy), 13, MAG, bold=True)
@@ -485,6 +527,7 @@ class GlassCockpit:
             half = (box.w - 16) / 2
             if ui.cockpit_button(surf, (box.x + 6, by, half, rh - 2), "+ Añadir", size=11):
                 self.gps_page = "add"
+                self.gps_query = ""
             if ui.cockpit_button(surf, (box.x + 10 + half, by, half, rh - 2), "Borrar" if narrow else "Borrar plan", size=11):
                 gps.clear()
 

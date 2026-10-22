@@ -364,6 +364,14 @@ class App(ScreensMixin):
             return "none" if self.instr_mode() in ("unica", "segunda") else "franja"
         return "2d"
 
+    def gps_typing(self):
+        """Se está escribiendo un punto en el GPS: la lista D→ / añadir está abierta y el mapa del G1000 a la vista
+        (panel 2D de cristal). Si se cambia de vista, la lista se cierra y el teclado vuelve a los mandos."""
+        g = self.panel.glass
+        if g.gps_typing() and not (self.cockpit_style == "2d" and self.panel.mode == "glass"):
+            g.gps_page, g.gps_query = None, ""
+        return g.gps_typing()
+
     def console_here(self):
         """La consola física está conectada y es la de este avión (solo reproduce la cabina del C172S)."""
         return self.hardware.console_connected() and self.hardware.applies_to(self.world.ac.t.id)
@@ -902,6 +910,13 @@ class App(ScreensMixin):
         if self.show_radio and pygame.K_1 <= k <= pygame.K_9 and not ctrl:
             self.radio_select(k - pygame.K_1)
             return
+        if self.gps_typing() and not ctrl:
+            # lista D→ / añadir abierta: Enter, Retroceso y Esc van al GPS; los caracteres llegan como TEXTINPUT
+            # (así también escribe el teclado en pantalla de Windows) y aquí solo se impide que muevan el avión
+            if self.panel.glass.gps_key(w.gps, k, ""):
+                return
+            if ev.unicode and (ev.unicode.isalnum() or ev.unicode in " -"):
+                return
         if k == pygame.K_ESCAPE:
             if self.show_help or self.show_check or self.show_radio or self.show_controls:
                 self.show_help = self.show_check = self.show_radio = self.show_controls = False
@@ -1132,6 +1147,9 @@ class App(ScreensMixin):
         for ev in events:
             if ev.type == pygame.KEYDOWN:
                 self.flight_keys(ev)
+            elif ev.type == pygame.TEXTINPUT and self.gps_typing():
+                for ch in ev.text:
+                    self.panel.glass.gps_key(w.gps, 0, ch)
             elif ev.type == pygame.MOUSEMOTION and ev.buttons[2]:
                 self.camera.look(math.radians(ev.rel[0] * 0.25), math.radians(-ev.rel[1] * 0.25))
         if self.state != "flight":
@@ -1161,7 +1179,8 @@ class App(ScreensMixin):
             for en in ac.sys.engines:
                 en.starter = crank and en.magnetos > 0 and not en.running
         # mandos a la frecuencia de fotograma; la física avanza a 240 Hz
-        self.controls.update(dt, w, keys, mods)
+        # mientras se escribe un identificador en el GPS, las letras no mueven palanca, pedales ni gases
+        self.controls.update(dt, w, keys, mods, ui_wants_keys=self.gps_typing())
         ac.brake = max(ac.brake, self.hardware.brake_cmd)
         ac.brake_l, ac.brake_r = self.hardware.brake_l, self.hardware.brake_r   # frenos de pie: cada rueda
         sdt = dt * w.sim_rate            # tiempo simulado (el instructor puede acelerarlo)
