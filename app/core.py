@@ -360,8 +360,8 @@ class App(ScreensMixin):
         radios, G1000) y con el teclado o un joystick USB."""
         if self.cockpit_mode != "auto":
             return self.cockpit_mode
-        if self.hardware.console_connected():
-            return "none" if self.settings.get("pantalla_instr", "no") in ("unica", "segunda") else "franja"
+        if self.console_here():
+            return "none" if self.instr_mode() in ("unica", "segunda") else "franja"
         return "2d"
 
     def gps_typing(self):
@@ -371,6 +371,18 @@ class App(ScreensMixin):
         if g.gps_typing() and not (self.cockpit_style == "2d" and self.panel.mode == "glass"):
             g.gps_page, g.gps_query = None, ""
         return g.gps_typing()
+
+    def console_here(self):
+        """La consola física está conectada y es la de este avión (solo reproduce la cabina del C172S)."""
+        return self.hardware.console_connected() and self.hardware.applies_to(self.world.ac.t.id)
+
+    def instr_mode(self):
+        """Pantalla de instrumentos efectiva. «Franja» y «solo instrumentos» son para volar con la consola física:
+        con un avión que no es el suyo se vuela con el panel 2D, así que esta pantalla vuelve a la normal."""
+        mode = self.settings.get("pantalla_instr", "no")
+        if mode in ("ambiente", "unica") and not self.hardware.applies_to(self.world.ac.t.id):
+            return "no"
+        return mode
 
     def apply_instrument_screen(self):
         """Abre o cierra la ventana de instrumentos según el ajuste."""
@@ -805,6 +817,9 @@ class App(ScreensMixin):
         self.world.atc.reset()
         self.show_check = bool(getattr(L, "checklist", None))
         self.hardware.request_sync()
+        if self.hardware.console_connected() and not self.hardware.applies_to(self.world.ac.t.id):
+            self.flash(f"La consola física es del Cessna 172S: el {self.world.ac.t.short} se vuela con teclado, "
+                       "ratón y el panel 2D", 6)
 
     def lesson_scene_switch(self):
         """Misión de dos escenarios: carga en vuelo el siguiente aeropuerto real (crucero acelerado) y sigue la lección."""
@@ -1000,7 +1015,7 @@ class App(ScreensMixin):
                 self.flash("Este avión tiene inyección: no lleva calefacción al carburador", 2.0)
 
     def toggle_instr_editor(self):
-        if self.settings.get("pantalla_instr") in ("unica", "ambiente"):
+        if self.instr_mode() in ("unica", "ambiente") or self.cockpit_style == "franja":
             self.instr_display.editing = not self.instr_display.editing
             self.save_settings()
             if self.instr_display.editing:
@@ -1494,7 +1509,7 @@ class App(ScreensMixin):
         self._bar_click = None
         if self.ui.clicked and self._bar_rect is not None and self._bar_visible() and self._bar_rect.collidepoint(self.ui.clicked):
             self._bar_click, self.ui.clicked = self.ui.clicked, None
-        if self.settings.get("pantalla_instr") == "unica":
+        if self.instr_mode() == "unica":
             # cabina física: esta pantalla solo muestra los instrumentos
             self.ctx.screen.use()
             self.ctx.clear(0.02, 0.02, 0.03)
@@ -1509,7 +1524,7 @@ class App(ScreensMixin):
                 self.draw_mouse_bar()
             return
         # cabina física con un solo monitor: arriba el paisaje, abajo solo los instrumentos
-        ambiente = in_cab and (self.settings.get("pantalla_instr") == "ambiente" or self.cockpit_style == "franja")
+        ambiente = in_cab and (self.instr_mode() == "ambiente" or self.cockpit_style == "franja")
         if ambiente:
             cockpit2d = cockpit3d = False
             ph = int(self.H * 0.40)
@@ -1695,7 +1710,7 @@ class App(ScreensMixin):
         mode = MODE_NAMES.get(self.camera.mode, "")
         txt = f"{mode}  ·  {w.weather.describe()}"
         hint = "H: ayuda   K: lista   Esc: menú   I: instructor"
-        if self.settings.get("pantalla_instr") not in ("ambiente", "unica"):
+        if self.instr_mode() not in ("ambiente", "unica") and self.cockpit_style != "franja":
             tw = max(f.get(13).size(txt)[0], f.get(12).size(hint)[0])
             panel_box(s, pygame.Rect(self.W - tw - 28, 8 + top, tw + 20, 44), 8, (10, 14, 20, 170), border=None)
             f.blit(s, txt, (self.W - 18, 13 + top), 13, (220, 225, 230), anchor="topright")

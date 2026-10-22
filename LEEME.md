@@ -364,6 +364,10 @@ Joystick o volante de vuelo: se detecta solo; los ejes se configuran en Ajustes.
 
 **Guía paso a paso para conectar la cabina:** `docs/GUIA_CABINA_FISICA.md`. La pestaña **Diagnóstico y prueba** muestra en directo cada eje y botón, prueba el micrófono, lista los monitores y dice qué falta; **Exportar/Importar** copia las asignaciones a otra computadora con la misma cabina.
 
+**La consola física es la del Cessna 172S**, el avión de referencia. Los demás aviones se pueden volar, pero sin ella:
+con otro avión la consola no se lee (ni volante, ni palancas, ni interruptores), la cabina automática muestra el panel 2D
+y las pantallas «franja» y «solo instrumentos» vuelven a la normal. Se vuelan con teclado, ratón o un joystick USB aparte.
+
 **Cabina física (menú → Cabina física):** asigne a cada función el eje, interruptor o botón real de cualquier
 dispositivo USB (volante, cuadrante de gases, pedales con frenos de pie, placas de botones): ejes de alabeo,
 cabeceo, timón, frenos, gases (uno por motor), mezcla, hélice, flaps y compensador; interruptores de batería,
