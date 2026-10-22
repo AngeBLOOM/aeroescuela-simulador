@@ -160,7 +160,8 @@ class Engine:
             self.thrust = -0.5 * rho * V * V * 0.012
             self.rpm *= 0.97
         else:
-            self.thrust = -0.5 * rho * V * V * 0.15 * (1.0 if self.rpm > 50 else 0.6)
+            # hélice en molinete (o parada): resistencia como un área plana equivalente en m² (prop_windmill)
+            self.thrust = -0.5 * rho * V * V * getattr(t, "prop_windmill", 0.15) * (1.0 if self.rpm > 50 else 0.6)
         self.load = 100.0 * max(self.pf, 0.0) / 0.92 if self.running else 0.0
         omega = max(self.rpm, 300.0) * 2 * math.pi / 60
         self.torque = self.shaft_power / omega if self.running else 0.0

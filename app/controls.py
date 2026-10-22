@@ -98,8 +98,9 @@ class Controls:
             roll = clamp(expo(jr, k) + self.kb_roll, -1, 1)
         if jy is not None and abs(jy) > 0.0:
             rud = clamp(expo(jy, k) + self.kb_rud, -1, 1)
-        if hw is not None:
-            # cabina física: los ejes asignados mandan sobre el joystick genérico (ya llevan su zona muerta y curva)
+        if hw is not None and hw.applies_to(ac.t.id):
+            # cabina física: los ejes asignados mandan sobre el joystick genérico (ya llevan su zona muerta y curva).
+            # Solo en el avión que reproduce la consola; con otro, ni la consola ni su volante cuentan (joy_shared)
             hr, hp, hy = hw.flight_axes()
             if hr is not None:
                 roll = clamp(hr + self.kb_roll, -1, 1)
