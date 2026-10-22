@@ -178,7 +178,7 @@ class App(ScreensMixin):
         self._bar_rect = None
         self._bar_click = None
         self.controls.assist_rudder = self.settings["timon_auto"]
-        self.ui.on_click = lambda: self.audio.play("click", 0.45)
+        self.ui.on_click = lambda: self.audio.play("ui_click", 0.6)     # botones del menú y de la interfaz
         self.camera = Camera()
         self.panel = CockpitPanel(self.fonts)
         self.panel.mode = self.settings.get("cabina", "analog")
