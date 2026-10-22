@@ -523,6 +523,7 @@ def transfer_to_scene(old, loc):
     for wp in og.plan + ([og.direct] if og.direct is not None else []):
         wp.pos = conv(wp.pos)
     g.plan, g.active, g.direct, g.obs_mode, g.obs_course = og.plan, og.active, og.direct, og.obs_mode, og.obs_course
+    g.approach = None        # una aproximación RNAV es del aeródromo del escenario anterior: no pasa al nuevo
     g._from_here = og._from_here
     g.origin = conv(og.origin) if og.origin is not None else None
     w.cdi_src = old.cdi_src

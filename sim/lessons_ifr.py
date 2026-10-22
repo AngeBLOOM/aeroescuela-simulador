@@ -219,4 +219,79 @@ class L_Frustrada(L_LOC):
     objectives = ["No bajar de la MDA", "Frustrada inmediata en el MAP", "Rumbo de pista ±10°", "Ascenso a la altitud publicada"]
 
 
-IFR_LESSONS = [L_Espera, L_LOC, L_Frustrada]
+class L_RNAV(_LandingLesson):
+    id = "rnav"
+    title = "Aproximación RNAV (GPS)"
+    category = CAT
+    acs = "IR.VI.B"
+    standard = IR
+    duration = "12 min"
+    start = "final10"
+    guided = False
+    brief = ("ACS IR.VI.B — Aproximación RNAV (GPS) con senda vertical (LPV). Es una aproximación DE ENTRENAMIENTO, NO "
+             "PUBLICADA, generada para la pista en servicio. El GPS ya la tiene cargada desde el IAF izquierdo y el CDI "
+             "está en GPS: vuele al IAF, siga la ruta al IF manteniendo 2500 ft sobre la pista y vire al final. Desde 2 NM "
+             "antes del FAF la escala es de 0,3 NM (APR) y aparece la senda (rombo magenta «V» en el PFD, aguja horizontal "
+             "en el CDI): al centrarse, descienda por ella. Altura de decisión 250 ft sobre la pista; si no ve la pista, "
+             "motor y al aire. Tolerancias ACS: ≤ 3/4 de escala lateral y vertical y velocidad ±10 kt. Puede usar el "
+             "piloto automático en APR.")
+    objectives = ["Seguir la ruta IAF → IF → FAF", "Lateral ≤ 3/4 de escala", "Senda ≤ 3/4 de escala",
+                  "Velocidad ±10 kt", "Decisión a 250 ft sobre la pista", "Aterrizaje"]
+
+    def weather(self, w):
+        super().weather(w)
+        ifr_weather(w, 600, 2500)
+
+    def build(self, world):
+        from . import rnav
+        apr = rnav.build(world.home, world.active_rw, world.active_end)
+        self.apr = apr
+        iaf = apr.fixes.iaf_l
+        r = np.array([-apr.dir[1], apr.dir[0]])                 # a la derecha del final
+        p = iaf.pos - r * 3 * NM                                 # 3 NM antes del IAF izquierdo, volando hacia él
+        world.ac.place_in_air(p[0], p[1], iaf.alt_ft * FT, apr.course + 90, 95, flaps_idx=0)
+        world.gps.load_approach(apr, "L")
+        world.cdi_src = "GPS"
+        world.ap.alt_sel = round(iaf.alt_ft / 100) * 100
+        da = apr.da_ft
+        g = world.gps
+        lat = Monitor("Lateral (GPS)", lambda w: (w.gps.cdi * 5, w.gps.valid and abs(w.gps.cdi) < 0.75, "≤ 3/4 escala"),
+                      15, "{:+.1f}", "pt")
+        vert = Monitor("Senda (GPS)", lambda w: (w.gps.gs * 5, w.gps.gs_valid and abs(w.gps.gs) < 0.75, "≤ 3/4 escala"),
+                       15, "{:+.1f}", "pt")
+
+        def role(w):
+            t = w.gps.target
+            return getattr(t, "role", "") if t is not None else ""
+
+        def on_gp(w, L):
+            return g.scale == "APR" and abs(g.cdi) < 0.3 and g.gs_valid and g.gs < 0.2
+        self.steps = [
+            Step(f"Ruta del GPS: IAF {iaf.ident} → IF a {iaf.alt_ft:.0f} ft (CDI en GPS)", lambda w, L: role(w) == "FAF",
+                 voice=f"Aproximación RNAV de entrenamiento. Vuele al fijo inicial y siga la ruta del GPS al fijo "
+                       f"intermedio a {iaf.alt_ft:.0f} pies.",
+                 monitors=[mon_alt(iaf.alt_ft, 100, 10, "Altitud del tramo inicial"), mon_speed(95, 10, None, 5, "Velocidad")],
+                 timeout=420, hint="Siga la aguja magenta: el GPS secuencia solo los tramos y avisa del viraje en el IF."),
+            Step("Tramo intermedio: escala APR y capture la senda", on_gp,
+                 voice="Tramo intermedio. A dos millas del fijo de aproximación final la escala pasa a aproximación. "
+                       "Cuando el rombo de la senda llegue al centro, descienda.",
+                 monitors=[lat, mon_speed(90, 10, None, 5, "Velocidad")], timeout=300,
+                 hint="Mantenga la altitud hasta que la senda (rombo magenta) baje al centro."),
+            Step("Siga lateral y senda hasta 1000 ft sobre la pista", lambda w, L: alt(w) < self.elev_ft + 1000,
+                 voice="Establecido en la senda. Descienda con las dos agujas centradas.",
+                 monitors=[lat, vert, mon_speed(90, 10, None, 6, "Velocidad")]),
+            Step(f"70 kt y flaps completos; altura de decisión {da:.0f} ft", lambda w, L: alt(w) < da + 20,
+                 voice=f"Reduzca a setenta nudos y extienda flaps. Altura de decisión {da:.0f} pies.",
+                 monitors=[lat, vert]),
+        ] + self.final_steps(world, 68)[1:]
+        self.minimums_called = False
+        self.da = da
+
+    def coaching(self, dt, world):
+        super().coaching(dt, world)
+        if not self.minimums_called and alt(world) < self.da + 60 and self.idx >= 3:
+            self.minimums_called = True
+            self.messages.append(("mínimos", "callout"))
+
+
+IFR_LESSONS = [L_Espera, L_LOC, L_Frustrada, L_RNAV]

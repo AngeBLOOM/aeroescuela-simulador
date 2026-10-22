@@ -238,6 +238,19 @@ class GlassCockpit:
         bb = pygame.Rect(tape.x, tape.bottom + 2, tape.w, 22)
         pygame.draw.rect(surf, (0, 0, 0), bb)
         f.blit(surf, f"{world.kollsman:.0f} hPa", bb.center, 13, CYAN, mono=True, anchor="center")
+        # indicador de desviación vertical (como el del G1000): rombo verde con la senda del ILS, magenta con la del
+        # GPS en una aproximación RNAV; el rombo arriba del centro = la senda está arriba: subir
+        nav = world.nav_source()
+        if getattr(nav, "gs_valid", False):
+            col = MAG if nav is world.gps else GREEN
+            vd = pygame.Rect(tape.x - 22, tape.centery - tape.h * 0.3, 16, tape.h * 0.6)
+            pygame.draw.rect(surf, (0, 0, 0), vd)
+            for k in (-2, -1, 1, 2):
+                pygame.draw.circle(surf, WHITE, (vd.centerx, int(vd.centery + k * vd.h / 5)), 3, 1)
+            pygame.draw.line(surf, WHITE, (vd.x, vd.centery), (vd.right, vd.centery), 1)
+            yy = vd.centery - clamp(nav.gs, -1.0, 1.0) * vd.h * 0.4
+            pygame.draw.polygon(surf, col, [(vd.centerx, yy - 7), (vd.right - 1, yy), (vd.centerx, yy + 7), (vd.x + 1, yy)])
+            f.blit(surf, "V" if nav is world.gps else "G", (vd.centerx, vd.y - 2), 12, col, bold=True, anchor="midbottom")
         # variómetro
         vt = pygame.Rect(tape.right + 6, tape.y + 10, 36, tape.h - 20)
         vsurf = pygame.Surface(vt.size, pygame.SRCALPHA)
@@ -504,8 +517,25 @@ class GlassCockpit:
                                      tip=f"{wp.kind} {wp.name} · {dis:.1f} NM · rumbo {brg:03.0f}°"):
                     self.gps_choose(gps, wp)
                 yy += rh
+        elif self.gps_page == "apr":
+            from sim import rnav
+            f.blit(surf, "APROXIMACIÓN RNAV", (box.x + 8, yy), 13, MAG, bold=True)
+            yy += rh
+            f.blit(surf, "Entrenamiento: no publicadas", (box.x + 8, yy), 11, (255, 200, 0))
+            yy += rh - 4
+            ac = world.ac
+            aprs = sorted(rnav.for_world(world), key=lambda a: math.hypot(a.airport.ref[0] - ac.pos[0],
+                                                                           a.airport.ref[1] - ac.pos[1]))
+            for apr in aprs[:max(1, int((box.bottom - yy - 8) / rh))]:
+                if ui.cockpit_button(surf, (box.x + 6, yy, box.w - 12, rh - 2), apr.short, size=11,
+                                     tip=f"{apr.title} · desde el IAF del lado por el que llega · DA "
+                                         f"{apr.da_ft:.0f} ft (LPV), MDA {apr.mda_ft:.0f} ft (LNAV)"):
+                    gps.load_approach(apr, *rnav.entry(apr, ac.pos))
+                    self.gps_page = "fpl"
+                yy += rh
         else:
-            f.blit(surf, "PLAN DE VUELO", (box.x + 8, yy), 13, MAG, bold=True)
+            title = "PLAN DE VUELO" + (f" · {gps.approach.short}" if gps.approach is not None and not narrow else "")
+            f.blit(surf, title, (box.x + 8, yy), 13, MAG, bold=True)
             yy += rh
             if not gps.plan:
                 f.blit(surf, "Vacío: añada puntos con «+ Añadir».", (box.x + 8, yy + 2), 11, COL["grey"])
@@ -524,11 +554,15 @@ class GlassCockpit:
                 if yy > box.bottom - 2 * rh:
                     break
             by = box.bottom - rh - 4
-            half = (box.w - 16) / 2
-            if ui.cockpit_button(surf, (box.x + 6, by, half, rh - 2), "+ Añadir", size=11):
+            third = (box.w - 20) / 3
+            if ui.cockpit_button(surf, (box.x + 6, by, third, rh - 2), "+" if narrow else "+ Añadir", size=11,
+                                 tip="Añadir un punto (tecleando o de la lista)"):
                 self.gps_page = "add"
                 self.gps_query = ""
-            if ui.cockpit_button(surf, (box.x + 10 + half, by, half, rh - 2), "Borrar" if narrow else "Borrar plan", size=11):
+            if ui.cockpit_button(surf, (box.x + 10 + third, by, third, rh - 2), "RNAV", size=11,
+                                 tip="Cargar una aproximación RNAV (GPS) de entrenamiento"):
+                self.gps_page = "apr"
+            if ui.cockpit_button(surf, (box.x + 14 + 2 * third, by, third, rh - 2), "Borrar", size=11):
                 gps.clear()
 
     def mfd(self, surf, rect, world, ui):
