@@ -43,8 +43,8 @@ DEFAULT_SETTINGS = dict(
     cabina="analog", avion="c172", mostrar_fps=False, joystick={}, ubicacion="", cabina_estilo="auto",
     calidad="auto", fluidez="auto", indicativo="EC-AES", atc=True, trafico=True,
     instructor_red=False,     # puesto del instructor por navegador web en la red local
-    edificios_3d=False,
-    fondo_instr="futurista",  # fondo de la pantalla de instrumentos: "futurista" o "negro" (tablero físico recortado)       # False: paisaje de foto satelital pura · True: con edificios 3D de OpenStreetMap
+    edificios_3d=True,        # True: edificios 3D de OpenStreetMap con fachadas · False: foto satelital pura
+    fondo_instr="futurista",  # fondo de la pantalla de instrumentos: "futurista" o "negro" (tablero físico recortado)
     atc_externo=False,        # enlace con un simulador de tránsito aéreo externo (app/atc_link.py, puerto 8770)
     atc_externo_puerto=8770,
     udp_salida=False,         # datos de vuelo por UDP para instrumentos, paneles o movimiento (app/udp_out.py)
@@ -52,6 +52,9 @@ DEFAULT_SETTINGS = dict(
     udp_puerto=49020, udp_hz=30,
     monitores_paisaje=1,      # nº de monitores (de izquierda a derecha) que ocupa la vista exterior
     vistas=1,                 # 1 o 3 vistas (izquierda · frente · derecha) en la vista exterior
+    # visión 1:1 de la cabina física: ancho visible del paisaje en la pantalla, distancia del ojo y altura del ojo
+    # sobre el centro del paisaje (cm). Con ancho y distancia cargados, el campo de visión es el real (0 = 80° fijo)
+    vision_ancho_cm=0, vision_dist_cm=0, vision_ojo_cm=0,
     pantalla_instr="no",      # "no" · "ambiente" (paisaje + instrumentos) · "unica" (solo instrumentos) · "segunda" (2.º monitor)
 )
 
@@ -131,7 +134,7 @@ class App(ScreensMixin):
                 self.settings["ubicacion"] = ""
         self._loading("Generando el mundo…", 0.1)
         self.world = World(self.settings.get("avion", "c172"), location=loc)
-        self.world.buildings_3d = bool(self.settings.get("edificios_3d", False))
+        self.world.buildings_3d = bool(self.settings.get("edificios_3d", True))
         self.renderer = Renderer(self.ctx, self.world, (self.W, self.H), progress=lambda m: self._loading(m, 0.5))
         self.fps_cap = 60
         self._work_avg = 12.0
@@ -198,8 +201,8 @@ class App(ScreensMixin):
         self.messages = deque(maxlen=4)
         self.flash_msg = None
         self.show_panel = True
-        # cabina en pantalla: "auto" (según haya consola física), "2d", "3d" o "none". La cabina fotográfica ya no
-        # existe: los mandos dibujados no sirven con la consola física (un ajuste antiguo pasa a "auto")
+        # cabina en pantalla: "auto" (según haya consola física), "2d" o "none". La cabina fotográfica y la cabina 3D
+        # ya no se ofrecen: los mandos dibujados no sirven con la consola física (un ajuste antiguo pasa a "auto")
         self.cockpit_mode = self.settings.get("cabina_estilo", "auto")
         if self.cockpit_mode not in self.COCKPIT_MODES:
             self.cockpit_mode = self.settings["cabina_estilo"] = "auto"
@@ -267,8 +270,13 @@ class App(ScreensMixin):
         return q
 
     def apply_quality(self):
-        scale, samples = self.QUALITY[self.quality_level()]
+        q = self.quality_level()
+        scale, samples = self.QUALITY[q]
         self.renderer.set_quality(scale, samples)
+        # efectos de imagen y sombra fina salvo en «rendimiento» (tarjetas muy modestas)
+        self.renderer.set_effects(q != "rendimiento", 2048 if q == "alta" else 1024)
+        # distancia hasta la que se dibujan los edificios reales (más allá la bruma y la foto bastan)
+        self.renderer.bldg_far = {"alta": 9000.0, "media": 7000.0}.get(q, 5000.0)
 
     def save_settings(self):
         try:
@@ -297,7 +305,7 @@ class App(ScreensMixin):
         f.blit(s, "› " + msg, (cx, cy + rr + 60), 14, (150, 215, 238), tech=True, anchor="center")
         self.ctx.viewport = (0, 0, self.W, self.H)
         self.ctx.clear(0.04, 0.06, 0.1)
-        if hasattr(self, "renderer"):
+        if getattr(self, "renderer", None) is not None:   # (al cambiar de escenario se suelta antes del nuevo)
             self.renderer.draw_overlay(s)
         else:
             self._raw_overlay(s)
@@ -345,13 +353,29 @@ class App(ScreensMixin):
         pygame.image.save(img, path)
         self.flash("Captura guardada en datos/capturas")
 
+    def photo(self):
+        """Foto pro (Mayús+F12): el paisaje y el avión limpios, sin tablero ni textos, al doble de la resolución de la
+        pantalla (4K en una pantalla Full HD) con todos los efectos. La toma el renderizador en el próximo cuadro."""
+        d = os.path.join(DATA, "capturas")
+        os.makedirs(d, exist_ok=True)
+        self.renderer.photo_request = (os.path.join(d, time.strftime("foto_%Y%m%d_%H%M%S.png")), 2)
+        self.flash("Foto pro: tomando la imagen…")
+
+    def check_photo(self):
+        res = self.renderer.photo_result
+        if res is not None:
+            self.renderer.photo_result = None
+            path, err = res
+            self.flash(f"Foto pro guardada: datos/capturas/{os.path.basename(path)}" if err is None
+                       else f"No se pudo tomar la foto: {err}")
+
     # ------------------------------------------------------------ pantalla de instrumentos (cabina física)
     INSTR_MODES = ("no", "ambiente", "unica", "segunda")
     INSTR_NAMES = {"no": "Pantalla normal", "ambiente": "Paisaje + instrumentos (sin cabina)",
                    "unica": "Solo instrumentos (esta pantalla)", "segunda": "Instrumentos en una segunda ventana"}
 
     # ------------------------------------------------------------ cabina en pantalla
-    COCKPIT_MODES = ("auto", "2d", "3d", "none")
+    COCKPIT_MODES = ("auto", "2d", "none")
     COCKPIT_NAMES = {"2d": "Panel 2D", "3d": "Cabina 3D", "none": "Sin panel (solo paisaje)",
                      "franja": "Paisaje + franja de instrumentos"}
 
@@ -661,7 +685,7 @@ class App(ScreensMixin):
     def configure_world(self):
         w = self.world
         w.atc.callsign = (self.settings.get("indicativo") or "EC-AES").upper()
-        w.buildings_3d = bool(self.settings.get("edificios_3d", False))
+        w.buildings_3d = bool(self.settings.get("edificios_3d", True))
         w.atc.enabled = bool(self.settings.get("atc", True))
         w.traffic.enabled = bool(self.settings.get("trafico", True))
         if not w.traffic.enabled:
@@ -720,6 +744,16 @@ class App(ScreensMixin):
 
     # ------------------------------------------------------------ vuelo
     # ------------------------------------------------------------ ubicaciones
+    def _free_renderer(self):
+        """Suelta el renderizador actual antes de crear otro: con tarjetas de 1 GB no caben los dos a la vez."""
+        import gc
+        self.renderer = None
+        gc.collect()
+        try:
+            self.ctx.gc()
+        except Exception:
+            pass
+
     def switch_world(self, loc):
         """Sustituye el mundo y el renderizador (ubicación real o escenario escuela)."""
         aid = self.world.ac.t.id
@@ -729,6 +763,7 @@ class App(ScreensMixin):
         self.world.weather.copy_from(wx)
         self.configure_world()
         self.world.reposition("pista")
+        self._free_renderer()                            # suelta la memoria de video del escenario anterior
         self.renderer = Renderer(self.ctx, self.world, (self.W, self.H), progress=lambda m: self._loading(m, 0.97))
         self.apply_quality()
         self.panel.glass.map_img = None
@@ -942,7 +977,7 @@ class App(ScreensMixin):
             self.panel.mode = "glass" if self.panel.mode == "analog" else "analog"
             self.settings["cabina"] = self.panel.mode
         elif k == pygame.K_p:
-            # automática → panel 2D → cabina 3D → sin panel
+            # automática → panel 2D → sin panel
             order = self.COCKPIT_MODES
             self.cockpit_mode = order[(order.index(self.cockpit_mode) + 1) % len(order)]
             self.settings["cabina_estilo"] = self.cockpit_mode
@@ -1009,6 +1044,8 @@ class App(ScreensMixin):
         elif k == pygame.K_i:
             self.state = "instructor"
             self.audio.silence()
+        elif k in (pygame.K_F12, pygame.K_PRINTSCREEN) and pygame.key.get_mods() & pygame.KMOD_SHIFT:
+            self.photo()
         elif k == pygame.K_F12 or k == pygame.K_PRINTSCREEN:
             self.screenshot()
         elif k == pygame.K_F9:
@@ -1138,6 +1175,7 @@ class App(ScreensMixin):
         self._loading("Escenario siguiente · " + loc["name"], 0.95)
         self.world = transfer_to_scene(self.world, loc)
         self.configure_world()
+        self._free_renderer()                            # suelta la memoria de video del escenario anterior
         self.renderer = Renderer(self.ctx, self.world, (self.W, self.H), progress=lambda m: self._loading(m, 0.97))
         self.apply_quality()
         self.panel.glass.map_img = None
@@ -1304,6 +1342,7 @@ class App(ScreensMixin):
             if self.udp is not None:
                 self.udp.update(dt, self)
             self.frame(dt, events)
+            self.check_photo()
             pygame.display.flip()
             self.latency.mark_frame()            # retardo interno: mandos leídos → imagen entregada
             self.draw_instrument_window()
@@ -1521,6 +1560,19 @@ class App(ScreensMixin):
             ui.clicked, ui.right_clicked = clicked0, right0
         return hit is not None
 
+    def vision_calibration(self, vp_w, vp_h):
+        """(campo de visión horizontal en grados, corrimiento vertical de la imagen) para que el paisaje se vea a
+        escala real desde el asiento: la pantalla ocupa desde el ojo el mismo ángulo que esa parte del mundo y el
+        horizonte queda a la altura del ojo. None si no está calibrado."""
+        st = self.settings
+        w_cm, d_cm = float(st.get("vision_ancho_cm", 0) or 0), float(st.get("vision_dist_cm", 0) or 0)
+        if w_cm <= 0 or d_cm <= 0 or vp_w <= 0 or vp_h <= 0:
+            return None
+        h_cm = w_cm * vp_h / vp_w
+        hfov = math.degrees(2.0 * math.atan(w_cm / 2.0 / d_cm))
+        shift = -2.0 * float(st.get("vision_ojo_cm", 0) or 0) / h_cm
+        return hfov, shift
+
     def draw_flight(self, dt, paused=False):
         w = self.world
         cam = self.camera
@@ -1559,6 +1611,17 @@ class App(ScreensMixin):
                 cam.head_yaw = 0.0
                 cam.head_pitch = math.radians(-4.0)
                 cam.fov = 80.0
+        # cabina física sin tablero dibujado: visión 1:1 si está calibrada (el horizonte queda a la altura del ojo)
+        calib = self.vision_calibration(self.W, self.H - ph) if in_cab and not cockpit2d and not cockpit3d else None
+        if calib is not None:
+            if getattr(self, "_calib_view", None) is not self.lesson:
+                self._calib_view = self.lesson
+                cam.anim = None
+                cam.head_yaw = 0.0
+                cam.head_pitch = 0.0
+            cam.fov, cam.shift_y = calib
+        else:
+            cam.shift_y = 0.0
         cam.update(dt if dt else 0.0, w)
         viewport = (0, ph, self.W, self.H - ph)
         self._scene_rect = pygame.Rect(0, 0, self.W, self.H - ph)     # zona del paisaje en pantalla
@@ -1933,7 +1996,9 @@ class App(ScreensMixin):
         if lt is not None:
             col, blink = lt
             on = not blink or int(t * 2) % 2 == 0
-            c = (60, 255, 90) if col == "verde" else (255, 50, 40)
+            if col == "alterna":
+                on, col = True, ("rojo" if int(t * 2) % 2 == 0 else "verde")
+            c = {"verde": (60, 255, 90), "rojo": (255, 50, 40), "blanco": (255, 255, 245)}[col]
             r = pygame.Rect(0, self.H * 0.30, 250, 64)
             r.right = self.free_span(lesson_box=False)[1]          # a la izquierda de la tableta si está abierta
             panel_box(s, r, 10, (6, 16, 28, 230), border=c if on else (70, 76, 86))
@@ -1941,9 +2006,11 @@ class App(ScreensMixin):
                 pygame.draw.circle(s, c, (r.x + 34, r.centery), 18)
                 pygame.draw.circle(s, (255, 255, 255), (r.x + 34, r.centery), 7)
             f.blit(s, "SEÑAL DE LA TORRE", (r.x + 64, r.y + 12), 12, COL["grey"], bold=True)
-            meaning = {("verde", False): "Autorizado a aterrizar", ("rojo", False): "Ceda el paso, siga en circuito",
-                       ("verde", True): "Autorizado a rodar", ("rojo", True): "Libere la pista"}[lt]
-            f.blit(s, meaning, (r.x + 64, r.y + 32), 14, COL["white"], bold=True)
+            # el significado aparece a los 8 s: primero el alumno debe interpretarla (en la cabina física no hay cartel)
+            if w.emerg.light_since > 8.0:
+                f.blit(s, w.emerg.light_meaning(w.ac.on_ground), (r.x + 64, r.y + 32), 14, COL["white"], bold=True)
+            else:
+                f.blit(s, "¿Qué significa?", (r.x + 64, r.y + 32), 14, COL["grey"], bold=True)
 
     def draw_replay(self, dt):
         r = self.replay

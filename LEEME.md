@@ -54,6 +54,138 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   - humedad;
   - fallas nuevas.
 - **Lecciones nuevas:** hielo en el carburador y barrena.
+- **Gráficos:**
+  - **sombra real del avión** con la silueta del modelo 3D, según la hora del Sol, sobre el terreno, la pista y los
+    hangares (ayuda a juzgar la altura en el aterrizaje; se desvanece con la altura, de noche y con cielo cubierto);
+  - penumbra horneada en los modelos 3D (uniones, ruedas, interior) sin costo en vuelo;
+  - resplandor de las luces de pista, estroboscópicos y ciudades de noche;
+  - destello del Sol solo cuando el disco se ve (no lo tapan el terreno, el tablero ni las nubes);
+  - color según la hora (dorado al amanecer y al atardecer, azulado de noche) y borde plateado de las nubes a
+    contraluz.
+  - **sombras de hangares, edificios y árboles** alrededor de la cámara, también sobre el avión cuando rueda por
+    la sombra de un hangar;
+  - **relieve fino alrededor del avión**: malla de 12,5 m (en vez de 100 m) con superficie suave y ondulaciones del
+    suelo; la física usa la misma superficie (las ruedas no flotan ni se hunden) y los aeródromos quedan planos;
+  - **Foto pro** (Mayús+F12): la escena limpia, sin tablero ni textos, al doble de la resolución de la pantalla;
+  - **hangares con detalle**: chapa ondulada, portones corredizos con ventanas, techo a dos aguas con alero y
+    canaleta, losa de concreto y letrero; **torre de control** con cabina de vidrio y balcón (texturas generadas
+    por el programa, `render/buildings.py`);
+  - **árboles con dos niveles de detalle**: de cerca, pinos de varios pisos y frondosos de copa redonda que se mecen
+    con el viento; de lejos, los simples; más allá de 6,5 km no se dibujan (la bruma los tapa). Bosques tres veces
+    más tupidos y aun así más livianos que antes;
+  - **fachadas con ventanas** en los edificios reales (OpenStreetMap; encendidos por defecto, Ajustes → *Paisaje*)
+    y en las casas y edificios de los pueblos: pisos, ventanas que reflejan el cielo y el Sol, vidrieras en la
+    planta baja, torres de vidrio, casas con techo de tejas a dos aguas y, **de noche, ventanas encendidas al
+    azar**. Las dibuja el shader (sin texturas); de lejos se simplifican y no cuestan más que las paredes lisas.
+- **Señalización del aeródromo (OACI / FAA)**, pensada para practicar el rodaje y evitar incursiones en pista:
+  - líneas de espera antes de cada pista (dos continuas del lado de la calle, dos discontinuas del lado de la
+    pista) a 60 m del eje si la pista tiene ILS y a 30 m si es visual;
+  - cartel rojo de posición de espera con los números de pista ordenados como los ve el piloto (el de la
+    izquierda corresponde al extremo de la izquierda) y cartel negro con el nombre de la calle; iluminados de noche;
+  - calles de rodaje y plataforma con asfalto real; luces azules de borde;
+  - **faro giratorio** blanco y verde (12 vueltas por minuto) de noche o con cielo cubierto.
+  - **REIL** (dos destellos blancos sincronizados a los lados del umbral) en los extremos sin luces de aproximación;
+  - **faro de rodaje del avión** separado del de aterrizaje: haz ancho y corto que alumbra la calle y los bordes.
+  - **círculo segmentado** alrededor de la manga en Valle Norte (aeródromo no controlado), con las «L» que indican
+    hacia qué lado es el circuito de cada pista (por el sur: izquierda para la 27, derecha para la 09).
+  En los aeropuertos reales solo se agrega el faro (las calles de rodaje se ven en la foto satelital).
+- **Tráfico visible a distancias reales («ver y evitar»)**: un avión ligero a 4 km mide menos de un píxel y la
+  imagen lo perdería; se dibuja como el puntito oscuro que ve el ojo (1,5 a 3 px), más tenue con la distancia y la
+  bruma, hasta unos 10 km. De noche se ven sus luces.
+- **Nubes y bruma para practicar los mínimos VFR**: las nubes tienen la base plana y gris a la altura informada
+  (antes asomaban hasta 500 m por debajo del techo del METAR) y la bruma se concentra cerca del suelo: abajo la
+  visibilidad es la del METAR, al subir mejora y desde arriba se ve la capa de bruma en el horizonte. Dentro de una
+  capa de nubes la visibilidad es pareja. Los cúmulos, vistos desde arriba, cubren más o menos la fracción del
+  METAR (FEW, SCT, BKN) y con sol **proyectan su sombra sobre el suelo**, los edificios, los árboles y el avión.
+- **Pista mojada**: con lluvia el pavimento se oscurece, se espeja (refleja el cielo cuanto más rasante se mira y el
+  brillo del Sol) y aparecen charcos; la pintura sigue viéndose. Es la misma humedad que informa el ATIS y que usa
+  el frenado. De noche, las luces de pista se reflejan en el pavimento como estelas hacia el piloto.
+- **Pistas reales con sus datos**: las que no tienen luces (dato de OurAirports) quedan a oscuras de noche; las de
+  pasto, tierra o grava no se dibujan con asfalto ni pintura (se ve la pista de la foto con balizas blancas de borde)
+  y se rueda en ellas como en césped. El ILS de entrenamiento se genera solo en pistas pavimentadas, con luces y de
+  1500 m o más (antes, en cualquiera de más de 700 m).
+- **Visión 1:1 en la cabina física** (Ajustes → *Visión 1:1*): con el ancho visible del paisaje, la distancia del
+  ojo y su altura sobre el centro, el campo de visión es el real y el horizonte queda a la altura del ojo (corrimiento
+  óptico de la imagen, sin inclinar la cámara): la pista y las distancias se ven del tamaño que tienen desde el avión.
+- **Niebla de valle (radiación)**: con aire casi saturado (temperatura − rocío ≤ 2 °C, se ajusta con la humedad
+  del instructor), viento flojo y entre la madrugada y unas horas después del amanecer, los valles se llenan de
+  niebla en parches y los cerros quedan despejados. El METAR y el ATIS la informan (FG con menos de 1000 m, BR
+  mientras se disipa).
+- **Atravesar un cúmulo**: al entrar en una nube suelta la vista queda en blanco (sin horizonte, como en IMC real) y al salir se ve la pared de la nube; dentro de la nube la luz sigue la hora (gris cálido y oscuro al amanecer y al atardecer).
+- **Suelo con texturas fotográficas**: la pista y las calles de rodaje usan un escaneo real de asfalto, la plataforma
+  losas de concreto de 5 m con juntas y el pasto un escaneo real de césped, cada uno con su **relieve** (mapa de
+  normales) que responde al Sol: de cerca, al rodar o en la corta final, se ve el grano del asfalto, las juntas y
+  las matas de pasto con su sombra. A media distancia el pasto tiene matas y manchas secas para que no se vea liso.
+  Las texturas se preparan con `tools/texturas_suelo.py` (créditos en `assets/CREDITOS_TEXTURAS.md`).
+- **Carteles de distancia restante y luces de borde según la pista**: en pistas pavimentadas, iluminadas y de 1500 m
+  o más hay carteles negros con el número blanco cada 1000 ft (miles de pies que quedan; el dorso muestra los del
+  sentido contrario), con luz propia de noche: sirven para decidir a tiempo un despegue abortado. Las pistas con ILS
+  tienen luces de borde de alta intensidad (HIRL), con la zona de precaución amarilla en los últimos 600 m; las
+  demás, de intensidad media (MIRL) y todas blancas. Las luces más intensas se ven desde más lejos con bruma.
+- **Edificios modelados en Blender**: hangares (zócalo, chapa ondulada que el Sol marca, claraboyas, extractores,
+  canaletas y bajantes, portón con hojas, paneles y ventanas, una hoja abierta al interior con su estructura, oficina
+  anexa con ventanas, aires y alero, bolardos, extintor, reflectores), torre de control (edificio de operaciones,
+  fuste con ventanas de escalera, piso técnico, cabina de vidrio inclinado con parteluces, pasarela con baranda,
+  antenas y faro) y estación de combustible en la plataforma. Paredes blancas con remates azules. Se generan con
+  `python tools/modelos_edificios.py <blender.exe>` (Blender 4.2 LTS; cada modelo en su propio proceso), que
+  modela, hornea la luz del cielo y deja `assets/edificios/<clave>.npz`; sin esos archivos se usan los de código.
+- **Pueblos con casas de Blender**: casas de una planta con techo de teja a dos aguas, casas con corredor y techo a
+  cuatro aguas, casas de dos plantas con platabanda, balcón y tanque de agua, casas en L y edificios de 4 y 10 pisos
+  con balcones; cada casa con su color pastel. Se dibujan por instancias con dos niveles de detalle (el modelo
+  completo hasta 2,5 km y una versión simple hasta 14 km). Las granjas del campo usan las mismas casas. De noche
+  se encienden algunas ventanas con luz cálida, salteadas como en un pueblo real.
+- **Árboles de Blender**: pino, frondoso, samán (copa ancha de los llanos) y palma, con tronco, ramas y copa de
+  masas irregulares, la penumbra del interior de la copa calculada con rayos y normales de follaje suaves. De cerca
+  se usa el modelo detallado y de lejos la versión simple, por instancias.
+- **Luminarias y PAPI físicos** (Blender): bajo cada luz de borde, umbral y rodaje hay una luminaria elevada con
+  su pata frangible amarilla y su domo, y cada PAPI tiene su caja sobre patas con tres lentes hacia la
+  aproximación; de día se ven al rodar y en la corta final, como en un aeródromo real.
+- **Manga de viento real**: mástil de Blender con franjas rojas y blancas, reflectores y luz de obstáculo; manga
+  cónica de cinco bandas (cada una, unos 3 kt) con aro en la boca, que se infla con el viento y aletea más con
+  ráfagas, para leer dirección e intensidad en la corta final.
+- **Cerca perimetral** de los aeródromos de la escuela (Blender): postes galvanizados, malla translúcida y alambre de
+  púas, a 70 m del borde de la pista, siguiendo el terreno, con el portón de acceso.
+- **Edificio de la escuela de vuelo** (Blender) frente a la plataforma: vidriera en planta baja, marquesina, balcón
+  mirador con baranda y ventanas corridas arriba. La cerca perimetral tiene portones donde la cruzan las carreteras.
+- **Radioayudas físicas** (Blender) en su lugar real: estación VOR Doppler con su contrapeso y anillo de antenas,
+  NDB con mástil en franjas y antena en T, y por cada ILS la fila de dipolos del localizador detrás del extremo
+  de la pista y el mástil de la senda de planeo al costado, 300 m pasado el umbral. Se ven desde hasta 9 km: el
+  alumno aprende a reconocerlas desde el aire. Las luces de aproximación están sobre sus barras reales: postes
+  frangibles, barra de 4 m y cinco cabezales cada 60 m, con la barra transversal a 300 m.
+- **Torres de iluminación de la plataforma** (Blender): mástiles de 18 m con cuatro reflectores que de noche
+  alumbran el concreto donde están los aviones (el alumno sale y vuelve a una plataforma iluminada, como en la realidad).
+- **Luz horneada en Blender** en hangares y torres: la luz del cielo con sus rebotes (Cycles) está calculada de
+  antemano en un mapa de luz por edificio, así los rincones, el pie de las paredes, los aleros y el portón tienen
+  la penumbra suave de una foto, y el suelo alrededor se oscurece un poco junto a las paredes. El Sol y sus sombras
+  siguen siendo dinámicos (sirve a cualquier hora). Se rehace con `python tools/hornear_luz.py <blender.exe>`
+  (Blender 4.2 LTS, solo hace falta para volver a hornear si cambia la forma de los edificios); queda en `assets/luz`.
+- **El viento se lee en el paisaje**, como en un aterrizaje forzoso real: en lagos y mar las ondas avanzan a favor del
+  viento, con calma el agua queda lisa como un espejo, desde unos 10 kt aparecen franjas a lo largo del viento y
+  desde unos 14 kt borreguitos de espuma; los árboles se inclinan hacia donde sopla y las ráfagas recorren el bosque.
+  Cerca de los aeródromos hay **humo de quemas y chimeneas** que sube, se acuesta con el viento fuerte y deriva en
+  su dirección (con lluvia fuerte no hay quemas).
+- **Antenas en los cerros como obstáculos**: repetidoras de 60-90 m en las cimas cercanas a los aeródromos, pintadas
+  en franjas rojas y blancas, con luz roja intermitente arriba y fija a media altura de noche (vuelo VFR nocturno y
+  altura mínima sobre obstáculos).
+- **Luces propias dentro de la nube o la niebla**: con las estroboscópicas encendidas en IMC cada destello ilumina
+  toda la nube (desorienta, por eso se apagan), el anticolisión da un pulso rojo y el faro de aterrizaje un
+  resplandor que enceguece; de noche mucho más que de día.
+- **Tendido de alta tensión** al norte de Base Escuela: torres de celosía de 32 m, cables con su comba y esferas
+  naranjas y blancas donde el vano cruza alto sobre el valle. Los cables son finos y cuesta verlos, como en la
+  realidad: se aprende a buscar las torres (vuelo bajo, aterrizaje forzoso).
+- **Carteles amarillos de guía**: en la pista, 70 m antes de cada salida y para cada sentido de aterrizaje, la
+  letra de la calle con la flecha hacia el lado de la salida; al entrar a la calle desde la plataforma, el destino
+  (números de pista con flecha). Con luz propia de noche. Sirven para practicar las instrucciones de rodaje.
+- **Señales luminosas de la torre** (pistola de luz): salen de la cabina de la torre apuntadas al avión, con las seis
+  señales de la OACI (verde, roja y blanca, fijas o intermitentes, y roja y verde alternadas) y su significado en
+  vuelo o en tierra. Llegan solas con falla de radio cerca del aeródromo, o el instructor las manda desde la
+  pestaña Fallas. El significado aparece en pantalla recién a los 8 s: primero el alumno debe interpretarla.
+- **Tránsito nocturno en las carreteras** del escenario de la escuela: autos en ambos sentidos, con faros blancos
+  hacia el piloto y luces traseras rojas al alejarse; de noche las carreteras se distinguen como en la realidad y
+  sirven de referencia para navegar.
+- **Bruma iluminada por el Sol**: mirando hacia el Sol la bruma del horizonte brilla como el cielo (luz dispersada
+  hacia adelante) y el terreno lejano empalma con el cielo sin corte. **Manga de viento iluminada** de noche.
+  En calidad «rendimiento» se apagan los efectos de imagen y quedan las sombras.
 - **Salida de datos por UDP** para instrumentos, paneles y movimiento: `docs/PROTOCOLO_UDP.md`.
 - **Pruebas:** `python tools/pruebas.py` ejecuta 21 pruebas sin ventana; GitHub las ejecuta en cada pull request.
 - **Validación y documentación para la autoridad:**
@@ -86,9 +218,8 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
 - **Cabina automática** (por defecto): con la consola física conectada no se dibuja ningún mando (solo el paisaje,
   con la franja de instrumentos debajo si no van en su propia pantalla); sin consola, el panel 2D, que se maneja
   con el ratón y con el teclado o un joystick USB. Cambia sola al enchufar o quitar la consola.
-- **Cabina 3D por dentro**: tablero con los instrumentos reales montado en 3D y pulsable con el ratón,
-  visera, brújula, montantes, techo, puertas, asientos, capó del motor a la vista, disco de la hélice y reflejos
-  del sol en el parabrisas; volantes ocultos (tecla **Y**). Tecla **P**: automática · panel 2D · cabina 3D · sin panel.
+- Tecla **P**: automática · panel 2D · sin panel. La cabina 3D dibujada ya no se ofrece (se veía artificial y con la
+  consola física no hace falta: el alumno mira el paisaje y sus mandos reales).
 - Aspecto fotográfico: marcos metálicos con tornillos, esferas, reflejo del cristal, tablero texturizado y marcos
   físicos de las pantallas G1000. Las texturas se generan por código con `python tools/make_assets.py`
   (carpeta `assets/`); si se sustituyen por fotos o imágenes de IA con el mismo nombre, el simulador las usa.
@@ -263,8 +394,8 @@ El simulador genera 51 × 51 km alrededor del aeropuerto con:
 
 - **Relieve real** (AWS Terrain Tiles: SRTM/GMTED).
 - **Fotografía satelital** en tres niveles de detalle (1,2 m/píxel en 3 km alrededor de la pista, 4,8 m/píxel en 10 km
-  y 12 m/píxel en todo el escenario). Por defecto el paisaje es la **foto satelital pura**, como se ve desde el avión;
-  en Ajustes → *Paisaje* se pueden añadir edificios 3D.
+  y 12 m/píxel en todo el escenario), con los **edificios 3D de OpenStreetMap** y sus fachadas encima (en Ajustes →
+  *Paisaje* se puede volver a la foto satelital pura).
 - **Lagos, embalses y ríos anchos como agua de verdad** (contornos de OpenStreetMap): color de agua, reflejo del cielo,
   destello del sol y olas. Aterrizar en ellos es un amerizaje.
 - **Pistas reales** con su orientación, longitud, anchura y número; aeródromos vecinos; **VOR reales**.
@@ -294,8 +425,9 @@ propio del simulador. Para cambiar o agregar uno, descargue el modelo en **glTF 
     python tools/importar_modelo.py c172 Descargas/free_cessna_172sp.glb quitar=remove_before_flight,Concrete
 
 El conversor lo pone en los ejes del avión, lo escala a la envergadura real, apoya las ruedas a la altura del tren,
-reduce las texturas y guarda el crédito del autor (`invertir` si queda al revés; `quitar=` para piezas que no deben
-verse en vuelo, como amarres). El avión que no tenga modelo se dibuja por código. El DA40 descargado traía la cúpula
+reduce las texturas, hornea la penumbra de rendijas y uniones y guarda el crédito del autor (`invertir` si queda al
+revés; `quitar=` para piezas que no deben verse en vuelo, como amarres). `python tools/importar_modelo.py hornear`
+vuelve a calcular la penumbra de los ya convertidos. El avión que no tenga modelo se dibuja por código. El DA40 descargado traía la cúpula
 abierta, así que por ahora sigue con el de código.
 
 ## Cabina física: pantalla solo de instrumentos
@@ -387,6 +519,7 @@ controlador de ejemplo con radar, radio y frases rápidas). Prueba automática: 
 | M / N | mezcla | I | estación del instructor |
 | G | tren (Arrow) | Esc | pausa / menú |
 | Ctrl+E | arranque automático | F12 | captura de pantalla |
+| | | Mayús+F12 | **Foto pro**: paisaje y avión limpios en 4K (`datos/capturas`) |
 
 Joystick o volante de vuelo: se detecta solo; los ejes se configuran en Ajustes.
 
@@ -446,6 +579,8 @@ pull request) o una sola, p. ej. `python tests/test_lessons.py` (con `LOC=LEMD` 
 - Modelos 3D de los aviones (Sketchfab, **CC BY 4.0**, uso comercial permitido citando al autor; la cita se muestra en
   Vuelo libre y está en `assets/modelos/CREDITOS.json`): «FREE Cessna 172SP» de NLM, «Cessna 152» de micheal_wain,
   «Piper Pa 28 Cadet», «Diamond Da42 Twin Star» de helijah y «Cirrus SR22» de KOG_THORNS.
+- Texturas fotográficas del suelo (**CC0**, dominio público, uso comercial libre): «Asphalt Pit Lane» y «Concrete
+  Floor 02» de Poly Haven, «Grass004» de ambientCG (`assets/CREDITOS_TEXTURAS.md`).
 - Tipografía **Orbitron** (© The Orbitron Project Authors, SIL Open Font License 1.1, texto en `assets/fuentes/Orbitron_OFL.txt`): libre para uso comercial e incluida con el programa.
 
 ## Límites honestos

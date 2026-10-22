@@ -18,15 +18,127 @@ uniform float u_logc;
 """
 
 FOG_FN = """
-vec3 apply_fog(vec3 col, vec3 wpos) {
+uniform float u_fog_base;     // altura (m) donde empieza la capa de bruma (el suelo del valle)
+uniform float u_fog_scale;    // la bruma se reduce a la mitad cada ~0,7 de esta altura
+// bruma por altura: densa cerca del suelo y más limpia arriba (se integra a lo largo del rayo). A la altura del
+// suelo la visibilidad es la del METAR; al subir mejora y desde arriba se ve la capa de bruma en el horizonte
+float fog_depth(vec3 wpos) {
     float d = length(wpos - u_campos);
-    float f = exp(-pow(d * u_fog_density, 1.6));
-    return mix(u_fog_col, col, clamp(f, 0.0, 1.0));
+    float h0 = max(-u_campos.z - u_fog_base, 0.0);
+    float h1 = max(-wpos.z - u_fog_base, 0.0);
+    float H = max(u_fog_scale, 1.0);
+    float e0 = exp(-h0 / H);
+    float dh = h1 - h0;
+    float avg = abs(dh) > 1.0 ? (e0 - exp(-h1 / H)) * H / dh : e0;
+    return d * u_fog_density * (0.22 + 0.78 * avg);
+}
+uniform float u_gfog;          // niebla de valle: densidad (1/m) dentro de la capa (0 = no hay)
+uniform float u_gfog_top;      // altura del tope de la capa (m)
+uniform vec3 u_gfog_col;
+float gfog_hash(vec2 p) {
+    vec3 q = fract(vec3(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
+}
+// transmisión a través de la capa de niebla de valle: solo cuenta el tramo del rayo por debajo del tope, con
+// parches (más espesa en unos lugares que en otros)
+float gfog_trans(vec3 wpos) {
+    if (u_gfog <= 0.0) return 1.0;
+    float a0 = -u_campos.z;
+    float a1 = -wpos.z;
+    float lo = min(a0, a1);
+    float hi = max(a0, a1);
+    if (lo >= u_gfog_top) return 1.0;
+    float frac = hi <= u_gfog_top ? 1.0 : (u_gfog_top - lo) / max(hi - lo, 0.01);
+    vec2 g = wpos.xy / 900.0;
+    vec2 i = floor(g);
+    vec2 f = fract(g);
+    f = f * f * (3.0 - 2.0 * f);
+    float nz = mix(mix(gfog_hash(i), gfog_hash(i + vec2(1, 0)), f.x), mix(gfog_hash(i + vec2(0, 1)), gfog_hash(i + vec2(1, 1)), f.x), f.y);
+    float d = length(wpos - u_campos);
+    return exp(-d * frac * u_gfog * (0.6 + 0.4 * nz));
+}
+uniform float u_fog_glow;      // brillo de la bruma hacia el Sol (el mismo halo que el cielo)
+// color de la bruma según hacia dónde se mira: más clara y cálida hacia el Sol (luz dispersada hacia adelante),
+// igual que el cielo junto al horizonte, así el terreno lejano y el cielo empalman sin corte
+vec3 fog_color(vec3 wpos) {
+    vec3 vd = normalize(wpos - u_campos);
+    float sd = max(dot(vd, u_sun), 0.0);
+    return u_fog_col + u_sun_col * (pow(sd, 10.0) * u_fog_glow);
+}
+vec3 apply_fog(vec3 col, vec3 wpos) {
+    col = mix(u_gfog_col, col, gfog_trans(wpos));
+    float f = exp(-pow(fog_depth(wpos), 1.6));
+    return mix(fog_color(wpos), col, clamp(f, 0.0, 1.0));
 }
 float fog_factor(vec3 wpos) {
-    float d = length(wpos - u_campos);
-    return clamp(exp(-pow(d * u_fog_density, 1.6)), 0.0, 1.0);
+    return clamp(exp(-pow(fog_depth(wpos), 1.6)), 0.0, 1.0) * gfog_trans(wpos);
 }
+"""
+
+# Sombras del Sol con dos mapas de profundidad: el del avión propio (caja pequeña a su alrededor, cada cuadro) y el
+# del escenario (hangares, edificios y árboles en ~2,4 km alrededor de la cámara; se rehace al moverse o con el Sol).
+# Fuera de las cajas todo queda iluminado.
+SHADOW_FN = """
+uniform sampler2DShadow u_shmap;
+uniform mat4 u_shmat;
+uniform float u_sh_on;
+uniform sampler2DShadow u_shmap2;
+uniform mat4 u_shmat2;
+uniform float u_sh2_on;
+uniform float u_sh2_texel;
+uniform sampler2D u_cloudmap;   // cobertura de nubes vista desde arriba (a la altura de la base)
+uniform float u_cloud_on;       // fuerza de las sombras de nubes (0 con cielo cubierto o de noche)
+uniform float u_cloud_alt;      // altura de la base (m)
+uniform vec4 u_cloud_rect;      // x0, y0, lado (m)
+float pcf4(sampler2DShadow m, vec3 q, float spread) {
+    vec2 t = spread / vec2(textureSize(m, 0));
+    return 0.25 * (texture(m, vec3(q.xy + vec2(-t.x, -t.y), q.z)) + texture(m, vec3(q.xy + vec2(t.x, -t.y), q.z))
+                 + texture(m, vec3(q.xy + vec2(-t.x, t.y), q.z)) + texture(m, vec3(q.xy + vec2(t.x, t.y), q.z)));
+}
+// n: normal de la superficie (para correr el punto y que hangares y edificios no se sombreen a sí mismos)
+float sun_shadow_n(vec3 wpos, vec3 n) {
+    float s = 1.0;
+    if (u_sh_on > 0.0) {
+        vec4 p = u_shmat * vec4(wpos, 1.0);
+        vec3 q = p.xyz / p.w;
+        if (q.x > 0.0 && q.x < 1.0 && q.y > 0.0 && q.y < 1.0 && q.z < 1.0)
+            s = 1.0 - u_sh_on * (1.0 - pcf4(u_shmap, q, 1.25));
+    }
+    if (u_sh2_on > 0.0) {
+        float ndl = clamp(dot(n, u_sun), 0.0, 1.0);
+        vec3 w2 = wpos + n * (u_sh2_texel * 1.5 * sqrt(1.0 - ndl * ndl)) + u_sun * 0.2;
+        vec4 p = u_shmat2 * vec4(w2, 1.0);
+        vec3 q = p.xyz / p.w;
+        if (q.x > 0.0 && q.x < 1.0 && q.y > 0.0 && q.y < 1.0 && q.z < 1.0) {
+            float edge = smoothstep(0.0, 0.1, min(min(q.x, 1.0 - q.x), min(q.y, 1.0 - q.y)));
+            s *= 1.0 - u_sh2_on * edge * (1.0 - pcf4(u_shmap2, q, 0.9));
+        }
+    }
+    if (u_cloud_on > 0.0 && -u_sun.z > 0.05) {
+        // sombra de las nubes: se sube por la dirección del Sol hasta la altura de la base y se mira la cobertura
+        float up = (u_cloud_alt + wpos.z) / (-u_sun.z);
+        if (up > 0.0) {
+            vec2 q = wpos.xy + u_sun.xy * up;
+            vec2 uv = (q - u_cloud_rect.xy) / u_cloud_rect.z;
+            if (uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0)
+                s *= 1.0 - u_cloud_on * texture(u_cloudmap, uv).r;
+        }
+    }
+    return s;
+}
+float sun_shadow(vec3 wpos) { return sun_shadow_n(wpos, u_sun); }
+"""
+
+SHADOW_VS = """
+#version 330
+uniform mat4 u_lmvp;
+in vec3 in_pos;
+void main() { gl_Position = u_lmvp * vec4(in_pos, 1.0); }
+"""
+SHADOW_FS = """
+#version 330
+void main() { }
 """
 
 # ---------------------------------------------------------------- terreno
@@ -47,11 +159,60 @@ void main() {
 }
 """
 
-TERRAIN_FS = COMMON + FOG_FN + """
+# Agua según el viento (lagos y mar): el piloto lee el viento en el agua como en la realidad. Las ondas avanzan a
+# favor del viento; en calma el agua queda como un espejo; desde ~14 kt aparece espuma en franjas a lo largo del
+# viento. Necesita u_detail y u_time declarados antes.
+WATER_FN = """
+uniform vec2 u_wind_vec;       // hacia dónde sopla (unitario) por la fuerza: 0 calma, 1 = 25 kt o más
+vec3 water_shade(vec3 wpos, vec3 deep) {
+    float k = length(u_wind_vec);
+    vec2 wd = k > 0.001 ? u_wind_vec / k : vec2(1.0, 0.0);
+    vec2 wc = vec2(-wd.y, wd.x);
+    vec2 q = vec2(dot(wpos.xy, wd), dot(wpos.xy, wc));      // a lo largo y a lo ancho del viento
+    // coordenadas algo deformadas a gran escala: así la textura no forma una cuadrícula al repetirse
+    q += (texture(u_detail, wpos.xy / 377.0 + 0.43).rg - 0.5) * vec2(60.0, 90.0);
+    float sp = 0.4 + 3.0 * k;                                // las olas viajan a favor del viento
+    // franjas de viento: bandas largas paralelas al viento, más rizadas (se ven desde el aire con 10 kt o más)
+    float lane = smoothstep(0.5, 0.68, texture(u_detail, vec2(q.x * 0.03, q.y) / 110.0 + 0.11).g) * smoothstep(0.2, 0.6, k);
+    vec4 a1 = texture(u_detail, vec2(q.x - u_time * sp, q.y * 0.75) / 31.0);
+    vec2 q2 = mat2(0.956, 0.292, -0.292, 0.956) * vec2(q.x - u_time * sp * 1.4, q.y * 0.8);   // girada 17°
+    vec4 a2 = texture(u_detail, q2 / 7.3 + 0.37);
+    vec4 a3 = texture(u_detail, wpos.xy / 90.0 + vec2(u_time * 0.004, u_time * 0.002));
+    // zonas más y menos rizadas a gran escala: rompen la repetición de la textura y se ven como en el mar real
+    float m = texture(u_detail, wpos.xy / 613.0 + 0.21).r * 0.6 + texture(u_detail, wpos.xy / 241.0 + 0.6).g * 0.4;
+    float amp = (0.05 + 0.9 * k) * clamp(1.0 + 3.0 * (m - 0.5), 0.35, 1.7) * (1.0 + 0.4 * lane);
+    amp *= mix(1.0, 0.45, smoothstep(300.0, 3000.0, length(u_campos - wpos)));   // de lejos se promedia
+    vec2 sl = ((a1.r - 0.5) * wd + (a1.g - 0.5) * wc * 0.6 + (a2.r - 0.5) * wd * 0.8 + (a2.g - 0.5) * wc) * amp
+            + (a3.rg - 0.5) * 0.06;
+    vec3 wn = normalize(vec3(sl, -1.0));
+    vec3 v = normalize(u_campos - wpos);
+    vec3 r = reflect(-v, wn);
+    float fres = 0.02 + 0.98 * pow(1.0 - clamp(dot(v, wn), 0.0, 1.0), 5.0);
+    // cielo reflejado: claro en el horizonte (bruma) y más azul hacia arriba; así se ve la forma de las olas
+    vec3 sky = mix(u_fog_col, u_fog_col * vec3(0.62, 0.74, 1.0), smoothstep(0.02, 0.45, -r.z));
+    vec3 body = deep * (u_amb * 0.9 + u_sun_col * 0.35);
+    vec3 col = mix(body, sky, clamp(0.08 + fres, 0.0, 1.0));
+    float spec = pow(max(dot(r, u_sun), 0.0), mix(600.0, 80.0, k)) * mix(4.0, 1.5, k);
+    col += u_sun_col * spec;
+    if (k > 0.45) {
+        // espuma (borreguitos): manchas sueltas que se agrupan, más y más grandes con el viento
+        float f1 = texture(u_detail, vec2(q.x * 0.5 - u_time * sp * 0.6, q.y) / 9.0).b;
+        float f2 = texture(u_detail, vec2(q.x, q.y) / 70.0 + 0.5).r;
+        float foam = smoothstep(0.7 - 0.18 * (k - 0.45), 0.78, f1) * smoothstep(0.42, 0.58, f2 + 0.15 * lane)
+                   * smoothstep(0.45, 0.85, k);
+        col = mix(col, vec3(0.95) * (u_amb + u_sun_col * 0.7), foam * 0.85);
+    }
+    return col;
+}
+"""
+
+TERRAIN_FS = COMMON + FOG_FN + SHADOW_FN + """
 uniform sampler2D u_detail;
 uniform sampler2D u_grass;
+uniform sampler2D u_grass_n;
 uniform int u_grass_on;
-uniform float u_grass_gain;
+uniform vec3 u_grass_gain;
+uniform float u_grass_nk;
 uniform int u_sat_on;
 uniform sampler2D u_sat0;
 uniform sampler2D u_sat1;
@@ -59,6 +220,9 @@ uniform sampler2D u_sat2;
 uniform vec4 u_rect0;
 uniform vec4 u_rect1;
 uniform vec4 u_rect2;
+uniform int u_sat3_on;
+uniform sampler2D u_sat3;
+uniform vec4 u_rect3;
 uniform int u_water_on;
 uniform sampler2D u_water;
 uniform vec4 u_wrect;
@@ -68,32 +232,28 @@ uniform float u_night;
 uniform float u_ll_on;
 uniform vec3 u_ll_pos;
 uniform vec3 u_ll_dir;
+uniform float u_tl_on;
+uniform vec3 u_tl_dir;
 float landing_light(vec3 p) {
-    // foco de aterrizaje del avión: cono estrecho que se debilita con la distancia
-    if (u_ll_on < 0.01) return 0.0;
+    // focos del avión: el de aterrizaje es un cono estrecho y largo; el de rodaje, ancho y corto (alumbra la calle
+    // y los bordes al girar)
+    if (u_ll_on < 0.01 && u_tl_on < 0.01) return 0.0;
     vec3 L = p - u_ll_pos;
     float dl = length(L);
-    float c = dot(L / max(dl, 0.01), u_ll_dir);
-    return u_ll_on * smoothstep(0.935, 0.985, c) * 2.4 / (1.0 + pow(dl / 170.0, 2.0));
+    vec3 Ln = L / max(dl, 0.01);
+    float land = u_ll_on * smoothstep(0.935, 0.985, dot(Ln, u_ll_dir)) * 2.4 / (1.0 + pow(dl / 170.0, 2.0));
+    float taxi = u_tl_on * smoothstep(0.78, 0.93, dot(Ln, u_tl_dir)) * 1.6 / (1.0 + pow(dl / 55.0, 2.0));
+    return land + taxi;
 }
 in vec3 v_pos;
 in vec3 v_norm;
 in vec3 v_col;
 in float v_logz;
 out vec4 f_color;
+""" + WATER_FN + """
 vec3 lake_color(vec3 base) {
-    // agua de lagos y embalses: color profundo, reflejo del cielo según el ángulo y destello del sol
-    vec2 uv = v_pos.xy;
-    float w1 = texture(u_detail, uv / 90.0 + vec2(u_time * 0.004, u_time * 0.002)).r;
-    float w2 = texture(u_detail, uv / 23.0 - vec2(u_time * 0.006, -u_time * 0.003)).g;
-    vec3 wn = normalize(vec3((w1 - 0.5) * 0.25, (w2 - 0.5) * 0.25, -1.0));
-    vec3 v = normalize(u_campos - v_pos);
-    float fres = pow(1.0 - clamp(-v.z, 0.0, 1.0), 4.0);
-    vec3 deep = mix(vec3(0.05, 0.17, 0.24), base * 0.55, 0.18);
-    vec3 col = mix(deep, u_fog_col * 0.95, 0.22 + 0.6 * fres);
-    vec3 r = reflect(-v, wn);
-    float spec = pow(max(dot(r, u_sun), 0.0), 120.0);
-    return col * (u_amb * 0.6 + u_sun_col * 0.55) + u_sun_col * spec * 1.4;
+    // agua de lagos y embalses: color profundo, reflejo del cielo, destello del Sol y el viento en la superficie
+    return water_shade(v_pos, mix(vec3(0.05, 0.17, 0.24), base * 0.55, 0.18));
 }
 vec2 rect_d(vec2 d, vec4 r) {
     // derivada de las coordenadas de textura de una capa (u = este, v = norte)
@@ -102,6 +262,7 @@ vec2 rect_d(vec2 d, vec4 r) {
 void main() {
     vec3 n = normalize(v_norm);
     float diff = max(dot(n, u_sun), 0.0);
+    float shf = sun_shadow(v_pos);
     vec2 uv = v_pos.xy;
     float dist = length(v_pos - u_campos);
     // derivadas calculadas una sola vez: así cada textura se lee solo donde aporta algo (dentro de un if)
@@ -129,8 +290,15 @@ void main() {
         float w2 = smoothstep(0.0, 0.08, min(min(uv2.x, 1.0 - uv2.x), min(uv2.y, 1.0 - uv2.y)));
         if (w2 > 0.0)
             c = mix(c, textureGrad(u_sat2, uv2, rect_d(dx, u_rect2), rect_d(dy, u_rect2)).rgb, w2);
+        if (u_sat3_on == 1) {
+            // foto nítida de otro aeródromo del escenario (lejos del centro la general es de 12 m/px)
+            vec2 uv3 = vec2((v_pos.y - u_rect3.y) / u_rect3.w, (v_pos.x - u_rect3.x) / u_rect3.z);
+            float w3 = smoothstep(0.0, 0.1, min(min(uv3.x, 1.0 - uv3.x), min(uv3.y, 1.0 - uv3.y)));
+            if (w3 > 0.0)
+                c = mix(c, textureGrad(u_sat3, uv3, rect_d(dx, u_rect3), rect_d(dy, u_rect3)).rgb, w3);
+        }
         c = pow(c, vec3(1.08)) * (0.93 + 0.14 * nd);
-        lit = c * (u_amb * 1.25 + u_sun_col * (0.32 + 0.45 * diff));
+        lit = c * (u_amb * 1.25 + u_sun_col * (0.32 + 0.45 * diff) * mix(0.3, 1.0, shf));
         alb = c;
         if (u_night > 0.01) {
             // zonas urbanas de la foto (grises claros, poco verdes): de noche se encienden las calles
@@ -144,15 +312,42 @@ void main() {
         float d4 = textureGrad(u_detail, uv / 1913.0, dx / 1913.0, dy / 1913.0).r;
         float n1 = mix(d1, 0.5, smoothstep(2500.0, 9000.0, dist));
         vec3 col = v_col * (0.84 + 0.32 * n1) * (0.86 + 0.28 * d2) * (0.9 + 0.2 * d4) * (0.86 + 0.28 * nd);
-        lit = col * (u_amb + u_sun_col * diff);
+        lit = col * (u_amb + u_sun_col * diff * shf);
         alb = col;
     }
-    if (u_grass_on == 1 && dist < 450.0) {
-        float near = 1.0 - smoothstep(40.0, 450.0, dist);
+    // suelo verde (pasto): ahí van el color de las hojas, las matas y las manchas secas
+    float green = smoothstep(0.0, 0.05, alb.g - max(alb.r, alb.b) * 0.92);
+    if (u_sat_on == 0 && dist < 3000.0 && green > 0.0) {
+        // pasto a media distancia, donde el escaneo ya no se distingue: matas más oscuras y manchas secas
+        // las matas chicas (27 m) solo de cerca: desde el aire su repetición formaría una cuadrícula
+        float near1 = 1.0 - smoothstep(200.0, 500.0, dist);
+        float m1 = near1 > 0.0 ? textureGrad(u_detail, R2 * uv / 27.0, R2 * dx / 27.0, R2 * dy / 27.0).g : 0.5;
+        float m3 = textureGrad(u_detail, R1 * uv / 211.0, R1 * dx / 211.0, R1 * dy / 211.0).r;
+        float m2 = textureGrad(u_detail, uv / 97.0, dx / 97.0, dy / 97.0).b;
+        float fade = green * (1.0 - smoothstep(1200.0, 3000.0, dist));
+        vec3 dry = mix(vec3(1.0), vec3(1.1, 1.0, 0.62), smoothstep(0.55, 0.72, m2) * 0.5);
+        float tone = clamp(1.0 + 1.0 * (m1 - 0.5) * near1 + 0.8 * (m3 - 0.5), 0.8, 1.2);
+        lit *= mix(vec3(1.0), tone * dry, fade);
+    }
+    if (u_grass_on == 1 && dist < 600.0) {
+        // escaneo fotográfico de pasto (promedio 1) en dos escalas: hojas, matas y huecos de tierra
+        float near = 1.0 - smoothstep(40.0, 600.0, dist);
         mat2 R3 = mat2(0.6, 0.8, -0.8, 0.6);
-        float g1 = dot(textureGrad(u_grass, uv / 7.0, dx / 7.0, dy / 7.0).rgb, vec3(0.333)) * u_grass_gain;
-        float g2 = dot(textureGrad(u_grass, R3 * uv / 29.0, R3 * dx / 29.0, R3 * dy / 29.0).rgb, vec3(0.333)) * u_grass_gain;
-        lit *= mix(1.0, g1 * (0.5 + 0.5 * g2), near * (u_sat_on == 1 ? 0.45 : 0.8));
+        vec2 gp = uv / 4.0;
+        vec3 g1 = textureGrad(u_grass, gp, dx / 4.0, dy / 4.0).rgb * u_grass_gain;
+        vec3 g2 = textureGrad(u_grass, R3 * uv / 23.0, R3 * dx / 23.0, R3 * dy / 23.0).rgb * u_grass_gain;
+        vec3 gm = g1 * mix(vec3(1.0), g2, 0.5);
+        // el color de las hojas solo donde el suelo es verde; en tierra, roca o ciudad de la foto, solo el brillo
+        vec3 gl = mix(vec3(dot(gm, vec3(0.333))), gm, 0.7 * green);
+        lit *= mix(vec3(1.0), gl, near * (u_sat_on == 1 ? 0.5 : 0.85));
+        if (u_grass_nk > 0.0 && dist < 120.0) {
+            // relieve de las matas con la luz del Sol (de cerca, al rodar o en la corta final)
+            vec3 tn = textureGrad(u_grass_n, gp, dx / 4.0, dy / 4.0).xyz * 2.0 - 1.0;
+            vec3 nb = normalize(n + vec3(tn.x, tn.y, 0.0) * 1.2);
+            float ratio = max(dot(nb, u_sun), 0.0) / max(dot(n, u_sun), 0.05);
+            float kk = u_grass_nk * (1.0 - smoothstep(25.0, 120.0, dist)) * shf;
+            lit *= mix(1.0, clamp(mix(1.0, ratio, 0.6), 0.55, 1.45), kk);
+        }
     }
     if (u_water_on == 1) {
         vec2 uvw = vec2((v_pos.y - u_wrect.y) / u_wrect.w, (v_pos.x - u_wrect.x) / u_wrect.z);
@@ -180,24 +375,14 @@ WATER_VS = TERRAIN_VS
 WATER_FS = COMMON + FOG_FN + """
 uniform sampler2D u_detail;
 uniform float u_time;
+""" + WATER_FN + """
 in vec3 v_pos;
 in vec3 v_norm;
 in vec3 v_col;
 in float v_logz;
 out vec4 f_color;
 void main() {
-    vec2 uv = v_pos.xy;
-    float w1 = texture(u_detail, uv / 90.0 + vec2(u_time * 0.004, u_time * 0.002)).r;
-    float w2 = texture(u_detail, uv / 23.0 - vec2(u_time * 0.006, -u_time * 0.003)).g;
-    vec3 n = normalize(vec3((w1 - 0.5) * 0.25, (w2 - 0.5) * 0.25, -1.0));
-    vec3 v = normalize(u_campos - v_pos);
-    float fres = pow(1.0 - clamp(-v.z, 0.0, 1.0), 4.0);
-    vec3 deep = vec3(0.05, 0.18, 0.26);
-    vec3 sky = u_fog_col * 0.95;
-    vec3 col = mix(deep, sky, 0.25 + 0.6 * fres);
-    vec3 r = reflect(-v, n);
-    float spec = pow(max(dot(r, u_sun), 0.0), 120.0);
-    col = col * (u_amb * 0.6 + u_sun_col * 0.55) + u_sun_col * spec * 1.4;
+    vec3 col = water_shade(v_pos, vec3(0.05, 0.18, 0.26));
     f_color = vec4(apply_fog(col, v_pos), 1.0);
     gl_FragDepth = log2(v_logz) * u_logc * 0.5;
 }
@@ -227,7 +412,7 @@ void main() {
 }
 """
 
-OBJECT_FS = COMMON + FOG_FN + """
+OBJECT_FS = COMMON + FOG_FN + SHADOW_FN + """
 uniform vec4 u_tint;
 uniform float u_flat;
 uniform float u_spec;
@@ -244,9 +429,10 @@ void main() {
     vec3 n = normalize(v_norm);
     vec3 v = normalize(u_campos - v_pos);
     if (dot(n, v) < 0.0) n = -n;
-    float diff = max(dot(n, u_sun), 0.0);
+    float shf = sun_shadow_n(v_pos, n);
+    float diff = max(dot(n, u_sun), 0.0) * shf;
     vec3 h = normalize(u_sun + v);
-    float spec = pow(max(dot(n, h), 0.0), 40.0) * u_spec;
+    float spec = pow(max(dot(n, h), 0.0), 40.0) * u_spec * shf;
     vec3 base = v_col * u_tint.rgb;
     if (u_skin == 1) {
         vec3 w = abs(normalize(v_lnorm));
@@ -282,24 +468,37 @@ void main() {
 }
 """
 
-TEX_FS = COMMON + FOG_FN + """
+TEX_FS = COMMON + FOG_FN + SHADOW_FN + """
 uniform sampler2D u_tex;
+uniform float u_wet;          // pista mojada (0 seca, 1 empapada)
 uniform sampler2D u_detail;
 uniform sampler2D u_asph;
+uniform sampler2D u_asph_n;
+uniform sampler2D u_conc;
+uniform sampler2D u_conc_n;
 uniform int u_asph_on;
-uniform float u_asph_gain;
+uniform int u_surf;           // 0 asfalto (pista y calles de rodaje), 1 concreto (plataforma)
+uniform vec3 u_asph_gain;
+uniform vec3 u_conc_gain;
+uniform float u_asph_nk;
+uniform float u_conc_nk;
 uniform vec4 u_tint;
 
 uniform float u_ll_on;
 uniform vec3 u_ll_pos;
 uniform vec3 u_ll_dir;
+uniform float u_tl_on;
+uniform vec3 u_tl_dir;
 float landing_light(vec3 p) {
-    // foco de aterrizaje del avión: cono estrecho que se debilita con la distancia
-    if (u_ll_on < 0.01) return 0.0;
+    // focos del avión: el de aterrizaje es un cono estrecho y largo; el de rodaje, ancho y corto (alumbra la calle
+    // y los bordes al girar)
+    if (u_ll_on < 0.01 && u_tl_on < 0.01) return 0.0;
     vec3 L = p - u_ll_pos;
     float dl = length(L);
-    float c = dot(L / max(dl, 0.01), u_ll_dir);
-    return u_ll_on * smoothstep(0.935, 0.985, c) * 2.4 / (1.0 + pow(dl / 170.0, 2.0));
+    vec3 Ln = L / max(dl, 0.01);
+    float land = u_ll_on * smoothstep(0.935, 0.985, dot(Ln, u_ll_dir)) * 2.4 / (1.0 + pow(dl / 170.0, 2.0));
+    float taxi = u_tl_on * smoothstep(0.78, 0.93, dot(Ln, u_tl_dir)) * 1.6 / (1.0 + pow(dl / 55.0, 2.0));
+    return land + taxi;
 }
 in vec3 v_pos;
 in vec2 v_uv;
@@ -310,15 +509,57 @@ void main() {
     float d = texture(u_detail, v_pos.xy / 9.0).r;
     float d2 = texture(u_detail, v_pos.xy / 71.0).g;
     vec3 base = t.rgb * (0.88 + 0.24 * d) * (0.9 + 0.2 * d2);
+    vec3 nrm = vec3(0.0, 0.0, -1.0);
+    float paint = 0.0;
     if (u_asph_on == 1) {
-        vec3 a1 = texture(u_asph, v_pos.xy / 11.0).rgb * u_asph_gain;
-        vec3 a2 = texture(u_asph, mat2(0.8, -0.6, 0.6, 0.8) * v_pos.xy / 57.0).rgb * u_asph_gain;
+        // escaneo fotográfico del pavimento (promedio 1: da el grano sin cambiar el color) en dos escalas
+        mat2 R = mat2(0.8, -0.6, 0.6, 0.8);
+        vec3 a1, a2, tn;
+        float nk;
+        if (u_surf == 1) {
+            vec2 p1 = v_pos.xy / 7.0;
+            a1 = texture(u_conc, p1).rgb * u_conc_gain;
+            a2 = texture(u_conc, R * v_pos.xy / 41.0).rgb * u_conc_gain;
+            tn = texture(u_conc_n, p1).xyz * 2.0 - 1.0;
+            nk = u_conc_nk;
+        } else {
+            vec2 p1 = v_pos.xy / 5.0;
+            a1 = texture(u_asph, p1).rgb * u_asph_gain;
+            a2 = texture(u_asph, R * v_pos.xy / 37.0).rgb * u_asph_gain;
+            tn = texture(u_asph_n, p1).xyz * 2.0 - 1.0;
+            nk = u_asph_nk;
+        }
         vec3 asph = a1 * mix(vec3(1.0), a2, 0.5);
-        float paint = smoothstep(0.35, 0.7, dot(t.rgb, vec3(0.333)));
-        base = t.rgb * mix(asph, mix(vec3(1.0), asph, 0.45), paint) * (0.95 + 0.1 * d2);
+        paint = smoothstep(0.35, 0.7, dot(t.rgb, vec3(0.333)));
+        base = t.rgb * mix(asph, mix(vec3(1.0), asph, 0.35), paint) * (0.95 + 0.1 * d2);
+        // relieve del escaneo: la normal del mapa (OpenGL, u = norte, v = este) llevada al suelo (z abajo). Se apaga
+        // con la distancia (los mipmaps ya la promedian) y sobre la pintura, que es más lisa
+        float dist = length(v_pos - u_campos);
+        float k = nk * 1.4 * (1.0 - smoothstep(40.0, 400.0, dist)) * (1.0 - 0.6 * paint);
+        nrm = normalize(vec3(tn.x * k, tn.y * k, -max(tn.z, 0.3)));
     }
-    float diff = max(-u_sun.z, 0.0);
-    vec3 lit = base * (u_amb + u_sun_col * diff + landing_light(v_pos));
+    float shd = sun_shadow(v_pos);
+    float diff = max(dot(nrm, u_sun), 0.0) * shd;
+    vec3 lit = base * (u_amb * (0.8 - 0.2 * nrm.z) + u_sun_col * diff + landing_light(v_pos));
+    if (u_asph_on == 1) {
+        // brillo rasante hacia el Sol: el pavimento pulido por las ruedas y la pintura reflejan algo
+        vec3 vv = normalize(u_campos - v_pos);
+        float sp = pow(max(dot(nrm, normalize(vv + u_sun)), 0.0), 30.0);
+        lit += u_sun_col * sp * shd * (0.04 + 0.05 * paint);
+    }
+    if (u_wet > 0.01) {
+        // pavimento mojado: más oscuro y espejado; refleja el cielo cuanto más rasante se mira y el brillo del Sol
+        vec3 v = normalize(u_campos - v_pos);
+        float fres = pow(1.0 - clamp(-v.z, 0.0, 1.0), 5.0);
+        vec3 r = reflect(-v, vec3(0.0, 0.0, -1.0));
+        float sp = pow(max(dot(r, u_sun), 0.0), 60.0);
+        float puddle = smoothstep(0.35, 0.75, texture(u_detail, v_pos.xy / 23.0).g);   // charcos
+        float wet = u_wet * (0.75 + 0.25 * puddle);
+        float paintw = smoothstep(0.35, 0.7, dot(t.rgb, vec3(0.333)));   // la pintura sigue viéndose
+        lit *= 1.0 - 0.38 * wet * (1.0 - 0.6 * paintw);
+        lit = mix(lit, u_fog_col * 0.9, wet * (0.06 + 0.42 * fres) * (1.0 - 0.6 * paintw));
+        lit += u_sun_col * sp * wet * 1.6;
+    }
     f_color = vec4(apply_fog(lit, v_pos), t.a);
     gl_FragDepth = log2(v_logz) * u_logc * 0.5;
 }
@@ -397,7 +638,7 @@ void main() {
 """
 
 # ---------------------------------------------------------------- luces puntuales
-LIGHT_VS = COMMON + """
+LIGHT_VS = COMMON + FOG_FN + """
 uniform float u_px;
 uniform float u_bright;
 in vec3 in_pos;
@@ -413,7 +654,9 @@ void main() {
     vec3 p = in_pos + tocam / max(d, 0.001) * min(10.0, d * 0.4);
     gl_Position = u_proj * u_view * vec4(p, 1.0);
     v_logz = 1.0 + gl_Position.w;
-    v_fog = clamp(exp(-pow(d * u_fog_density * 0.55, 1.6)), 0.0, 1.0);
+    // las luces más intensas (HIRL, aproximación) atraviesan más bruma que las de rodaje
+    float pen = 0.55 * sqrt(3.0 / max(in_size, 1.0));
+    v_fog = clamp(exp(-pow(d * u_fog_density * pen, 1.6)), 0.0, 1.0) * mix(1.0, gfog_trans(in_pos), 0.85);
     float s = in_size * u_px / max(gl_Position.w, 0.1);
     float ps = clamp(s * 2.2, 3.4, 20.0);
     gl_PointSize = ps * mix(0.6, 1.0, u_bright);
@@ -461,8 +704,59 @@ void main() {
 }
 """
 
+# Humo de quemas y chimeneas: bocanadas con su propia transparencia (la edad las desvanece). Señal del viento.
+SMOKE_VS = COMMON + """
+uniform vec3 u_right;
+uniform vec3 u_up;
+uniform float u_nvar;
+in vec2 in_corner;
+in vec4 in_center;   // xyz + tamaño
+in float in_alpha;
+in float in_var;
+in float in_tone;    // 0 humo gris de quema, 1 vapor blanco de chimenea
+out vec2 v_uv;
+out vec3 v_pos;
+out float v_alpha;
+out float v_tone;
+out float v_y;
+out float v_logz;
+void main() {
+    vec3 p = in_center.xyz + (in_corner.x * u_right + in_corner.y * u_up) * in_center.w;
+    v_pos = p;
+    vec2 uv = in_corner * 0.5 + 0.5;
+    v_uv = vec2((mod(in_var, u_nvar) + uv.x) / u_nvar, uv.y);
+    v_alpha = in_alpha;
+    v_tone = in_tone;
+    v_y = in_corner.y;
+    gl_Position = u_proj * u_view * vec4(p, 1.0);
+    v_logz = 1.0 + gl_Position.w;
+}
+"""
+
+SMOKE_FS = COMMON + FOG_FN + """
+uniform sampler2D u_tex;
+in vec2 v_uv;
+in vec3 v_pos;
+in float v_alpha;
+in float v_tone;
+in float v_y;
+in float v_logz;
+out vec4 f_color;
+void main() {
+    float a = texture(u_tex, v_uv).a * v_alpha;
+    a *= smoothstep(5.0, 40.0, length(v_pos - u_campos));
+    if (a < 0.005) discard;
+    vec3 base = mix(vec3(0.50, 0.49, 0.47), vec3(0.93, 0.93, 0.92), v_tone);
+    vec3 col = base * (u_amb * 1.05 + u_sun_col * (0.5 + 0.15 * v_y));
+    col = mix(fog_color(v_pos), col, fog_factor(v_pos));
+    f_color = vec4(col * a, a);
+    gl_FragDepth = log2(v_logz) * u_logc * 0.5;
+}
+"""
+
 CLOUD_FS = COMMON + FOG_FN + """
 uniform sampler2D u_tex;
+uniform float u_cbase;        // base de las nubes (m); muy negativa = sin recorte (cumulonimbo)
 uniform float u_alpha;
 uniform float u_dark;
 in vec2 v_uv;
@@ -475,11 +769,19 @@ void main() {
     float a = tx.a * u_alpha;
     float dc = length(v_pos - u_campos);
     a *= smoothstep(30.0, 300.0, dc);
+    // base plana: nada de nube por debajo de la base informada (la del METAR)
+    float alt = -v_pos.z;
+    a *= smoothstep(u_cbase - 10.0, u_cbase + 90.0, alt);
     if (a < 0.01) discard;
     vec3 col = tx.rgb * mix(0.72, 1.0, clamp(v_shade, 0.0, 1.0));
     col = col * (u_amb * 0.95 + u_sun_col * 0.75) * u_dark;
+    col *= mix(0.68, 1.0, smoothstep(u_cbase, u_cbase + 250.0, alt));     // la base, más gris y oscura
+    // a contraluz del Sol: los bordes finos brillan (borde plateado) y el centro grueso se oscurece
+    float toward = pow(max(dot(normalize(v_pos - u_campos), u_sun), 0.0), 6.0) * smoothstep(-0.05, 0.1, -u_sun.z);
+    float thin = 1.0 - smoothstep(0.15, 0.85, tx.a);
+    col = col * (1.0 - 0.22 * toward * (1.0 - thin)) + u_sun_col * toward * (0.18 + 0.85 * thin) * u_dark;
     float f = fog_factor(v_pos);
-    col = mix(u_fog_col, col, f);
+    col = mix(fog_color(v_pos), col, f);
     f_color = vec4(col * a, a);
     gl_FragDepth = log2(v_logz) * u_logc * 0.5;
 }
@@ -513,30 +815,42 @@ uniform mat4 u_model;
 in vec3 in_pos;
 in vec3 in_norm;
 in vec2 in_uv;
+in float in_ao;
+in vec2 in_uv2;               // uv del mapa de luz horneado (solo hangares y torres; los aviones no lo traen)
 out vec3 v_pos;
 out vec3 v_norm;
 out vec2 v_uv;
+out float v_ao;
+out vec2 v_uv2;
 out float v_logz;
 void main() {
     vec4 wp = u_model * vec4(in_pos, 1.0);
     v_pos = wp.xyz;
     v_norm = mat3(u_model) * in_norm;
     v_uv = in_uv;
+    v_ao = in_ao;
+    v_uv2 = in_uv2;
     gl_Position = u_proj * u_view * wp;
     v_logz = 1.0 + gl_Position.w;
 }
 """
 
-MODEL_FS = COMMON + FOG_FN + """
+MODEL_FS = COMMON + FOG_FN + SHADOW_FN + """
 uniform sampler2D u_tex;
 uniform int u_has_tex;
 uniform vec4 u_base;
 uniform float u_cutoff;
 uniform float u_spec;
 uniform vec4 u_tint;
+uniform float u_emis;
+uniform sampler2D u_lmap;
+uniform int u_lm_on;
+uniform float u_corr;         // chapa ondulada: ondas por unidad de u (0 = lisa)
 in vec3 v_pos;
 in vec3 v_norm;
 in vec2 v_uv;
+in float v_ao;
+in vec2 v_uv2;
 in float v_logz;
 out vec4 f_color;
 void main() {
@@ -546,13 +860,476 @@ void main() {
     vec3 n = normalize(v_norm);
     vec3 v = normalize(u_campos - v_pos);
     if (dot(n, v) < 0.0) n = -n;
-    float diff = max(dot(n, u_sun), 0.0);
+    if (u_corr > 0.0) {
+        // chapa ondulada: la normal ondula a lo largo de u (marco tangente por derivadas); de lejos se promedia
+        vec3 dp1 = dFdx(v_pos), dp2 = dFdy(v_pos);
+        vec2 du1 = dFdx(v_uv), du2 = dFdy(v_uv);
+        vec3 tg = cross(dp2, n) * du1.x + cross(n, dp1) * du2.x;
+        float tl = length(tg);
+        // se apaga cuando una onda ocupa menos de ~3 píxeles (si no, forma muaré a media distancia)
+        float fade = 1.0 - smoothstep(0.12, 0.3, fwidth(v_uv.x * u_corr));
+        if (tl > 1e-8 && fade > 0.0) {
+            tg = normalize(tg / tl - n * dot(n, tg / tl));
+            n = normalize(n + tg * cos(v_uv.x * u_corr * 6.2832) * 0.42 * fade);
+        }
+    }
+    float shf = sun_shadow_n(v_pos, n);             // sombra de hangares y edificios sobre el avión
+    float diff = max(dot(n, u_sun), 0.0) * shf;
     vec3 h = normalize(u_sun + v);
-    float spec = pow(max(dot(n, h), 0.0), 48.0) * u_spec * smoothstep(0.35, 0.8, dot(c.rgb, vec3(0.333)));
+    float spec = pow(max(dot(n, h), 0.0), 48.0) * u_spec * smoothstep(0.35, 0.8, dot(c.rgb, vec3(0.333))) * shf;
     vec3 base = c.rgb * u_tint.rgb;
-    vec3 lit = base * (u_amb + u_sun_col * diff) + u_sun_col * spec;
+    // rendijas, uniones y el interior quedan en penumbra (oclusión horneada al importar el modelo)
+    float ao = v_ao;
+    vec3 amb = u_amb * ao;
+    float aod = mix(1.0, ao, 0.45);
+    if (u_lm_on == 1 && v_uv2.x >= 0.0) {
+        // luz del cielo horneada en Blender (Cycles, con rebotes): rincones, aleros, el pie de las paredes y el
+        // interior del portón; vale 1 en un techo a cielo abierto y ~0,6 en una pared sin obstáculos
+        vec3 lm = texture(u_lmap, v_uv2).rgb * 1.6;
+        amb = u_amb * lm * 1.5;
+        ao = clamp(dot(lm, vec3(0.333)) * 1.5, 0.35, 1.0);
+        aod = 1.0;                                   // el Sol y sus sombras los pone el mapa de sombras
+    }
+    vec3 lit = base * (amb + u_sun_col * diff * aod) + u_sun_col * spec * ao + base * u_emis;
     f_color = vec4(apply_fog(lit, v_pos), c.a * u_tint.a);
     gl_FragDepth = log2(v_logz) * u_logc * 0.5;
 }
 """
 
+
+# ---------------------------------------------------------------- casas por instancias (modelos de Blender)
+MODEL_INST_VS = COMMON + """
+in vec3 in_pos;
+in vec3 in_norm;
+in vec2 in_uv;
+in float in_ao;
+in vec2 in_uv2;
+in vec3 i_pos;
+in float i_yaw;
+in float i_scale;
+in vec3 i_tint;
+out vec3 v_pos;
+out vec3 v_norm;
+out vec2 v_uv;
+out float v_ao;
+out vec2 v_uv2;
+out vec3 v_itint;
+out float v_logz;
+void main() {
+    float c = cos(i_yaw), s = sin(i_yaw);
+    vec3 p = in_pos * i_scale;
+    vec3 wp = i_pos + vec3(c * p.x - s * p.y, s * p.x + c * p.y, p.z);
+    v_pos = wp;
+    v_norm = vec3(c * in_norm.x - s * in_norm.y, s * in_norm.x + c * in_norm.y, in_norm.z);
+    v_uv = in_uv;
+    v_ao = in_ao;
+    v_uv2 = in_uv2;
+    v_itint = i_tint;
+    gl_Position = u_proj * u_view * vec4(wp, 1.0);
+    v_logz = 1.0 + gl_Position.w;
+}
+"""
+_WINLIT = """
+    if (u_winlit > 0.0) {
+        // ventanas encendidas de noche: algunas sí y otras no (según el lugar), con luz cálida
+        vec3 cell = floor(v_pos / vec3(1.6, 1.6, 2.9));
+        float hsh = fract(sin(dot(cell, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+        lit += vec3(1.0, 0.72, 0.38) * u_winlit * step(0.55, hsh) * (0.6 + 0.6 * fract(hsh * 7.0));
+    }
+    f_color = vec4(apply_fog(lit, v_pos), c.a * u_tint.a);"""
+MODEL_INST_FS = MODEL_FS.replace("in float v_logz;", "in float v_logz;\nin vec3 v_itint;\nuniform int u_itint_on;\n"
+                                 "uniform float u_winlit;") \
+    .replace("vec3 base = c.rgb * u_tint.rgb;", "vec3 base = c.rgb * u_tint.rgb * (u_itint_on == 1 ? v_itint : vec3(1.0));") \
+    .replace("    f_color = vec4(apply_fog(lit, v_pos), c.a * u_tint.a);", _WINLIT)
+
+
+# ---------------------------------------------------------------- luz de las torres de iluminación sobre el suelo
+
+# ---------------------------------------------------------------- penumbra horneada en el suelo
+DECAL_VS = COMMON + """
+in vec3 in_pos;
+in vec2 in_uv;
+out vec3 v_pos;
+out vec2 v_uv;
+out float v_logz;
+void main() {
+    v_pos = in_pos;
+    v_uv = in_uv;
+    gl_Position = u_proj * u_view * vec4(in_pos, 1.0);
+    v_logz = 1.0 + gl_Position.w;
+}
+"""
+
+DECAL_FS = COMMON + FOG_FN + SHADOW_FN + """
+uniform sampler2D u_gao;
+in vec3 v_pos;
+in vec2 v_uv;
+in float v_logz;
+out vec4 f_color;
+void main() {
+    // luz del cielo que le llega al suelo junto al edificio (1 a cielo abierto); se oscurece solo esa parte: donde
+    // da el Sol la penumbra casi no se nota, a la sombra y con cielo cubierto sí
+    float a = clamp(texture(u_gao, v_uv).r * 1.6, 0.0, 1.0);
+    vec2 e = min(v_uv, 1.0 - v_uv);
+    a = mix(1.0, a, smoothstep(0.0, 0.06, min(e.x, e.y)));
+    float A = dot(u_amb, vec3(0.333));
+    float S = dot(u_sun_col, vec3(0.333)) * max(-u_sun.z, 0.0) * sun_shadow(v_pos);
+    float k = (A * a + S) / max(A + S, 1e-3);
+    f_color = vec4(vec3(mix(1.0, k, fog_factor(v_pos))), 1.0);
+    gl_FragDepth = log2(v_logz) * u_logc * 0.5;
+}
+"""
+
+
+# ---------------------------------------------------------------- imagen final (posproceso)
+# Resplandor: se extraen las zonas muy claras a 1/4 de resolución y se difuminan en dos pasadas.
+POST_VS = """
+#version 330
+in vec2 in_pos;
+out vec2 v_uv;
+void main() { v_uv = in_pos * 0.5 + 0.5; gl_Position = vec4(in_pos, 0.0, 1.0); }
+"""
+
+BRIGHT_FS = """
+#version 330
+uniform sampler2D u_tex;
+uniform vec2 u_texel;
+uniform float u_thr;
+in vec2 v_uv;
+out vec4 f_color;
+vec3 pick(vec2 uv) {
+    vec3 c = texture(u_tex, uv).rgb;
+    float m = max(max(c.r, c.g), c.b);
+    return c * smoothstep(u_thr, u_thr + 0.18, m);
+}
+void main() {
+    // cuatro lecturas bilineales cubren el bloque de 4x4 píxeles de la imagen completa
+    vec2 o = u_texel;
+    vec3 c = pick(v_uv + vec2(-o.x, -o.y)) + pick(v_uv + vec2(o.x, -o.y)) + pick(v_uv + vec2(-o.x, o.y)) + pick(v_uv + o);
+    f_color = vec4(c * 0.25, 1.0);
+}
+"""
+
+BLUR_FS = """
+#version 330
+uniform sampler2D u_tex;
+uniform vec2 u_dir;
+in vec2 v_uv;
+out vec4 f_color;
+void main() {
+    // gaussiana de 9 muestras con 5 lecturas bilineales
+    vec3 c = texture(u_tex, v_uv).rgb * 0.2270;
+    c += (texture(u_tex, v_uv + u_dir * 1.3846).rgb + texture(u_tex, v_uv - u_dir * 1.3846).rgb) * 0.3162;
+    c += (texture(u_tex, v_uv + u_dir * 3.2308).rgb + texture(u_tex, v_uv - u_dir * 3.2308).rgb) * 0.0703;
+    f_color = vec4(c, 1.0);
+}
+"""
+
+COMP_FS = """
+#version 330
+uniform sampler2D u_tex;
+uniform sampler2D u_bloom;
+uniform vec4 u_vp;
+uniform float u_fx;          // 0: imagen tal cual (pantallas de carga); 1: con efectos
+uniform float u_bloom_k;
+uniform vec3 u_grade;        // tono de la luz según la hora (cálido al amanecer y al atardecer, frío de noche)
+uniform float u_contrast;
+uniform float u_sat;
+uniform vec3 u_sun_uv;       // posición del Sol en la imagen (x, y) y fuerza del destello (z)
+uniform float u_aspect;
+out vec4 c;
+float sun_seen(vec2 p) {
+    vec3 s = texture(u_tex, p).rgb;
+    return smoothstep(0.9, 0.985, min(min(s.r, s.g), s.b));
+}
+void main() {
+    vec2 uv = (gl_FragCoord.xy - u_vp.xy) / u_vp.zw;
+    vec3 col = texture(u_tex, uv).rgb;
+    if (u_fx < 0.5) { c = vec4(col, 1.0); return; }
+    col += texture(u_bloom, uv).rgb * u_bloom_k;
+    // destello del Sol: solo si el disco se ve (no lo tapan el terreno, el tablero ni las nubes)
+    if (u_sun_uv.z > 0.0) {
+        vec2 sp = u_sun_uv.xy;
+        vec2 e = vec2(0.006, 0.006 * u_aspect);
+        float vis = (sun_seen(sp) + sun_seen(sp + vec2(e.x, 0.0)) + sun_seen(sp - vec2(e.x, 0.0))
+                   + sun_seen(sp + vec2(0.0, e.y)) + sun_seen(sp - vec2(0.0, e.y))) * 0.2;
+        float k = u_sun_uv.z * vis;
+        if (k > 0.001) {
+            vec2 d = (uv - sp) * vec2(u_aspect, 1.0);
+            float r = length(d);
+            vec3 sc = vec3(1.0, 0.9, 0.75);
+            col += sc * (0.05 * exp(-r * 18.0) + 0.18 * exp(-r * 70.0)) * k;              // halo
+            col += sc * exp(-abs(d.y) * 260.0) * exp(-abs(d.x) * 3.2) * 0.22 * k;       // raya horizontal
+            vec2 axis = vec2(0.5) - sp;                                                // fantasmas hacia el centro
+            for (int i = 0; i < 4; i++) {
+                float t = (i == 0) ? 0.55 : (i == 1) ? 1.0 : (i == 2) ? 1.45 : 1.9;
+                float rad = (i == 0) ? 0.035 : (i == 1) ? 0.018 : (i == 2) ? 0.06 : 0.026;
+                vec3 gc = (i == 0) ? vec3(0.35, 0.55, 1.0) : (i == 1) ? vec3(1.0, 0.7, 0.35)
+                        : (i == 2) ? vec3(0.45, 1.0, 0.6) : vec3(0.8, 0.5, 1.0);
+                vec2 gp = sp + axis * t;
+                float gr = length((uv - gp) * vec2(u_aspect, 1.0));
+                col += gc * smoothstep(rad, rad * 0.55, gr) * 0.05 * k;
+            }
+        }
+    }
+    // gradación de color: tono de la hora, contraste suave en S y algo más de saturación
+    col *= u_grade;
+    // hombro suave: lo que pasa de 0,8 se comprime hacia el blanco en vez de recortarse (el Sol y los blancos
+    // de la pista no forman manchas planas)
+    vec3 over = max(col - 0.8, 0.0);
+    col = min(col, 0.8) + 0.2 * (1.0 - exp(-over / 0.2));
+    col = mix(col, col * col * (3.0 - 2.0 * col), u_contrast * (1.0 - smoothstep(0.55, 0.95, max(max(col.r, col.g), col.b))));
+    float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+    col = mix(vec3(l), col, u_sat);
+    // viñeta muy leve y un poco de ruido para que los degradados del cielo no hagan escalones
+    vec2 q = uv - 0.5;
+    col *= 1.0 - 0.16 * dot(q, q) * 2.0;
+    col += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
+    c = vec4(clamp(col, 0.0, 1.0), 1.0);
+}
+"""
+
+
+# ---------------------------------------------------------------- árboles (instancias con dos niveles de detalle)
+TREE_VS = COMMON + """
+uniform float u_time;
+uniform float u_wind;
+uniform vec2 u_wind_vec;       // hacia dónde sopla por la fuerza (0 calma, 1 = 25 kt o más)
+in vec3 in_pos;
+in vec3 in_norm;
+in vec3 in_col;
+in vec3 i_pos;
+in float i_scale;
+in float i_yaw;
+in vec3 i_col;
+out vec3 v_pos;
+out vec3 v_norm;
+out vec3 v_col;
+out float v_h;
+out float v_logz;
+void main() {
+    float c = cos(i_yaw), s = sin(i_yaw);
+    vec3 p = in_pos * i_scale;
+    p = vec3(c * p.x - s * p.y, s * p.x + c * p.y, p.z);
+    // la copa se mece con el viento (la base queda quieta)
+    float hf = clamp(-in_pos.z, 0.0, 1.0);
+    float ph = i_pos.x * 0.07 + i_pos.y * 0.05;
+    p.xy += vec2(sin(u_time * 1.6 + ph), cos(u_time * 1.2 + ph * 1.3)) * u_wind * hf * hf * i_scale * 0.012;
+    // inclinación a favor del viento, con ráfagas que avanzan por el bosque en la dirección del viento
+    float kw = length(u_wind_vec);
+    if (kw > 0.001) {
+        vec2 wd = u_wind_vec / kw;
+        float g = 0.55 + 0.45 * sin(dot(i_pos.xy, wd) * 0.045 - u_time * (1.0 + 2.5 * kw) + sin(ph) * 1.5);
+        p.xy += wd * kw * kw * g * hf * hf * i_scale * 0.07;
+    }
+    vec3 wp = i_pos + p;
+    v_pos = wp;
+    v_norm = vec3(c * in_norm.x - s * in_norm.y, s * in_norm.x + c * in_norm.y, in_norm.z);
+    v_col = in_col * i_col;
+    v_h = hf;
+    gl_Position = u_proj * u_view * vec4(wp, 1.0);
+    v_logz = 1.0 + gl_Position.w;
+}
+"""
+
+TREE_FS = COMMON + FOG_FN + SHADOW_FN + """
+in vec3 v_pos;
+in vec3 v_norm;
+in vec3 v_col;
+in float v_h;
+in float v_logz;
+out vec4 f_color;
+void main() {
+    vec3 n = normalize(v_norm);
+    vec3 v = normalize(u_campos - v_pos);
+    float shf = sun_shadow_n(v_pos, n);
+    // follaje: luz envolvente (la cara en sombra no queda negra) y algo de luz que atraviesa las hojas a contraluz
+    float wrap = max((dot(n, u_sun) + 0.4) / 1.4, 0.0);
+    float back = pow(max(dot(-v, u_sun), 0.0), 4.0) * 0.3;
+    vec3 lit = v_col * (u_amb * (0.7 + 0.3 * v_h) + u_sun_col * (wrap * 0.9 + back) * shf);
+    f_color = vec4(apply_fog(lit, v_pos), 1.0);
+    gl_FragDepth = log2(v_logz) * u_logc * 0.5;
+}
+"""
+
+SHADOW_TREE_VS = """
+#version 330
+uniform mat4 u_lmvp;
+in vec3 in_pos;
+in vec3 i_pos;
+in float i_scale;
+in float i_yaw;
+void main() {
+    float c = cos(i_yaw), s = sin(i_yaw);
+    vec3 p = in_pos * i_scale;
+    p = vec3(c * p.x - s * p.y, s * p.x + c * p.y, p.z);
+    gl_Position = u_lmvp * vec4(i_pos + p, 1.0);
+}
+"""
+
+
+
+# ---------------------------------------------------------------- fachadas con ventanas (edificios y casas)
+BLDG_VS = COMMON + """
+in vec3 in_pos;
+in vec3 in_norm;
+in vec3 in_col;
+in vec3 in_uvh;      // u a lo largo de la pared (m), v altura sobre el suelo (m), altura del edificio (m)
+in float in_style;
+out vec3 v_pos;
+out vec3 v_norm;
+out vec3 v_col;
+out vec3 v_uvh;
+out float v_style;
+out float v_logz;
+void main() {
+    v_pos = in_pos;
+    v_norm = in_norm;
+    v_col = in_col;
+    v_uvh = in_uvh;
+    v_style = in_style;
+    gl_Position = u_proj * u_view * vec4(in_pos, 1.0);
+    v_logz = 1.0 + gl_Position.w;
+}
+"""
+
+BLDG_FS = COMMON + FOG_FN + SHADOW_FN + """
+uniform float u_night;
+in vec3 v_pos;
+in vec3 v_norm;
+in vec3 v_col;
+in vec3 v_uvh;
+in float v_style;
+in float v_logz;
+out vec4 f_color;
+float hash2(vec2 p) {                                      // barato (sin senos)
+    vec3 q = fract(vec3(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
+}
+float band(float f, float a, float b, float w) {          // 1 entre a y b, con bordes suavizados de ancho w
+    return smoothstep(a - w, a + w, f) * (1.0 - smoothstep(b - w, b + w, f));
+}
+void main() {
+    vec3 n = normalize(v_norm);
+    vec3 v = normalize(u_campos - v_pos);
+    if (dot(n, v) < 0.0) n = -n;
+    float st = floor(v_style);
+    float var = fract(v_style);
+    float shf = sun_shadow_n(v_pos, n);
+    float diff = max(dot(n, u_sun), 0.0) * shf;
+    vec3 col;
+    if (st > 2.5) {
+        // techo: grano suave
+        col = v_col * (0.9 + 0.1 * hash2(floor(v_uvh.xy * 0.7))) * (u_amb + u_sun_col * diff);
+    } else {
+        float x = v_uvh.x;
+        float y = v_uvh.y;
+        float ht = v_uvh.z;
+        bool house = st < 0.5;
+        bool glassy = st > 1.5;
+        float fh = house ? 2.9 : 3.3;                          // altura de cada piso
+        float cw = house ? 3.8 : (glassy ? 2.2 : 3.0);         // ancho de cada módulo de ventana
+        float g0 = house ? 0.0 : 4.2;                          // planta baja (comercios) en los edificios
+        float wx0 = glassy ? 0.05 : (house ? 0.28 : 0.2);
+        float wy0 = glassy ? 0.06 : 0.3;
+        float wy1 = glassy ? 0.94 : 0.82;
+        vec2 cell = vec2(x / cw, (y - g0) / fh);
+        vec2 fw = max(fwidth(cell), vec2(1e-4));
+        float far = smoothstep(0.25, 0.7, max(fw.x, fw.y));    // de lejos: el promedio (sin moiré y más liviano)
+        float inside = step(0.0, y - g0) * step(y - g0, floor(max(ht - 0.6 - g0, 0.0) / fh) * fh);
+        float win = (1.0 - 2.0 * wx0) * (wy1 - wy0) * inside;
+        float r = 0.5 + 0.3 * var;
+        float slab = 1.0;
+        float spec = 0.0;
+        vec3 inner = vec3(0.055, 0.07, 0.085);
+        float fres = 0.3;
+        if (far < 0.999) {
+            vec2 f = fract(cell);
+            vec2 id = floor(cell);
+            float w1 = band(f.x, wx0, 1.0 - wx0, fw.x) * band(f.y, wy0, wy1, fw.y) * inside;
+            if (!house && y < g0 && y > 0.0) {                 // vidrieras de la planta baja
+                float sx = x / 5.0;
+                w1 = band(fract(sx), 0.08, 0.92, fw.x * cw / 5.0) * band(y, 0.45, g0 - 0.7, fw.y * fh);
+                id = vec2(floor(sx), -1.0);
+            }
+            win = mix(w1, win, far);
+            r = hash2(id + var * 17.0);
+            inner += (r > 0.8 ? vec3(0.22, 0.2, 0.17) * (1.0 - far) : vec3(0.0));   // cortinas claras
+            fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+            vec3 h = normalize(u_sun + v);
+            spec = pow(max(dot(n, h), 0.0), 90.0) * shf * (1.0 - far);
+            if (!house)
+                slab = 1.0 - 0.14 * (1.0 - smoothstep(0.0, 0.05 + fw.y, f.y)) * (1.0 - far) * step(0.0, y - g0);
+        }
+        // vidrio: refleja el cielo según el ángulo, oscuro por dentro
+        vec3 glass = mix(inner, u_fog_col * 0.95, 0.22 + 0.6 * fres);
+        if (glassy) glass = mix(glass, vec3(0.18, 0.3, 0.36), 0.35);
+        float ao = 0.62 + 0.38 * smoothstep(0.0, 3.0, y);
+        vec3 litw = v_col * slab * (u_amb * ao + u_sun_col * diff);
+        vec3 litg = glass * (u_amb * 0.6 + u_sun_col * diff * 0.3) + u_sun_col * spec * 1.3;
+        win = clamp(win, 0.0, 1.0);
+        col = mix(litw, litg, win);
+        // de noche se encienden ventanas al azar (cálidas, algunas frías de oficina); de lejos, el promedio
+        if (u_night > 0.01) {
+            float on = mix(step(0.5 + 0.2 * var, r), 0.4, far) * u_night;
+            vec3 lamp = r > 0.9 ? vec3(0.8, 0.88, 1.0) : vec3(1.0, 0.76, 0.45);
+            col += lamp * win * on * (0.45 + 0.55 * r) * mix(1.0, 0.55, far);
+        }
+    }
+    f_color = vec4(apply_fog(col, v_pos), 1.0);
+    gl_FragDepth = log2(v_logz) * u_logc * 0.5;
+}
+"""
+
+
+# ---------------------------------------------------------------- tráfico lejano: el puntito que ve el piloto
+# Un avión ligero a 4 km mide menos de un píxel y la imagen lo pierde, pero el ojo lo ve como un punto oscuro contra
+# el cielo o el suelo. Este punto (1,5 a 3 px, atenuado por la bruma) deja entrenar el «ver y evitar».
+SPECK_VS = COMMON + FOG_FN + """
+in vec3 in_pos;
+in float in_size;
+in float in_alpha;
+out float v_alpha;
+out float v_logz;
+void main() {
+    gl_Position = u_proj * u_view * vec4(in_pos, 1.0);
+    v_logz = 1.0 + gl_Position.w;
+    gl_PointSize = in_size;
+    v_alpha = in_alpha * fog_factor(in_pos);
+}
+"""
+SPECK_FS = """
+#version 330
+uniform float u_logc;
+uniform vec3 u_speck_col;
+in float v_alpha;
+in float v_logz;
+out vec4 f_color;
+void main() {
+    vec2 q = gl_PointCoord * 2.0 - 1.0;
+    float a = v_alpha * (1.0 - smoothstep(0.55, 1.0, dot(q, q)));
+    if (a < 0.01) discard;
+    f_color = vec4(u_speck_col, a);
+    gl_FragDepth = log2(v_logz) * u_logc * 0.5;
+}
+"""
+
+
+# luz de las torres de iluminación: manchón cálido sobre la plataforma (se suma a lo dibujado)
+POOL_VS = DECAL_VS
+POOL_FS = COMMON + FOG_FN + """
+uniform float u_pool;          // intensidad (0 de día)
+in vec3 v_pos;
+in vec2 v_uv;
+in float v_logz;
+out vec4 f_color;
+void main() {
+    vec2 q = v_uv * 2.0 - 1.0;
+    float r2 = dot(q, q);
+    if (r2 > 1.0) discard;
+    float k = pow(1.0 - r2, 1.6) * u_pool * fog_factor(v_pos);
+    f_color = vec4(vec3(1.0, 0.82, 0.56) * k, 1.0);
+    gl_FragDepth = log2(v_logz) * u_logc * 0.5;
+}
+"""

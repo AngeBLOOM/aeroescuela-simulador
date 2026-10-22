@@ -346,20 +346,27 @@ def fetch_water(data_dir, proj, progress=None, r=HALF, z=13):
 
 
 # ======================================================================= edificios y bosques
-def fetch_features(data_dir, proj, progress=None, r_build=3800.0, r_forest=8000.0):
-    """Contornos de edificios y bosques (OpenStreetMap vía mosaicos vectoriales de Esri)."""
+def fetch_features(data_dir, proj, progress=None, r_build=3800.0, r_forest=8000.0, extra=(), r_extra=2600.0):
+    """Contornos de edificios y bosques (OpenStreetMap vía mosaicos vectoriales de Esri): alrededor del centro del
+    escenario y, con extra = [(norte, este)], también alrededor de los demás aeródromos (sus hangares y edificios)."""
     import json
     from . import mvt
     d = os.path.join(_cache_dir(data_dir), "vt")
     lat0, lon0 = proj.lat0, proj.lon0
 
-    def tiles(z, r):
-        la = (lat0 - r / proj.k_lat, lat0 + r / proj.k_lat)
-        lo = (lon0 - r / proj.k_lon, lon0 + r / proj.k_lon)
+    def tiles(z, r, n=0.0, e=0.0):
+        la0, lo0 = lat0 + n / proj.k_lat, lon0 + e / proj.k_lon
+        la = (la0 - r / proj.k_lat, la0 + r / proj.k_lat)
+        lo = (lo0 - r / proj.k_lon, lo0 + r / proj.k_lon)
         x0, y0 = merc_px(la[1], lo[0], z)
         x1, y1 = merc_px(la[0], lo[1], z)
         return [(z, x, y) for y in range(int(y0 // 256), int(y1 // 256) + 1) for x in range(int(x0 // 256), int(x1 // 256) + 1)]
-    jobs = [(t, "b") for t in tiles(15, r_build)] + [(t, "f") for t in tiles(14, r_forest)]
+    tb = set(tiles(15, r_build))
+    tf = set(tiles(14, r_forest))
+    for (n, e) in extra:
+        tb |= set(tiles(15, r_extra, n, e))
+        tf |= set(tiles(14, r_extra, n, e))
+    jobs = [(t, "b") for t in sorted(tb)] + [(t, "f") for t in sorted(tf)]
 
     def get(job):
         (z, x, y), kind = job
@@ -467,6 +474,130 @@ def navaid_from_row(n, proj, lat0, lon0):
     vor = VOR(n["ident"], round(khz / 1000.0, 2), (float(nn), float(ee)), el, n["name"])
     vor.magvar = _variation(n, slaved=True)        # los radiales se miden desde el norte magnético del VOR
     return vor
+
+
+def _sat_sample(layers, n, e):
+    """Color (0-1) de la foto satelital en los puntos (n, e), de la capa más fina que los cubre."""
+    out = np.zeros(n.shape + (3,), np.float32)
+    done = np.zeros(n.shape, bool)
+    for img, (n0, e0, sn, se) in reversed(layers):
+        h, w = img.shape[:2]
+        u = (e - e0) / se
+        v = (n - n0) / sn
+        ok = (~done) & (u >= 0) & (u < 1) & (v >= 0) & (v < 1)
+        out[ok] = img[(v[ok] * h).astype(int), (u[ok] * w).astype(int)] / 255.0
+        done |= ok
+    return out
+
+
+def _box_mean(m, a, b):
+    """Media de m en cada ventana de a x b celdas (la esquina de la ventana en [i, j])."""
+    c = np.cumsum(np.cumsum(np.pad(m, ((1, 0), (1, 0))), 0), 1)
+    return (c[a:, b:] - c[:-a, b:] - c[a:, :-b] + c[:-a, :-b]) / (a * b)
+
+
+def detect_apron(ap, layers, st=8.0):
+    """Plataforma de un aeropuerto real vista en la foto satelital: la franja de concreto (clara y poco saturada)
+    más grande al costado de una pista pavimentada, a menos de 750 m de su eje. Devuelve (centro, rumbo, largo,
+    ancho, lado, pista), con lado = +1 si queda a la derecha del rumbo de la pista, o None si no se ve ninguna."""
+    best = None
+    a, b = int(240 / st), int(48 / st)               # ventana de búsqueda: 240 m a lo largo, 48 m a lo ancho
+    for rw in ap.runways:
+        if not rw.paved or rw.length < 800:
+            continue
+        S = np.arange(-rw.length / 2 + 60.0, rw.length / 2 - 60.0, st)
+        L = np.arange(rw.width / 2 + 50.0, 750.0, st)
+        if len(S) <= a or len(L) <= b:
+            continue
+        for side in (-1, 1):
+            SS, LL = np.meshgrid(S, L * side, indexing="ij")
+            P = rw.center + SS[..., None] * rw.dir + LL[..., None] * rw.right
+            c = _sat_sample(layers, P[..., 0], P[..., 1])
+            m = ((c.mean(-1) > 0.52) & (c.max(-1) - c.min(-1) < 0.17)).astype(np.float32)
+            f = _box_mean(m, a, b)
+            score = f - np.arange(f.shape[1])[None, :] * st / 4000.0     # a igualdad, la más cercana a la pista
+            i, j = np.unravel_index(int(np.argmax(score)), score.shape)
+            if f[i, j] >= 0.6 and (best is None or score[i, j] > best[0]):
+                best = (float(score[i, j]), rw, side, m, S, L, i, j)
+    if best is None:
+        return None
+    _s, rw, side, m, S, L, i, j = best
+    # se estira a lo largo y a lo ancho mientras siga el concreto (hasta 420 x 90 m)
+    band = m[:, j:j + b].mean(1)
+    i0, i1 = i, i + a
+    while i0 > 0 and band[i0 - 1] >= 0.45 and (i1 - i0) * st < 420:
+        i0 -= 1
+    while i1 < len(band) and band[i1] >= 0.45 and (i1 - i0) * st < 420:
+        i1 += 1
+    row = m[i0:i1].mean(0)
+    j0, j1 = j, j + b
+    while j0 > 0 and row[j0 - 1] >= 0.5 and (j1 - j0) * st < 90:
+        j0 -= 1
+    while j1 < len(row) and row[j1] >= 0.5 and (j1 - j0) * st < 90:
+        j1 += 1
+    s0 = (S[i0] + S[i1 - 1]) / 2
+    l0 = (L[j0] + L[j1 - 1]) / 2 * side
+    c = rw.center + rw.dir * s0 + rw.right * l0
+    return (float(c[0]), float(c[1])), rw.heading, float((i1 - i0) * st), max(40.0, float((j1 - j0) * st)), side, rw
+
+
+def airfield_site(ap, layers):
+    """Plataforma de un aeropuerto real (para poner detrás sus hangares, torre y combustible): la de la foto
+    satelital o, si no se ve, una de 180 x 60 m al costado de la pista principal. Solo en pistas pavimentadas
+    de 900 m o más; deja ap.apron, ap.site_side, ap.site_rw y ap.apron_photo (la foto es tan nítida que el
+    concreto ya se ve en ella: no hace falta dibujar las losas encima)."""
+    rw = ap.runways[0]
+    if ap.apron is not None or not rw.paved or rw.length < 900:
+        return
+    det = None
+    try:
+        det = detect_apron(ap, layers)
+    except Exception as ex:
+        print("No se pudo buscar la plataforma en la foto:", ex)
+    if det is None:
+        c = rw.center - rw.dir * rw.length / 4 + rw.right * (rw.width / 2 + 140.0)
+        det = (float(c[0]), float(c[1])), rw.heading, 180.0, 60.0, 1, rw
+    c, hdg, ln, wd, side, srw = det
+    ap.apron = (c, hdg, ln, wd)
+    ap.paved_rects = [ap.apron] + ap.taxi
+    ap.site_side, ap.site_rw = side, srw
+    ap.apron_photo = False
+    for img, (n0, e0, sn, se) in reversed(layers):
+        if 0 <= (c[0] - n0) / sn < 1 and 0 <= (c[1] - e0) / se < 1:
+            ap.apron_photo = sn / img.shape[0] < 3.0
+            break
+
+
+AP_LAYER = (3000.0, 2048)          # foto nítida de otro aeródromo del escenario: ±3 km en 2048 px (2,9 m/px)
+
+
+def airport_layer(ap, data_dir, proj, key, progress=None):
+    """Capa satelital nítida centrada en la pista principal de un aeródromo lejos del centro del escenario (allí la
+    foto general es de 12 m/px): (imagen, rect) o None si no se pudo descargar."""
+    R, size = AP_LAYER
+    cn, ce = (round(float(v) / 100.0) * 100.0 for v in ap.runways[0].center)
+    cache = os.path.join(_cache_dir(data_dir), f"satap_{key}_{ap.ident}.npz")
+    rect = (cn - R, ce - R, 2 * R, 2 * R)
+    try:
+        if os.path.exists(cache):
+            with np.load(cache) as z:
+                return z["img"], tuple(float(v) for v in z["rect"])
+        if progress:
+            progress(f"Descargando la foto de {ap.ident}…", 0.95)
+        lat_c, lon_c = proj.to_geo(np.array([cn]), np.array([ce]))
+        lat_c, lon_c = float(lat_c[0]), float(lon_c[0])
+        la = (lat_c - R / proj.k_lat * 1.02, lat_c + R / proj.k_lat * 1.02)
+        lo = (lon_c - R / proj.k_lon * 1.02, lon_c + R / proj.k_lon * 1.02)
+        zz = _zoom_for(2 * R / size, lat_c)
+        tf = TileFetcher(data_dir, progress)
+        tf.total = TileFetcher.count(zz, la, lo)
+        mos, x0, y0 = tf.mosaic("img", zz, la, lo)
+        img = resample(mos, x0, y0, zz, proj, cn - R, cn + R, ce - R, ce + R, size).astype(np.uint8)
+        np.savez_compressed(cache, img=img, rect=np.array(rect))
+        return img, rect
+    except Exception as ex:
+        print("Sin foto nítida de", ap.ident, ex)
+        return None
 
 
 def build_location(code, data_dir, progress=None, db=None, center=None):
@@ -590,13 +721,26 @@ def build_location(code, data_dir, progress=None, db=None, center=None):
     if a is None:
         a = db.get(airports[0].ident)
         ident = airports[0].ident
+    # foto nítida del aeródromo más importante fuera de la capa de 1,2 m/px del centro (el destino típico)
+    sat_ap = []
+    far = [ap for ap in airports if not getattr(ap, "offscene", False)
+           and max(abs(ap.runways[0].center[0]), abs(ap.runways[0].center[1])) > SAT_LAYERS[2][0] - 400.0
+           and ap.runways[0].paved and ap.runways[0].length >= 900]
+    if far:
+        lay = airport_layer(max(far, key=lambda a_: a_.runways[0].length), data_dir, proj, key, progress)
+        if lay is not None:
+            sat_ap.append(lay)
+    for ap in airports:
+        if not getattr(ap, "offscene", False):
+            airfield_site(ap, layers + sat_ap)       # plataforma (foto satelital) para sus hangares y torre
     # ILS sintéticos (las frecuencias reales no están en la base pública)
     freqs = iter([110.30, 108.90, 109.50, 111.10, 110.70, 109.10, 111.50, 108.50, 110.10, 109.70, 111.90, 108.30])
     for ap in airports[:3]:
         for rw in ap.runways[:2]:
             for end in rw.idents:
                 f = next(freqs, None)
-                if f is not None and rw.length > 700:
+                # ILS de entrenamiento solo donde es verosímil: pista pavimentada, con luces y de 1500 m o más
+                if f is not None and rw.length >= 1500 and rw.paved and rw.lighted:
                     ils = ILS("I" + ap.ident[-3:] + end[:2], f, rw, end)
                     ils.synthetic = True
                     navaids.append(ils)
@@ -605,17 +749,24 @@ def build_location(code, data_dir, progress=None, db=None, center=None):
         if nv is not None:
             navaids.append(nv)
     # edificios y bosques reales (si el servicio no responde, el escenario sigue sin ellos)
-    feat_cache = os.path.join(_cache_dir(data_dir), f"feat_{key}.npz")
+    feat_cache = os.path.join(_cache_dir(data_dir), f"feat2_{key}.npz")   # 2: también junto a cada aeródromo
     buildings, forests = [], []
     try:
         if os.path.exists(feat_cache):
             z = np.load(feat_cache, allow_pickle=True)
             buildings, forests = list(z["b"]), list(z["f"])
         else:
-            buildings, forests = fetch_features(data_dir, proj, progress)
+            extra = [tuple(ap.ref) for ap in airports if not getattr(ap, "offscene", False)
+                     and float(np.hypot(*ap.ref)) > 2500.0]
+            buildings, forests = fetch_features(data_dir, proj, progress, extra=extra)
             np.savez_compressed(feat_cache, b=np.array(buildings, dtype=object), f=np.array(forests, dtype=object))
     except Exception as ex:
         print("Sin edificios/bosques:", ex)
+    if buildings:                                    # los más cercanos al centro o a un aeródromo, primero
+        anchors = np.array([(0.0, 0.0)] + [tuple(ap.ref) for ap in airports if not getattr(ap, "offscene", False)])
+        cen = np.array([np.asarray(p_, np.float64).mean(0) for p_, _m in buildings])
+        dist = np.min(np.hypot(cen[:, None, 0] - anchors[None, :, 0], cen[:, None, 1] - anchors[None, :, 1]), axis=1)
+        buildings = [buildings[i] for i in np.argsort(dist, kind="stable")]
     water = None
     w_cache = os.path.join(_cache_dir(data_dir), f"agua_{key}.npz")
     try:
@@ -635,7 +786,7 @@ def build_location(code, data_dir, progress=None, db=None, center=None):
     return dict(name=name, ident=ident, key=key, route=center is not None, lat0=lat0, lon0=lon0,
                 magvar=local_variation(db.navaids, lat0, lon0), country=a.get("iso_country", ""), freqs=freqs,
                 municipality=a.get("municipality", ""), airports=airports, navaids=navaids,
-                heights=heights.astype(np.float64), sat=layers, proj=proj, buildings=buildings, forests=forests,
+                heights=heights.astype(np.float64), sat=layers, sat_ap=sat_ap, proj=proj, buildings=buildings, forests=forests,
                 water=water)
 
 
@@ -673,4 +824,17 @@ def _runway_from_row(r, proj, ap_row):
     he = (r.get("he_ident") or "").strip() or f"{round(((hdg + 180) % 360) / 10) % 36 or 36:02d}"
     rw = Runway((le, he), (float(c[0]), float(c[1])), hdg, min(length, dist + 60), min(width, 70.0))
     rw.surface = surface
+    rw.paved = surface_is_paved(surface)
+    rw.lighted = (r.get("lighted") or "1").strip() != "0"
     return rw
+
+
+UNPAVED = ("TURF", "GRS", "GRASS", "GRE", "GVL", "GRV", "GRAV", "DIRT", "EARTH", "SAND", "WATER", "CLA", "COR",
+           "SNOW", "ICE", "SOIL", "LAT", "MATS")
+
+
+def surface_is_paved(surface):
+    """¿Asfalto/concreto? Los códigos de OurAirports son libres: se miran los comienzos de pasto, tierra, grava,
+    agua, etc. Lo desconocido se toma como pavimento (como hasta ahora)."""
+    s = (surface or "").upper().strip()
+    return not any(s.startswith(k) for k in UNPAVED)

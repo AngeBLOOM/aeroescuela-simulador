@@ -6,6 +6,27 @@ import numpy as np
 from .mathx import smoothstep
 
 WATER_LEVEL = 0.0
+MICRO_TILE = 256                # ondulaciones finas del suelo: tabla periódica de 256 x 256 puntos…
+MICRO_STEP = 10.0               # …cada 10 m (se repite cada 2,56 km)
+
+
+def _micro_noise(seed=11):
+    """Ruido periódico suave (longitudes de onda de ~40 a 600 m) entre -1 y 1, para las ondulaciones del suelo."""
+    rng = np.random.default_rng(seed)
+    w = rng.standard_normal((MICRO_TILE, MICRO_TILE))
+    f = np.fft.fftfreq(MICRO_TILE, d=MICRO_STEP)
+    fx, fy = np.meshgrid(f, f, indexing="ij")
+    fr = np.hypot(fx, fy)
+    filt = np.where(fr > 0, np.maximum(fr, 1.0 / 600.0) ** -1.5, 0.0) * np.exp(-(fr * 40.0) ** 2)
+    out = np.real(np.fft.ifft2(np.fft.fft2(w) * filt))
+    return np.clip(out / (2.5 * out.std()), -1.0, 1.0)
+
+
+def _cr_weights(t):
+    """Pesos de Catmull-Rom (curva suave que pasa por los puntos de la grilla)."""
+    t2 = t * t
+    t3 = t2 * t
+    return ((-t3 + 2 * t2 - t) * 0.5, (3 * t3 - 5 * t2 + 2) * 0.5, (-3 * t3 + 4 * t2 + t) * 0.5, (t3 - t2) * 0.5)
 
 
 def _smooth_upsample(coarse, n):
@@ -53,6 +74,9 @@ class Terrain:
             for ap in airports:
                 for rw in ap.runways:
                     h = self._flatten_strip(h, X, Y, rw, ap.elev)
+                site = ap.site_rect() if hasattr(ap, "site_rect") else None
+                if site is not None:                 # plataforma, hangares y torre al nivel del aeródromo
+                    h = self._flatten_rect(h, X, Y, site, ap.elev)
             self.h = h
             self.forest = np.zeros_like(h, dtype=bool)
             if sat is not None:
@@ -61,6 +85,8 @@ class Terrain:
                 self.colors = (sat[np.ix_(idx, idx)].astype(np.float32) / 255.0)
             else:
                 self.colors = np.full((n, n, 3), 0.4, np.float32)
+        self._micro = _micro_noise()
+        self.amp = self._micro_amplitude()
 
     def _flatten_strip(self, h, X, Y, rw, elev):
         """Aplana solo la franja de pista (el relieve real no se altera)."""
@@ -71,6 +97,18 @@ class Terrain:
         ea = np.clip(along - (rw.length / 2 + 120.0), 0, None)
         el = np.clip(lat - (rw.width / 2 + 60.0), 0, None)
         w = 1.0 - smoothstep(0.0, 350.0, np.sqrt(ea ** 2 + el ** 2))
+        return h * (1 - w) + elev * w
+
+    def _flatten_rect(self, h, X, Y, rect, elev):
+        """Aplana un rectángulo (centro, rumbo, largo, ancho) con una orilla suave de 250 m."""
+        (cx, cy), hdg, ln, wd = rect
+        hr = math.radians(hdg)
+        dx, dy = X - cx, Y - cy
+        along = np.abs(dx * math.cos(hr) + dy * math.sin(hr))
+        lat = np.abs(-dx * math.sin(hr) + dy * math.cos(hr))
+        ea = np.clip(along - (ln / 2 + 60.0), 0, None)
+        el = np.clip(lat - (wd / 2 + 60.0), 0, None)
+        w = 1.0 - smoothstep(0.0, 250.0, np.sqrt(ea ** 2 + el ** 2))
         return h * (1 - w) + elev * w
 
     # ------------------------------------------------------------ generación
@@ -187,9 +225,134 @@ class Terrain:
                 self.forest[(along < rw.length / 2 + 900) & (lat < 600)] = False
         return np.clip(col, 0, 1).astype(np.float32)
 
+    def _micro_amplitude(self):
+        """Altura de las ondulaciones finas en cada punto de la grilla (m): más en las laderas, nada en los
+        aeródromos (pistas, plataformas y sus alrededores) ni en el agua."""
+        h = self.h
+        gx, gy = np.gradient(h, self.cell)
+        amp = np.clip(1.3 + 10.0 * np.sqrt(gx * gx + gy * gy), 0.0, 7.0)
+        X, Y = self.grid_xy()
+        for ap in self.airports:
+            for rw in ap.runways:
+                dx = X - rw.center[0]
+                dy = Y - rw.center[1]
+                ea = np.clip(np.abs(dx * rw.dir[0] + dy * rw.dir[1]) - (rw.length / 2 + 200.0), 0, None)
+                el = np.clip(np.abs(dx * rw.right[0] + dy * rw.right[1]) - 220.0, 0, None)
+                amp *= smoothstep(150.0, 900.0, np.sqrt(ea ** 2 + el ** 2))
+            site = ap.site_rect() if hasattr(ap, "site_rect") else None
+            if site is not None:                         # plataforma y hangares de un aeropuerto real
+                (cx, cy), hdg, ln, wd = site
+                hr = math.radians(hdg)
+                dx, dy = X - cx, Y - cy
+                ea = np.clip(np.abs(dx * math.cos(hr) + dy * math.sin(hr)) - ln / 2, 0, None)
+                el = np.clip(np.abs(-dx * math.sin(hr) + dy * math.cos(hr)) - wd / 2, 0, None)
+                amp *= smoothstep(100.0, 500.0, np.sqrt(ea ** 2 + el ** 2))
+        amp *= smoothstep(3.0, 15.0, h)                          # costas y orillas lisas
+        if self.water is not None:
+            m, (rx, ry, rw_, rh) = self.water
+            i = np.clip(((X - rx) / rw_ * m.shape[0]).astype(int), 0, m.shape[0] - 1)
+            j = np.clip(((Y - ry) / rh * m.shape[1]).astype(int), 0, m.shape[1] - 1)
+            inside = (X >= rx) & (X < rx + rw_) & (Y >= ry) & (Y < ry + rh)
+            amp[inside & (m[i, j] > 60)] = 0.0
+        return amp
+
     # ------------------------------------------------------------- consultas
     def height(self, x, y):
-        """Altura del terreno (m MSL) con la misma triangulación que la malla."""
+        """Altura del terreno (m MSL): superficie suave (Catmull-Rom) por los puntos de la grilla más ondulaciones
+        finas. La física y la malla fina que rodea al avión usan esta misma superficie."""
+        n = self.n
+        u = (x + self.half) / self.cell
+        v = (y + self.half) / self.cell
+        if u < 1 or v < 1 or u >= n - 3 or v >= n - 3:
+            return self.height_tri(x, y)
+        i = int(u)
+        j = int(v)
+        wu = _cr_weights(u - i)
+        wv = _cr_weights(v - j)
+        H = self.h
+        acc = 0.0
+        for a in range(4):
+            row = H[i - 1 + a]
+            acc += wu[a] * (wv[0] * row[j - 1] + wv[1] * row[j] + wv[2] * row[j + 1] + wv[3] * row[j + 2])
+        return acc + self._micro_at(x, y, u, v)
+
+    def _micro_at(self, x, y, u, v):
+        i = int(u)
+        j = int(v)
+        fu = u - i
+        fv = v - j
+        A = self.amp
+        amp = (A[i, j] * (1 - fu) * (1 - fv) + A[i + 1, j] * fu * (1 - fv) + A[i, j + 1] * (1 - fu) * fv
+               + A[i + 1, j + 1] * fu * fv)
+        if amp <= 0.0:
+            return 0.0
+        a = x / MICRO_STEP
+        b = y / MICRO_STEP
+        ia = math.floor(a)
+        ib = math.floor(b)
+        fa = a - ia
+        fb = b - ib
+        M = self._micro
+        k = MICRO_TILE
+        i0, i1, j0, j1 = ia % k, (ia + 1) % k, ib % k, (ib + 1) % k
+        nz = (M[i0, j0] * (1 - fa) * (1 - fb) + M[i1, j0] * fa * (1 - fb) + M[i0, j1] * (1 - fa) * fb
+              + M[i1, j1] * fa * fb)
+        return amp * nz
+
+    def height_v(self, X, Y):
+        """height() para matrices de puntos (malla fina del renderizador)."""
+        n = self.n
+        X = np.asarray(X, np.float64)
+        Y = np.asarray(Y, np.float64)
+        u = np.clip((X + self.half) / self.cell, 1.0, n - 3.0001)
+        v = np.clip((Y + self.half) / self.cell, 1.0, n - 3.0001)
+        i = u.astype(int)
+        j = v.astype(int)
+        wu = _cr_weights(u - i)
+        wv = _cr_weights(v - j)
+        H = self.h
+        out = np.zeros_like(u)
+        for a in range(4):
+            for b in range(4):
+                out += wu[a] * wv[b] * H[i - 1 + a, j - 1 + b]
+        fu = u - i
+        fv = v - j
+        A = self.amp
+        amp = (A[i, j] * (1 - fu) * (1 - fv) + A[i + 1, j] * fu * (1 - fv) + A[i, j + 1] * (1 - fu) * fv
+               + A[i + 1, j + 1] * fu * fv)
+        a = X / MICRO_STEP
+        b = Y / MICRO_STEP
+        ia = np.floor(a).astype(np.int64)
+        ib = np.floor(b).astype(np.int64)
+        fa = a - ia
+        fb = b - ib
+        M = self._micro
+        k = MICRO_TILE
+        i0, i1, j0, j1 = ia % k, (ia + 1) % k, ib % k, (ib + 1) % k
+        nz = (M[i0, j0] * (1 - fa) * (1 - fb) + M[i1, j0] * fa * (1 - fb) + M[i0, j1] * (1 - fa) * fb
+              + M[i1, j1] * fa * fb)
+        return out + amp * nz
+
+    def height_tri_v(self, X, Y):
+        """Altura de la malla gruesa (triangulada) para matrices de puntos: el borde de la malla fina empalma con
+        ella sin rendijas."""
+        n = self.n
+        u = np.clip((np.asarray(X, np.float64) + self.half) / self.cell, 0.0, n - 1.0001)
+        v = np.clip((np.asarray(Y, np.float64) + self.half) / self.cell, 0.0, n - 1.0001)
+        i = u.astype(int)
+        j = v.astype(int)
+        fu = u - i
+        fv = v - j
+        H = self.h
+        h00 = H[i, j]
+        h11 = H[i + 1, j + 1]
+        up = fu >= fv
+        a = h00 + fu * (H[i + 1, j] - h00) + fv * (h11 - H[i + 1, j])
+        b = h00 + fv * (H[i, j + 1] - h00) + fu * (h11 - H[i, j + 1])
+        return np.where(up, a, b)
+
+    def height_tri(self, x, y):
+        """Altura con la misma triangulación que la malla gruesa (lejos del avión y fuera de la grilla)."""
         n = self.n
         u = (x + self.half) / self.cell
         v = (y + self.half) / self.cell

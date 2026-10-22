@@ -52,6 +52,26 @@ TRIGGERS = [
 ]
 
 
+# Señales luminosas de la torre a una aeronave (OACI, Anexo 2): (color, intermitente, en tierra) -> significado
+LIGHT_MEANINGS = {
+    ("verde", False, False): "Autorizado a aterrizar",
+    ("verde", True, False): "Regrese para aterrizar",
+    ("rojo", False, False): "Ceda el paso y siga en el circuito",
+    ("rojo", True, False): "Aeródromo peligroso: no aterrice",
+    ("blanco", True, False): "Aterrice aquí y vaya a la plataforma",
+    ("alterna", True, False): "Peligro: extreme la precaución",
+    ("verde", False, True): "Autorizado a despegar",
+    ("verde", True, True): "Autorizado a rodar",
+    ("rojo", False, True): "Deténgase",
+    ("rojo", True, True): "Libere el área de aterrizaje",
+    ("blanco", True, True): "Regrese al punto de partida",
+    ("alterna", True, True): "Peligro: extreme la precaución",
+}
+LIGHT_SIGNALS = [(None, "Ninguna"), (("verde", False), "Verde fija"), (("verde", True), "Verde intermitente"),
+                 (("rojo", False), "Roja fija"), (("rojo", True), "Roja intermitente"),
+                 (("blanco", True), "Blanca intermitente"), (("alterna", True), "Roja y verde")]
+
+
 class Emergencies:
     def __init__(self, world):
         self.world = world
@@ -71,6 +91,9 @@ class Emergencies:
         s.extinguisher = 1.0
         self.trim_dir = 1.0
         self.light = None        # señal luminosa de la torre (color, intermitente)
+        self.light_manual = None  # la que manda el instructor (tiene prioridad); color: verde, rojo, blanco, alterna
+        self.light_since = 0.0    # cuánto hace que se ve la señal actual (s)
+        self._light_prev = None
         self.caps = False        # paracaídas balístico desplegado (Cirrus)
         self.caps_t = 0.0
         self.was_airborne = False
@@ -226,9 +249,11 @@ class Emergencies:
             self.resolve_once("alternator" if f.get("alternator") else "electrical", "cargas no esenciales apagadas")
         if (f.get("engine") or f.get("engine2")) and w.xpdr == 7700:
             self.resolve_once("engine", "MAYDAY / 7700")
-        # --- radio: señales luminosas de la torre (transpondedor 7600)
+        # --- radio: señales luminosas de la torre (transpondedor 7600); el instructor puede mandar cualquiera
         self.light = None
-        if f.get("radio"):
+        if self.light_manual is not None:
+            self.light = self.light_manual
+        elif f.get("radio"):
             h = w.home.ref
             d = math.hypot(ac.pos[0] - h[0], ac.pos[1] - h[1])
             if d < 4 * NM:
@@ -237,6 +262,18 @@ class Emergencies:
                     self.light = ("verde", True) if not busy else ("rojo", True)
                 else:
                     self.light = ("rojo", False) if busy else ("verde", False)
+
+        if self.light != self._light_prev:
+            self._light_prev = self.light
+            self.light_since = 0.0
+        else:
+            self.light_since += dt
+
+    def light_meaning(self, on_ground):
+        """Significado de la señal luminosa actual (OACI, Anexo 2, apéndice 1), distinto en vuelo y en tierra."""
+        if self.light is None:
+            return ""
+        return LIGHT_MEANINGS.get((self.light[0], self.light[1], bool(on_ground)), "")
 
     # ------------------------------------------------------------ acciones del piloto
     def deploy_caps(self):

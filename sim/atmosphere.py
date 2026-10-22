@@ -39,6 +39,27 @@ class Weather:
     def copy_from(self, other):
         self.__dict__.update(other.__dict__)
 
+    def ground_fog(self):
+        """Niebla de radiación en los valles: (intensidad 0..1, espesor de la capa en m, visibilidad dentro en m).
+        Se forma con aire casi saturado (temperatura − rocío ≤ 2 °C), viento flojo y entre la madrugada y unas
+        horas después de la salida del Sol, cuando se disipa. Sin lluvia (la lluvia mezcla la capa)."""
+        h = self.hour % 24
+        dawn = _smooth(2.5, 4.5, h) * (1.0 - _smooth(8.0, 10.0, h)) if h < 12 else _smooth(21.5, 24.0, h) * 0.6
+        k = _smooth(2.2, 0.6, self.dew_spread) * _smooth(8.0, 3.0, self.wind_kt) * dawn * (1.0 - _smooth(0.1, 0.4, self.rain))
+        if k < 0.02:
+            return 0.0, 0.0, 1e9
+        return k, 25.0 + 95.0 * k, 5000.0 * (1.0 - k) + 200.0 * k
+
+    def metar_visibility(self):
+        """(visibilidad en m, fenómeno) en el aeródromo: lluvia, neblina (BR) o niebla (FG)."""
+        vis = min(self.visibility_m, rain_visibility(self.rain))
+        k, _top, fvis = self.ground_fog()
+        wx = ""
+        if k > 0.0 and fvis < vis:
+            vis = fvis
+            wx = " FG" if vis < 1000 else " BR"
+        return vis, wx
+
     def describe(self):
         cov = self.cloud_cover
         if cov < 0.1:
@@ -51,8 +72,8 @@ class Weather:
             nub = "BKN"
         else:
             nub = "OVC"
-        vis_m = min(self.visibility_m, rain_visibility(self.rain))
-        vis = "9999" if vis_m >= 10000 else f"{int(vis_m):04d}"
+        vis_m, fogwx = self.metar_visibility()
+        vis = "9999" if vis_m >= 10000 else f"{int(vis_m // 50 * 50):04d}"
         gust = f"G{int(self.gust_kt + self.wind_kt):02d}" if self.gust_kt > 0 else ""
         base = int(self.cloud_base_ft / 100)
         t = 15 + self.temp_offset
@@ -61,6 +82,7 @@ class Weather:
             wx = " TSRA" if self.rain < 0.75 else " +TSRA"
         elif self.rain > 0.02:
             wx = " -RA" if self.rain < 0.35 else (" RA" if self.rain < 0.75 else " +RA")
+        wx += fogwx
         cb = "CB" if self.storm else ""
         return (f"{int(self.wind_dir) % 360:03d}{int(self.wind_kt):02d}{gust}KT {vis}{wx} "
                 f"{nub}{base:03d}{cb} {int(t):02d}/{int(round(t - self.dew_spread)):02d} Q{int(round(self.qnh_hpa))}")

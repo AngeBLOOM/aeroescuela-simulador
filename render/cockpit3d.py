@@ -495,9 +495,9 @@ class Cockpit3D:
         pr["u_model"].write(gl_bytes(body_M))
         ctx.enable(moderngl.BLEND)
         ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
-        ctx.depth_mask = False
+        ctx.fbo.depth_mask = False
         pr["u_glass"].value = 1
         self.parts["glass"].render()
         pr["u_glass"].value = 0
-        ctx.depth_mask = True
+        ctx.fbo.depth_mask = True
         ctx.disable(moderngl.BLEND)

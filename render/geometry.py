@@ -240,6 +240,86 @@ def template_tree(kind=0):
     return mb.array()
 
 
+def _icosphere(sub=1):
+    """Esfera de radio 1 (icosaedro subdividido): vértices y caras."""
+    t = (1 + 5 ** 0.5) / 2
+    V = [(-1, t, 0), (1, t, 0), (-1, -t, 0), (1, -t, 0), (0, -1, t), (0, 1, t), (0, -1, -t), (0, 1, -t),
+         (t, 0, -1), (t, 0, 1), (-t, 0, -1), (-t, 0, 1)]
+    V = [np.array(v, float) / np.linalg.norm(v) for v in V]
+    F = [(0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11), (1, 5, 9), (5, 11, 4), (11, 10, 2), (10, 7, 6),
+         (7, 1, 8), (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8), (3, 8, 9), (4, 9, 5), (2, 4, 11), (6, 2, 10),
+         (8, 6, 7), (9, 8, 1)]
+    for _ in range(sub):
+        mid = {}
+
+        def m(a, b):
+            k = (min(a, b), max(a, b))
+            if k not in mid:
+                v = V[a] + V[b]
+                V.append(v / np.linalg.norm(v))
+                mid[k] = len(V) - 1
+            return mid[k]
+        F2 = []
+        for a, b, c in F:
+            ab, bc, ca = m(a, b), m(b, c), m(c, a)
+            F2 += [(a, ab, ca), (b, bc, ab), (c, ca, bc), (ab, bc, ca)]
+        F = F2
+    return np.array(V), F
+
+
+def template_tree_detail(kind=0, seed=5):
+    """Árbol detallado para verlo de cerca (altura 1, z hacia abajo). kind 0: conífera de cuatro pisos con la cara
+    de abajo de cada piso en sombra; kind 1: frondoso con tronco, ramas y copa de varias masas irregulares, más
+    claras arriba y más oscuras abajo y adentro."""
+    rng = np.random.default_rng(seed + kind)
+    mb = MeshBuilder()
+    bark = (0.33, 0.24, 0.16)
+    if kind == 0:
+        mb.cylinder((0, 0, 0.02), (0, 0, -0.3), 0.032, bark, segs=6, caps=False)
+        tiers = [(-0.12, -0.5, 0.36, (0.14, 0.27, 0.12)), (-0.3, -0.68, 0.29, (0.16, 0.31, 0.13)),
+                 (-0.47, -0.84, 0.21, (0.18, 0.35, 0.15)), (-0.63, -1.0, 0.13, (0.21, 0.39, 0.17))]
+        for zb, zt, r, col in tiers:
+            segs = 10
+            base = np.array([0, 0, zb])
+            tip = np.array([0, 0, zt])
+            for i in range(segs):
+                a0 = 2 * math.pi * i / segs + rng.uniform(-0.05, 0.05)
+                a1 = 2 * math.pi * (i + 1) / segs
+                r0 = r * rng.uniform(0.88, 1.08)
+                r1 = r * rng.uniform(0.88, 1.08)
+                d0 = np.array([math.cos(a0), math.sin(a0), 0.0])
+                d1 = np.array([math.cos(a1), math.sin(a1), 0.0])
+                p0 = base + d0 * r0 + np.array([0, 0, 0.03])          # el borde del piso cae un poco
+                p1 = base + d1 * r1 + np.array([0, 0, 0.03])
+                n0, n1 = _n(d0 + np.array([0, 0, -0.55])), _n(d1 + np.array([0, 0, -0.55]))
+                dark = tuple(c * 0.72 for c in col)
+                mb.tris([p0, p1, tip], [n0, n1, _n(n0 + n1)], [dark, dark, col])
+                under = tuple(c * 0.45 for c in col)
+                mb.tris([base, p1, p0], [(0, 0, 1)] * 3, [under])
+        return mb.array()
+    mb.cylinder((0, 0, 0.02), (0, 0, -0.42), 0.045, bark, segs=6, caps=False)
+    mb.cylinder((0, 0, -0.3), (0.13, 0.05, -0.5), 0.022, bark, segs=5, caps=False)
+    mb.cylinder((0, 0, -0.33), (-0.11, -0.07, -0.52), 0.02, bark, segs=5, caps=False)
+    V1, F1 = _icosphere(1)
+    V0, F0 = _icosphere(0)
+    blobs = [((0.0, 0.0, -0.66), 0.31), ((0.17, 0.07, -0.56), 0.22), ((-0.15, -0.09, -0.58), 0.22),
+             ((0.03, -0.12, -0.83), 0.2), ((-0.04, 0.14, -0.8), 0.19)]
+    for k, (c, r) in enumerate(blobs):
+        c = np.array(c)
+        V, F = (V1, F1) if k < 3 else (V0, F0)              # las masas chicas, con menos triángulos
+        jit = 1.0 + rng.uniform(-0.14, 0.14, len(V))
+        P = c + V * r * jit[:, None] * np.array([1.0, 1.0, 0.85])
+        tint = np.array([0.25, 0.43, 0.16]) * rng.uniform(0.88, 1.12)
+        up = np.clip(-V[:, 2] * 0.5 + 0.5, 0, 1)                    # 1 arriba, 0 abajo
+        out = np.clip(-(P[:, 2] + 0.45) / 0.55, 0, 1)                # más alto en el árbol = más claro
+        shade = 0.5 + 0.35 * up + 0.2 * out
+        C = tint[None, :] * shade[:, None]
+        N = _n(V * 0.8 + _n(P - np.array([0, 0, -0.62])) * 0.2)
+        idx = np.array(F).ravel()
+        mb.tris(P[idx], N[idx], C[idx])
+    return mb.array()
+
+
 def template_house():
     mb = MeshBuilder()
     wall = (0.9, 0.87, 0.8)

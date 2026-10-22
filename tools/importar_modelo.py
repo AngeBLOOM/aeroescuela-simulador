@@ -2,6 +2,7 @@
 
     python tools/importar_modelo.py <avión> <archivo.glb> [quitar=material1,material2]
     python tools/importar_modelo.py c172 Descargas/free_cessna_172sp.glb quitar=remove_before_flight,Concrete
+    python tools/importar_modelo.py hornear [avión …]      (vuelve a calcular la penumbra de los ya convertidos)
 
 - Lee el .glb sin ejecutar nada de él: el JSON de la escena y los datos binarios (mallas e imágenes).
 - Lo pone en los ejes del avión del simulador (x adelante, y a la derecha, z abajo): la mayor medida horizontal es la
@@ -11,6 +12,8 @@
 - Junta las piezas por material (pocas llamadas de dibujo) y reduce las texturas a 1024 px como máximo.
 - invertir: da vuelta adelante y atrás si la detección de la cola falla.
 - quitar=…: materiales que no deben verse en vuelo (cuerdas de amarre, bloques, cintas «remove before flight»).
+- Hornea la oclusión ambiental por vértice (rendijas, uniones, ruedas y el interior en penumbra): se calcula una
+  sola vez aquí y en vuelo no cuesta nada.
 - Escribe assets/modelos/<avión>.npz, sus texturas assets/modelos/<avión>_<n>.png y el crédito en
   assets/modelos/CREDITOS.json (las licencias CC BY piden citar al autor): autor, título, enlace y licencia salen de
   los datos que Sketchfab guarda en el propio archivo.
@@ -223,6 +226,7 @@ def convert(aircraft_id, glb, drop=(), flip=False):
         meta.append(dict(color=color, tex=tex_file, blend=mat.get("alphaMode") == "BLEND",
                          cutoff=float(mat.get("alphaCutoff", 0.5)) if mat.get("alphaMode") == "MASK" else 0.0,
                          nombre=mat.get("name", "")))
+    arrays = bake_ao(arrays, meta)
     np.savez_compressed(os.path.join(OUT, aircraft_id + ".npz"), meta=json.dumps(meta), **arrays)
     cred_p = os.path.join(OUT, "CREDITOS.json")
     cred = json.load(open(cred_p, encoding="utf-8")) if os.path.exists(cred_p) else {}
@@ -235,7 +239,101 @@ def convert(aircraft_id, glb, drop=(), flip=False):
           f"{info}")
 
 
+# ---------------------------------------------------------------- oclusión ambiental horneada
+AO_DIRS = 160
+AO_RES = 1024
+AO_FLOOR = 0.15          # el rincón más cerrado no queda negro del todo (luz que rebota)
+
+
+def bake_ao(arrays, meta, dirs=AO_DIRS, res=AO_RES):
+    """Penumbra por vértice: se mira el avión desde muchas direcciones (mapas de profundidad en la tarjeta
+    gráfica) y se cuenta desde cuántas ve cielo cada vértice, pesando por el ángulo con su normal. Devuelve los
+    vértices con una 9.ª columna: 1 al aire libre, AO_FLOOR en el rincón más cerrado. Los vidrios no tapan."""
+    import moderngl
+    n = len(meta)
+    V = [np.asarray(arrays[f"v{k}"], np.float32)[:, :8] for k in range(n)]
+    solid = [not m.get("blend") or m["color"][3] >= 0.6 for m in meta]
+    occ_v, occ_i, base = [], [], 0
+    for k in range(n):
+        if solid[k]:
+            occ_v.append(V[k][:, :3])
+            occ_i.append(np.asarray(arrays[f"i{k}"], np.uint32) + base)
+            base += len(V[k])
+    allp = np.concatenate([v[:, :3] for v in V]).astype(np.float64)
+    alln = np.concatenate([v[:, 3:6] for v in V]).astype(np.float64)
+    alln /= np.maximum(np.linalg.norm(alln, axis=1, keepdims=True), 1e-9)
+    c = (allp.min(0) + allp.max(0)) / 2
+    R = float(np.linalg.norm(allp - c, axis=1).max()) * 1.02
+    ctx = moderngl.create_standalone_context()
+    prog = ctx.program(vertex_shader="""#version 330
+uniform vec3 r; uniform vec3 u; uniform vec3 f; uniform vec3 c; uniform float R;
+in vec3 in_pos;
+void main() { vec3 d = in_pos - c; gl_Position = vec4(dot(d, r) / R, dot(d, u) / R, dot(d, f) / R, 1.0); }""",
+                       fragment_shader="#version 330\nvoid main() { }")
+    vbo = ctx.buffer(np.ascontiguousarray(np.concatenate(occ_v), np.float32).tobytes())
+    ibo = ctx.buffer(np.ascontiguousarray(np.concatenate(occ_i), np.uint32).tobytes())
+    vao = ctx.vertex_array(prog, [(vbo, "3f", "in_pos")], ibo)
+    depth = ctx.depth_texture((res, res))
+    fbo = ctx.framebuffer(depth_attachment=depth)
+    ctx.enable(moderngl.DEPTH_TEST)
+    prog["c"].value = tuple(float(x) for x in c)
+    prog["R"].value = R
+    acc = np.zeros(len(allp))
+    wsum = np.zeros(len(allp))
+    bias = 0.015 / (2 * R)                      # 1,5 cm en unidades de profundidad
+    gold = np.pi * (3 - np.sqrt(5))
+    for j in range(dirs):                       # direcciones repartidas por igual en toda la esfera
+        zz = 1 - 2 * (j + 0.5) / dirs
+        rr = np.sqrt(1 - zz * zz)
+        d = np.array([rr * np.cos(gold * j), rr * np.sin(gold * j), zz])
+        f = -d
+        up = np.array([0.0, 0.0, 1.0]) if abs(f[2]) < 0.9 else np.array([1.0, 0.0, 0.0])
+        r = np.cross(f, up)
+        r /= np.linalg.norm(r)
+        u = np.cross(r, f)
+        for name, vec in (("r", r), ("u", u), ("f", f)):
+            prog[name].value = tuple(float(x) for x in vec)
+        fbo.use()
+        fbo.clear(depth=1.0)
+        vao.render()
+        D = np.frombuffer(depth.read(), np.float32).reshape(res, res)
+        cosw = alln @ d
+        m = cosw > 0.02
+        rel = allp[m] + alln[m] * 0.02 - c     # 2 cm hacia afuera: el vértice no se tapa a sí mismo
+        ix = np.clip(((rel @ r / R) * 0.5 + 0.5) * res, 0, res - 1).astype(int)
+        iy = np.clip(((rel @ u / R) * 0.5 + 0.5) * res, 0, res - 1).astype(int)
+        zd = (rel @ f / R) * 0.5 + 0.5
+        vis = zd <= D[iy, ix] + bias
+        acc[m] += vis * cosw[m]
+        wsum[m] += cosw[m]
+    ctx.release()
+    ao = np.where(wsum > 0, acc / np.maximum(wsum, 1e-9), 1.0)
+    ao = AO_FLOOR + (1 - AO_FLOOR) * np.clip(ao, 0, 1)
+    out, a0 = dict(arrays), 0
+    for k in range(n):
+        nv = len(V[k])
+        out[f"v{k}"] = np.hstack([V[k], ao[a0:a0 + nv, None].astype(np.float32)])
+        a0 += nv
+    return out
+
+
+def rebake(aircraft_id):
+    path = os.path.join(OUT, aircraft_id + ".npz")
+    z = np.load(path)
+    meta = json.loads(str(z["meta"]))
+    arrays = {k: z[k] for k in z.files if k != "meta"}
+    arrays = bake_ao(arrays, meta)
+    np.savez_compressed(path, meta=json.dumps(meta), **arrays)
+    ao = np.concatenate([arrays[f"v{k}"][:, 8] for k in range(len(meta))])
+    print(f"{aircraft_id}: penumbra horneada (media {ao.mean():.2f}, mínimo {ao.min():.2f})")
+
+
 if __name__ == "__main__":
+    if len(sys.argv) >= 2 and sys.argv[1] == "hornear":
+        ids = sys.argv[2:] or sorted(f[:-4] for f in os.listdir(OUT) if f.endswith(".npz"))
+        for a in ids:
+            rebake(a)
+        sys.exit(0)
     if len(sys.argv) < 3:
         print(__doc__)
         sys.exit(1)
