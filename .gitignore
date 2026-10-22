@@ -12,6 +12,7 @@ datos/geo/
 datos/capturas/
 datos/alumnos/
 datos/progreso.json
+datos/retardo.json
 
 # Vídeos de demostración (pesados; se entregan aparte)
 demostracion/

@@ -177,6 +177,11 @@ Maracaibo…) aparecen reactores con los colores de Conviasa, Avior, Laser, Este
 también Copa, Avianca y Wingo): llegan por la final larga, aterrizan y despegan con su propio ritmo, y hablan con la
 torre por la radio («Conviasa tres cero uno, final pista 10»).
 
+**Retardo (F9):** junto a las imágenes por segundo, el simulador muestra su **retardo interno** (desde que lee los mandos
+hasta que entrega la imagen) y el peor caso, que suma un cuadro de espera. Al terminar cada vuelo lo guarda en
+`datos/retardo.json` para la guía de pruebas. En una PC de 30 FPS con el G1000: 10 ms de media y 50 ms de peor caso. El
+USB y el monitor añaden lo suyo, que se mide de punta a punta con la consola montada.
+
 **Fluidez:** si el equipo no llega a 60 imágenes por segundo, el simulador baja un poco la resolución del paisaje 3D
 (hasta el 65 %) antes de pasar a 30; el paisaje se dibuja solo en la parte de la pantalla donde se ve.
 
