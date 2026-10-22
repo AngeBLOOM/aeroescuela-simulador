@@ -789,8 +789,12 @@ class ScreensMixin:
                     hw.invert(key)
             if hw.bindings.get(key) and ui.button(s, (bx + 98, y - 1, 24, 24), "×", size=12, tip="Quitar"):
                 hw.clear(key)
-        f.blit(s, "INT = interruptor con posición fija · PULS = pulsador · MANT = activo mientras se mantiene. "
-                  "Rueda del ratón: más funciones. Se guarda al salir.", (x0, box.bottom - 22), 12, COL["grey"])
+        note = ("INT = interruptor con posición fija · PULS = pulsador · MANT = activo mientras se mantiene. "
+                "Rueda del ratón: más funciones. Se guarda al salir.")
+        cons = "La consola es la del Cessna 172S: los demás aviones se vuelan sin ella."
+        if f.get(12).size(f"{note}  ·  {cons}")[0] > box.right - x0 - 16:      # no cabe: leyenda corta
+            note = "INT = fijo · PULS = pulsador · MANT = mientras se mantiene · Rueda: más · Se guarda al salir"
+        f.blit(s, f"{note}  ·  {cons}", (x0, box.bottom - 22), 12, COL["grey"])
         hw.update(0.0, self.world, self) if hw.capture else None
 
     def page_hw_sens(self, box):

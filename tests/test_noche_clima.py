@@ -101,10 +101,14 @@ def land(w, L, dt, pid, vapp=65):
         att(ac, pid, roll_cmd * 0.5, clamp(4 + (15 - ra) * 0.25, 2, 8), dt)
     else:
         e.throttle = 0.0
-        # volante atrás y frenada progresiva (frenar fuerte a mucha velocidad clava el morro y la hélice toca)
-        ac.ctl_elev = 0.6
+        # rápido: nariz a ~3° sin tirar más (tirar a fondo a 50+ kt hace tocar la cola o vuelve a volar); despacio:
+        # volante atrás. Frenada progresiva (frenar fuerte a mucha velocidad clava el morro y la hélice toca)
+        if w.ind.ias > 45:
+            att(ac, pid, 0.0, 3.0, dt)
+        else:
+            ac.ctl_elev = 0.6
         ac.ctl_ail = 0.0
-        ac.brake = 0.6 if w.ind.ias < 30 else (0.25 if w.ind.ias < 50 else 0.0)
+        ac.brake = 0.8 if w.ind.ias < 30 else (0.5 if w.ind.ias < 50 else 0.2)
         ac.ctl_rud = clamp(-lat * 0.1 + wrap180(H - ac.heading) * 0.1, -1, 1)
 
 
