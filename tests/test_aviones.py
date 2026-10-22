@@ -60,5 +60,28 @@ for tid in AIRCRAFT:
     ok_all &= good
     print(f"{tid:6s} {'OK ' if good else 'FALLO'} despegue a {lift[1] if lift else 0:.0f} kt (Vr {vr}) en {lift[0] if lift else 0:.0f} s; "
           f"1000 ft AGL a los {t:.0f} s, {w.ind.ias:.0f} kt (Vy {vy}), {ac.vs_fpm:.0f} ft/min {ac.crash_reason}")
+# modelos 3D reales (assets/modelos): misma envergadura que el avión y las ruedas a la altura del tren del simulador
+import json                                              # noqa: E402
+
+import numpy as np                                       # noqa: E402
+
+from render import geometry as geo                       # noqa: E402
+
+mdir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "modelos")
+cred = json.load(open(os.path.join(mdir, "CREDITOS.json"), encoding="utf-8")) if os.path.isdir(mdir) else {}
+for mid in sorted(cred):
+    z = np.load(os.path.join(mdir, mid + ".npz"))
+    meta = json.loads(str(z["meta"]))
+    pts = np.concatenate([z[f"v{k}"][:, :3] for k in range(len(meta))])
+    t = AIRCRAFT[mid]()
+    parts, _ = geo.aircraft_parts(t)
+    zb = max(a.reshape(-1, 9)[:, 2].max() for k, (a, p_, ax) in parts.items() if not k.startswith(("disc", "prop")))
+    span = pts[:, 1].max() - pts[:, 1].min()
+    texs = [m["tex"] for m in meta if m.get("tex")]
+    good = (abs(span - t.b) < 0.02 * t.b and abs(pts[:, 2].max() - zb) < 0.02
+            and all(os.path.exists(os.path.join(mdir, x)) for x in texs) and cred[mid].get("autor"))
+    ok_all &= bool(good)
+    print(f"modelo {mid:6s} {'OK ' if good else 'FALLO'} envergadura {span:.2f} m (avión {t.b}), ruedas a {pts[:, 2].max():.2f} m "
+          f"(tren {zb:.2f}), {len(texs)} texturas, autor {cred[mid].get('autor', '?').split(' (')[0]}")
 print("TODOS OK" if ok_all else "HAY FALLOS")
 sys.exit(0 if ok_all else 1)

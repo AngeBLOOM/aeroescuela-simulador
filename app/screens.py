@@ -514,6 +514,22 @@ class ScreensMixin:
                 sel = i
         return sel
 
+    def _model_credit(self, aid):
+        """Crédito del modelo 3D real del avión (assets/modelos/CREDITOS.json), o "" si se dibuja por código."""
+        if not hasattr(self, "_credits"):
+            import json
+            from ui import assets
+            try:
+                self._credits = json.load(open(assets.path(os.path.join("modelos", "CREDITOS.json")), encoding="utf-8"))
+            except (OSError, ValueError):
+                self._credits = {}
+        c = self._credits.get({"pa28r": "pa28w"}.get(aid, aid))
+        if not c:
+            return ""
+        autor = c.get("autor", "").split(" (")[0]
+        lic = c.get("licencia", "").split(" (")[0].replace("CC-BY-4.0", "CC BY 4.0")
+        return f"Modelo 3D «{c.get('titulo', '')}» de {autor} · {lic}"
+
     def _aircraft_cards(self, x0, y, w, cfg):
         """Tarjetas de avión con foto (assets/avion_<id>.png si existe), nombre y tipo."""
         from ui import assets
@@ -562,6 +578,9 @@ class ScreensMixin:
         w = box.w - 52
         y = box.y + 20
         f.blit(s, "Vuelo libre", (x0, y), 28, COL["white"], bold=True)
+        cred = self._model_credit(cfg.get("avion", "c172"))
+        if cred:                                   # la licencia CC BY pide citar al autor del modelo 3D
+            f.blit(s, cred, (box.right - 26, y + 12), 11, COL["grey"], anchor="topright")
         y += 50
         f.blit(s, "Avión", (x0, y), 16, COL["accent"], bold=True)
         y += 24
