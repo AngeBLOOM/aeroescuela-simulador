@@ -3,6 +3,7 @@ estación del instructor, análisis posterior y superposiciones de ayuda/listas.
 import math
 import os
 import time
+from types import SimpleNamespace
 
 import numpy as np
 import pygame
@@ -1566,22 +1567,39 @@ class ScreensMixin:
         w = self.world
         wx = w.weather
         ac = w.ac
+        typing = self.instr_tab == "ruta"          # en «Ruta y radios» las letras escriben en el buscador de puntos
+        if not hasattr(self, "inst_query"):
+            self.inst_query = ""
         for ev in events:
-            if ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_i):
+            if ev.type == pygame.KEYDOWN and (ev.key == pygame.K_ESCAPE or (ev.key == pygame.K_i and not typing)):
                 self.state = "flight"
                 return
+            if typing and ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_BACKSPACE:
+                    self.inst_query = self.inst_query[:-1]
+                elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and self.inst_query:
+                    found = w.gps.search(self.inst_query, 1)
+                    if found:
+                        self._route_add(found[0][0])
+            elif typing and ev.type == pygame.TEXTINPUT:
+                for ch in ev.text:
+                    if (ch.isalnum() or ch in " -") and len(self.inst_query) < 12:
+                        self.inst_query += ch.upper()
         box = pygame.Rect(0, 0, min(self.W - 60, 1000), min(self.H - 60, 620))
         box.center = (self.W / 2, self.H / 2)
         panel_box(s, box, 16, (8, 14, 24, 240))
         f.blit(s, "ESTACIÓN DEL INSTRUCTOR", (box.x + 24, box.y + 18), 22, COL["white"], bold=True)
         f.blit(s, "La simulación está en pausa mientras configura.", (box.x + 26, box.y + 50), 13, COL["grey"])
         tabs = [("clima", "Meteorología"), ("fallas", "Fallas"), ("pos", "Reposicionar"), ("control", "Congelar y mover"),
-                ("avion", "Avión")]
+                ("avion", "Avión"), ("ruta", "Ruta y radios")]
+        tw = (box.w - 48 - 8 * (len(tabs) - 1)) / len(tabs)
         tx = box.x + 24
         for key, lab in tabs:
-            if ui.button(s, (tx, box.y + 76, 170, 36), lab, active=self.instr_tab == key, size=15):
+            if ui.button(s, (tx, box.y + 76, tw, 36), lab, active=self.instr_tab == key, size=14):
+                if key == "ruta" and self.instr_tab != "ruta":
+                    self.inst_query = ""            # buscador vacío al entrar (sin letras de antes)
                 self.instr_tab = key
-            tx += 178
+            tx += tw + 8
         if ui.button(s, (box.right - 160, box.y + 16, 136, 36), "Volver (Esc)", size=14, color=(30, 110, 70)):
             self.state = "flight"
             return
@@ -1723,6 +1741,8 @@ class ScreensMixin:
                       f"a {d:.1f} NM de {w.home.ident}", (x0, y), 14, COL["grey"])
             f.blit(s, "Lo congelado y el ritmo se quitan al reposicionar o empezar otra lección.", (x0, y + 24), 13,
                    COL["grey"])
+        elif tab == "ruta":
+            self._instr_route(s, box, x0, y)
         elif tab == "avion":
             f.blit(s, "Combustible", (x0, y + 8), 16, COL["white"])
             for i, (lab, frac) in enumerate((("Lleno", 1.0), ("3/4", 0.75), ("Mitad", 0.5), ("Reserva", 0.12))):
@@ -1745,6 +1765,156 @@ class ScreensMixin:
                          active=self.controls.assist_rudder, size=14):
                 self.controls.assist_rudder = not self.controls.assist_rudder
                 self.settings["timon_auto"] = self.controls.assist_rudder
+
+    # ---------------------------------------------------------------- instructor: ruta y radios
+    def _route_add(self, wp):
+        """Añade un punto a la ruta del GPS del alumno (el primero la activa desde la posición actual)."""
+        self.world.gps.add(wp)
+        self.world.cdi_src = "GPS"
+        self.inst_query = ""
+
+    def _radio_stations(self):
+        """Estaciones del escenario para cada radio: [(nombre, frecuencia)]."""
+        w = self.world
+        com = [(k, v) for k, v in w.freqs.items()]
+        vors = [(f"VOR {n.ident}", n.freq) for n in w.navaids if n.kind == "VOR"]
+        ils = [(f"ILS {n.ident} {n.end_ident}", n.freq) for n in w.navaids if n.kind == "ILS"]
+        ndbs = [(f"NDB {n.ident}", float(n.freq)) for n in w.navaids if n.kind == "NDB"]
+        return dict(com=com, nav=ils + vors, adf=ndbs)
+
+    def _instr_route(self, s, box, x0, y):
+        """Pestaña «Ruta y radios»: el instructor arma la ruta del alumno (puntos, aproximación RNAV de llegada) y le
+        deja sintonizadas las radios y el transpondedor. El alumno solo vuela la misión."""
+        from sim import rnav
+        from sim.nav import step_adf, step_com, step_nav
+        f, ui, w = self.fonts, self.ui, self.world
+        g = w.gps
+        ac = w.ac
+        # ---- ruta (columna izquierda)
+        f.blit(s, "RUTA DEL ALUMNO" + (f"  ·  {g.approach.short}" if g.approach is not None else ""), (x0, y), 15,
+               COL["accent"], bold=True)
+        yy = y + 28
+        if not g.plan:
+            f.blit(s, "Sin ruta. Busque un punto y añádalo (el primero se activa desde donde está el avión).", (x0, yy + 4),
+                   13, COL["grey"])
+            yy += 28
+        for i, wp in enumerate(g.plan[:7]):
+            on = i == g.active and g.direct is None
+            f.blit(s, f"{'▶' if on else ' '} {i + 1}. {wp.ident:6s} {wp.kind:3s}  {wp.name[:22]}", (x0, yy + 6), 14,
+                   COL["accent"] if on else COL["white"], mono=True)
+            if ui.button(s, (x0 + 390, yy, 34, 28), "▶", size=12, tip="Activar el tramo hacia este punto"):
+                g.activate(i)
+            if ui.button(s, (x0 + 430, yy, 34, 28), "×", size=14, tip="Quitar de la ruta"):
+                g.remove(i)
+                break
+            yy += 32
+        yy += 6
+        f.blit(s, "Añadir punto:", (x0, yy + 6), 14, COL["white"])
+        qbox = pygame.Rect(x0 + 120, yy, 200, 30)
+        pygame.draw.rect(s, (12, 18, 28), qbox, border_radius=4)
+        pygame.draw.rect(s, (90, 110, 140), qbox, 1, border_radius=4)
+        caret = "_" if int(time.time() * 2) % 2 == 0 else " "
+        f.blit(s, (self.inst_query or "") + caret, (qbox.x + 8, qbox.centery), 15, COL["white"], mono=True, bold=True,
+               anchor="midleft")
+        if ui.button(s, (qbox.right + 6, yy, 30, 30), "×", size=14, tip="Borrar lo escrito"):
+            self.inst_query = ""
+        f.blit(s, "teclee VLC, SVBS… · Enter", (qbox.right + 44, qbox.centery), 12, COL["grey"], anchor="midleft")
+        yy += 36
+        for wp, dis, brg in g.search(self.inst_query, 6 if len(g.plan) <= 2 else 3):
+            if ui.button(s, (x0, yy, 464, 28), f"+ {wp.ident:6s} {wp.kind:3s} {dis:5.1f} NM  {wp.name[:24]}", size=13):
+                self._route_add(wp)
+            yy += 32
+        # ---- radios (columna derecha)
+        rx = box.x + 540
+        f.blit(s, "RADIOS Y TRANSPONDEDOR", (rx, y), 15, COL["accent"], bold=True)
+        st = self._radio_stations()
+        if not hasattr(self, "inst_radio_i"):
+            self.inst_radio_i = {}
+
+        def cycle(kind, d, setter):
+            lst = st[kind]
+            if not lst:
+                return
+            i = (self.inst_radio_i.get(kind, -1) + d) % len(lst)
+            self.inst_radio_i[kind] = i
+            setter(lst[i][1])
+            self.flash(f"{lst[i][0]}  {lst[i][1]:g}", 1.5)
+
+        def set_nav(nv):
+            def _s(fq):
+                nv.freq = fq
+                il = next((n for n in w.navaids if n.kind == "ILS" and abs(n.freq - fq) < 0.001), None)
+                if il is not None:
+                    nv.obs = round(w.mag(il.course)) % 360 or 360
+            return _s
+        rows = [("COM 1", f"{w.com_freq:7.3f}", "com", lambda fq: setattr(w, "com_freq", fq),
+                 lambda d: setattr(w, "com_freq", step_com(w.com_freq, small=d)),
+                 lambda d: setattr(w, "com_freq", step_com(w.com_freq, big=d))),
+                ("NAV 1", f"{w.nav1.freq:6.2f}", "nav", set_nav(w.nav1),
+                 lambda d: setattr(w.nav1, "freq", step_nav(w.nav1.freq, small=d)),
+                 lambda d: setattr(w.nav1, "freq", step_nav(w.nav1.freq, big=d))),
+                ("NAV 2", f"{w.nav2.freq:6.2f}", "nav", set_nav(w.nav2),
+                 lambda d: setattr(w.nav2, "freq", step_nav(w.nav2.freq, small=d)),
+                 lambda d: setattr(w.nav2, "freq", step_nav(w.nav2.freq, big=d))),
+                ("ADF", f"{w.adf.freq:5.0f}", "adf", lambda fq: setattr(w.adf, "freq", fq),
+                 lambda d: setattr(w.adf, "freq", step_adf(w.adf.freq, small=d)),
+                 lambda d: setattr(w.adf, "freq", step_adf(w.adf.freq, big=d)))]
+        ry = y + 30
+        f.blit(s, "estación", (rx + 168, ry - 2), 11, COL["grey"], anchor="midtop")
+        f.blit(s, "fino", (rx + 268, ry - 2), 11, COL["grey"], anchor="midtop")
+        f.blit(s, "MHz / 100", (rx + 360, ry - 2), 11, COL["grey"], anchor="midtop")
+        ry += 14
+        for lab, val, kind, setter, fine, coarse in rows:
+            f.blit(s, lab, (rx, ry + 7), 14, COL["white"], bold=True)
+            f.blit(s, val, (rx + 62, ry + 6), 16, (120, 235, 255), mono=True, bold=True)
+            if ui.button(s, (rx + 136, ry, 30, 30), "◂", size=13, tip="Estación anterior del escenario"):
+                cycle(kind, -1, setter)
+            if ui.button(s, (rx + 170, ry, 30, 30), "▸", size=13, tip="Estación siguiente del escenario"):
+                cycle(kind, 1, setter)
+            if ui.button(s, (rx + 236, ry, 30, 30), "−", size=15):
+                fine(-1)
+            if ui.button(s, (rx + 270, ry, 30, 30), "+", size=15):
+                fine(1)
+            if ui.button(s, (rx + 328, ry, 30, 30), "−", size=15):
+                coarse(-1)
+            if ui.button(s, (rx + 362, ry, 30, 30), "+", size=15):
+                coarse(1)
+            ry += 40
+        # transpondedor: cada dígito (0-7) se cambia con un clic; preajustes
+        f.blit(s, "XPDR", (rx, ry + 7), 14, COL["white"], bold=True)
+        code = f"{w.xpdr:04d}"
+        for i, ch in enumerate(code):
+            if ui.button(s, (rx + 62 + i * 34, ry, 30, 30), ch, size=15, tip="Clic: siguiente dígito (0-7)"):
+                digits = [int(c) for c in code]
+                digits[i] = (digits[i] + 1) % 8
+                w.xpdr = int("".join(str(d) for d in digits))
+        for i, pre in enumerate((1200, 7000)):
+            if ui.button(s, (rx + 206 + i * 70, ry, 64, 30), str(pre), size=13):
+                w.xpdr = pre
+        ry += 48
+        # aproximación de llegada: la del último aeródromo de la ruta o, sin ruta, la de los cercanos
+        dest = next((p for p in reversed(g.plan) if p.kind == "APT"), None)
+        if g.approach is not None:
+            dest = dest or SimpleNamespace(ident=g.approach.airport.ident)
+        aprs = sorted(rnav.for_world(w), key=lambda a: (0 if dest is not None and a.airport.ident == dest.ident else 1,
+                                                        math.hypot(a.airport.ref[0] - ac.pos[0], a.airport.ref[1] - ac.pos[1])))
+        f.blit(s, "LLEGADA RNAV · entrenamiento, no publicada", (rx, ry), 13, COL["accent"], bold=True)
+        ry += 24
+        for i, apr in enumerate(aprs[:4]):
+            if ui.button(s, (rx + (i % 2) * 200, ry + (i // 2) * 34, 194, 30), apr.short,
+                         active=g.approach is not None and g.approach.short == apr.short, size=13,
+                         tip=f"{apr.title} · DA {apr.da_ft:.0f} ft"):
+                g.load_approach(apr, *rnav.entry(apr, ac.pos))
+                w.cdi_src = "GPS"
+        ry += 76
+        if ui.button(s, (rx, ry, 194, 32), "Borrar ruta", size=13, color=(110, 40, 30)):
+            g.clear()
+        if ui.button(s, (rx + 200, ry, 194, 32), "CDI " + w.cdi_src, active=w.cdi_src == "GPS", size=13,
+                     tip="Qué siguen el HSI y el piloto automático: GPS o VLOC (NAV 1)"):
+            w.cdi_src = "GPS" if w.cdi_src == "VLOC" else "VLOC"
+        ry += 42
+        f.blit(s, "Lo que deja aquí es lo que el alumno encuentra en su G1000 al volver al vuelo.", (rx, ry + 4), 12,
+               COL["grey"])
 
     # ================================================================ análisis posterior
     def screen_debrief(self, events):

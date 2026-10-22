@@ -4,6 +4,34 @@ import math
 from .mathx import NM, FT, clamp, wrap180, wrap360
 
 
+# ------------------------------------------------------------------ perillas de frecuencia (como en el avión)
+# La perilla grande cambia los MHz y la pequeña los kHz; cada una da la vuelta dentro de su banda sin arrastrar a la
+# otra (al pasar de .975 a .000 los MHz no cambian), igual que en un G1000 o un KX 155.
+def step_com(f, big=0, small=0):
+    """COM: 118-136 MHz, pasos de 25 kHz."""
+    k = int(round(f * 1000))
+    mhz, khz = k // 1000, k % 1000
+    mhz = 118 + (mhz - 118 + big) % 19
+    khz = (khz // 25 * 25 + small * 25) % 1000
+    return round(mhz + khz / 1000.0, 3)
+
+
+def step_nav(f, big=0, small=0):
+    """NAV (VOR/ILS): 108-117 MHz, pasos de 50 kHz."""
+    k = int(round(f * 1000))
+    mhz, khz = k // 1000, k % 1000
+    mhz = 108 + (mhz - 108 + big) % 10
+    khz = (khz // 50 * 50 + small * 50) % 1000
+    return round(mhz + khz / 1000.0, 2)
+
+
+def step_adf(f, big=0, small=0):
+    """ADF: 190-1750 kHz; la perilla grande en pasos de 100 kHz y la pequeña de 1 kHz."""
+    v = int(round(f)) + big * 100 + small
+    span = 1750 - 190 + 1
+    return float(190 + (v - 190) % span)
+
+
 class AdfRadio:
     """Receptor ADF: sintoniza un NDB (190-1750 kHz) y la aguja marca hacia él, relativa al morro (0 = delante,
     en el sentido de las agujas del reloj). Sin señal, la aguja se queda en 90° como en el avión."""

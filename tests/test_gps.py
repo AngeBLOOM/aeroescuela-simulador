@@ -142,5 +142,40 @@ gc.gps_key(g, ord("x"), "x")
 gc.gps_key(g, pygame.K_ESCAPE, "")
 check(gc.gps_page is None and gc.gps_query == "", "Esc cierra la lista sin elegir")
 
+print("Perillas de frecuencia (MHz y kHz por separado, como en el avión)")
+from sim.nav import step_adf, step_com, step_nav             # noqa: E402
+
+check(step_com(118.975, small=1) == 118.0 and step_com(136.5, big=1) == 118.5 and step_com(121.5, small=-1) == 121.475,
+      "COM: 25 kHz sin arrastrar los MHz; 136 → 118")
+check(step_nav(117.95, small=1) == 117.0 and step_nav(108.5, big=-1) == 117.5, "NAV: 50 kHz; 108 ↔ 117")
+check(step_adf(1750, small=1) == 190 and step_adf(350, big=1) == 450, "ADF: 1 kHz y 100 kHz; 1750 → 190")
+
+print("Teclas y perilla FMS del G1000 (para la consola)")
+gc.gps_page = None
+gc.gps_cursor, gc.gps_newchar, gc.map_range_nm = 0, False, 10
+g.clear()
+gc.gps_open("dto")
+for _ in range(22):                                          # la primera vuelta pone la A; 21 más: V
+    gc.gps_fms(w, small=1)
+gc.gps_fms(w, push=True)                                     # siguiente letra
+for _ in range(14):                                          # A + 13: N
+    gc.gps_fms(w, small=1)
+check(gc.gps_query == "VN", f"deletrear con la perilla pequeña: «{gc.gps_query}»")
+gc.gps_enter(w)
+check(g.direct is not None and g.direct.ident == "VN" and gc.gps_page is None, "ENT: directo a VN")
+gc.gps_open("fpl")
+gc.gps_fms(w, big=1)                                         # filas: [+, RNAV, BORRAR] con el plan vacío → RNAV
+gc.gps_enter(w)
+check(gc.gps_page == "apr", "en el plan, la perilla grande lleva a «RNAV» y ENT abre las aproximaciones")
+gc.gps_enter(w)
+check(g.approach is not None and gc.gps_page == "fpl", f"ENT carga la primera RNAV ({g.approach.short if g.approach else '-'})")
+n0 = len(g.plan)
+gc.gps_cursor = 0
+gc.gps_clr(w)
+check(len(g.plan) == n0 - 1, "CLR quita el punto del cursor")
+gc.map_range_step(1)
+gc.map_range_step(5)
+check(gc.map_range_nm == 40, f"RANGE: alejar hasta 40 NM ({gc.map_range_nm})")
+
 print("\nFALLOS: " + "; ".join(fallos) if fallos else "\nTODO OK")
 sys.exit(1 if fallos else 0)
