@@ -51,7 +51,13 @@ Dependencias: `pygame-ce`, `moderngl`, `numpy`, `comtypes` (voz). Ver `requireme
   - fallas nuevas.
 - **Lecciones nuevas:** hielo en el carburador y barrena.
 - **Salida de datos por UDP** para instrumentos, paneles y movimiento: `docs/PROTOCOLO_UDP.md`.
-- **Pruebas:** `python tools/pruebas.py` ejecuta 17 pruebas sin ventana; GitHub las ejecuta en cada pull request.
+- **Pruebas:** `python tools/pruebas.py` ejecuta 21 pruebas sin ventana; GitHub las ejecuta en cada pull request.
+- **Validación y documentación para la autoridad:**
+  - el C172S de referencia está validado contra su manual (pérdida, ascenso, crucero, consumo, planeo, despegue y
+    aterrizaje dentro de tolerancia: `tools/validacion.py`);
+  - `docs/GUIA_PRUEBAS_C172S.md` se genera con `python tools/guia_pruebas.py --pruebas`;
+  - `docs/MANUAL_OPERACION.md` y `docs/REGISTRO_MANTENIMIENTO.md`;
+  - `python tools/chequeo.py "responsable"` es el chequeo antes de usar, anotado en el registro.
 
 ## Qué incluye
 

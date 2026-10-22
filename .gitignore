@@ -13,6 +13,7 @@ datos/capturas/
 datos/alumnos/
 datos/progreso.json
 datos/retardo.json
+datos/mantenimiento.csv
 
 # Vídeos de demostración (pesados; se entregan aparte)
 demostracion/
