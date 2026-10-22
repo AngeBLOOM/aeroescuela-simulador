@@ -58,8 +58,11 @@ gh = w.terrain.surface_height(ac.pos[0], ac.pos[1])
 ac.place_in_air(ac.pos[0], ac.pos[1], gh + 3000 * FT, 90, 100)
 w.ind.reset(ac, w.kollsman)
 fly(w, 20)
-check(abs(wrap180(w.ind.dg - 103)) < 1.0, f"direccional con rumbo verdadero 090: {w.ind.dg:.1f}°")
-check(abs(wrap180(w.ind.compass - 103)) < 2.0, f"brújula: {w.ind.compass:.1f}°")
+# con los mandos sueltos el rumbo deriva un poco: se compara con el magnético del rumbo que lleva el avión
+mag_now = (ac.heading + 13.0) % 360
+check(abs(wrap180(w.ind.dg - mag_now)) < 1.0,
+      f"direccional {w.ind.dg:.1f}° con rumbo verdadero {ac.heading:.1f}° (magnético {mag_now:.1f}°)")
+check(abs(wrap180(w.ind.compass - mag_now)) < 2.0, f"brújula: {w.ind.compass:.1f}°")
 w.ind.dg_drift = 5.0
 w.ind.dg_drift = 0.0                     # «alinear con la brújula» (panel)
 fly(w, 1)
