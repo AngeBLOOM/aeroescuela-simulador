@@ -191,5 +191,18 @@ filas = [it for it in L.result(w)["items"] if it[0] == "Altitud"]
 print(f"  hielo_carb: filas de Altitud en la evaluación {len(filas)} ({filas[0][1] if filas else '-'}/{filas[0][2] if filas else '-'})")
 if len(filas) != 1 or filas[0][2] != 30:
     fallos.append(f"la altitud del hielo en el carburador sale en {len(filas)} filas")
+# un toque de cola que rebota (varios contactos seguidos) resta una sola vez; otro, después de subir, vuelve a contar
+L = LB["despegue"]()
+L.setup(w)
+for _ in range(3):
+    L.on_event("cola", dict(sink=0.5), w)
+n1 = sum(1 for p in L.penalties if p[0] == "Toque de cola")
+w.ac.on_ground, w.ac.agl = False, 40.0                    # 40 m sobre el suelo: el avión volvió a subir
+L.coaching(0.1, w)
+L.on_event("cola", dict(sink=0.5), w)
+n2 = sum(1 for p in L.penalties if p[0] == "Toque de cola")
+print(f"  toque de cola: tres contactos seguidos = {n1} penalización; tras volver a subir = {n2}")
+if (n1, n2) != (1, 2):
+    fallos.append(f"toque de cola penalizado {n1} veces por un solo toque ({n2} tras subir)")
 print("FALLOS: " + "; ".join(fallos) if fallos else "TODO OK")
 sys.exit(1 if fallos else 0)

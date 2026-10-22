@@ -375,6 +375,8 @@ class Lesson:
 
     def coaching(self, dt, world):
         ac = world.ac
+        if not getattr(self, "_tail_armed", True) and not ac.on_ground and ac.agl / FT > 50:
+            self._tail_armed = True
         self.coach("stall", ac.sys.stall_warning and not ac.on_ground and not getattr(self, "allow_stall", False),
                    "Aviso de pérdida: baje la nariz y aplique potencia.", 8)
         self.coach("vne", world.ind.ias > ac.t.v["vno"] + 8 and not getattr(self, "allow_fast", False),
@@ -393,8 +395,12 @@ class Lesson:
             self.penalties.append(("Sobrecarga estructural", -15, f"{data['g']:.1f} G"))
             self.say("Ha sobrepasado el límite de carga G.")
         elif ev == "cola":
-            self.penalties.append(("Toque de cola", -10, "rotación excesiva"))
-            self.say("Ha tocado la cola contra la pista: rotación excesiva.")
+            # la cola rebota y toca varias veces en la misma rotación o aterrizaje: cuenta un solo toque; el siguiente
+            # se penaliza solo después de volver a subir (coaching lo rearma por encima de 50 ft)
+            if getattr(self, "_tail_armed", True):
+                self._tail_armed = False
+                self.penalties.append(("Toque de cola", -10, "rotación excesiva"))
+                self.say("Ha tocado la cola contra la pista: rotación excesiva.")
 
     def finish(self, success, reason, world):
         if self.done:
